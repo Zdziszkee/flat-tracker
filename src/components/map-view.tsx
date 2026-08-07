@@ -313,38 +313,49 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 		);
 
 		map.on("load", () => {
-			// Load buildings with their RCN transaction counts, then draw them
-			// color-coded: amber = has price history, gray = none.
+			// 1. All OSM buildings extruded in 3D (Mapbox composite source).
+			map.addLayer(
+				{
+					id: "3d-buildings",
+					source: "composite",
+					"source-layer": "building",
+					filter: ["==", "extrude", "true"],
+					type: "fill-extrusion",
+					minzoom: 14.5,
+					paint: {
+						"fill-extrusion-color": "#c8c8cc",
+						"fill-extrusion-height": ["coalesce", ["get", "height"], 0],
+						"fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
+						"fill-extrusion-opacity": 0.55,
+					},
+				},
+				"waterway-label",
+			);
+
+			// 2. Overlay: buildings WITH RCN history, colored amber. Only these
+			// are sent (a few thousand), so the payload stays small.
 			void fetch("/api/buildings/geojson")
 				.then((r) => r.json())
 				.then((fc: BuildingGeoJsonFeatureCollection) => {
 					map.addSource("buildings-rcn", { type: "geojson", data: fc });
 					map.addLayer(
 						{
-							id: "3d-buildings",
+							id: "buildings-rcn-extrude",
 							source: "buildings-rcn",
 							type: "fill-extrusion",
 							minzoom: 14.5,
 							paint: {
-								"fill-extrusion-color": [
-									"step",
-									["coalesce", ["get", "txCount"], 0],
-									"#b8b8c0", // no history: neutral gray
-									1,
-									"#d9a441", // has history: warm amber
-								],
+								"fill-extrusion-color": "#d9a441",
 								"fill-extrusion-height": 12,
 								"fill-extrusion-base": 0,
-								// fill-extrusion-opacity only accepts constants
-								// (no data expressions in Mapbox GL).
-								"fill-extrusion-opacity": 0.65,
+								"fill-extrusion-opacity": 0.7,
 							},
 						},
 						"waterway-label",
 					);
 				})
 				.catch(() => {
-					// Buildings layer is optional; the map works without it.
+					// History overlay is optional; the map works without it.
 				});
 
 			// Listings as a GeoJSON circle layer (fast with thousands of points).
@@ -374,14 +385,16 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				},
 			});
 
-			map.on("mouseenter", "3d-buildings", () => {
+			// Click a 3D building (base or amber history overlay) to see its
+			// RCN price history.
+			const buildingLayers = ["3d-buildings", "buildings-rcn-extrude"];
+			map.on("mouseenter", buildingLayers.join(","), () => {
 				map.getCanvas().style.cursor = "pointer";
 			});
-			map.on("mouseleave", "3d-buildings", () => {
+			map.on("mouseleave", buildingLayers.join(","), () => {
 				map.getCanvas().style.cursor = "";
 			});
-			// Click a 3D building to see its RCN price history.
-			map.on("click", "3d-buildings", (e) => {
+			map.on("click", buildingLayers.join(","), (e) => {
 				// If a listing dot is under the cursor, the listing popup wins.
 				if (
 					map.queryRenderedFeatures(e.point, {

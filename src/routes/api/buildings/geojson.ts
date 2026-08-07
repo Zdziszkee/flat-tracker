@@ -1,38 +1,38 @@
-import { createFileRoute } from "@tanstack/react-router"
-import { json } from "@tanstack/react-start"
-import { count, sql } from "drizzle-orm"
-
-import { buildings, transactions } from "#/db/schema"
-
-import { db } from "#/db/index"
+import { createFileRoute } from "@tanstack/react-router";
+import { json } from "@tanstack/react-start";
+import { count, isNotNull } from "drizzle-orm";
+import { db } from "#/db/index";
+import { buildings, transactions } from "#/db/schema";
 
 /**
- * GeoJSON of all buildings with their RCN transaction counts, used by the
- * map to color buildings by price-history availability.
+ * GeoJSON of buildings that HAVE RCN price history (from the local
+ * buildings table), used by the map as an amber overlay on top of
+ * Mapbox's composite 3D buildings (which covers ALL Krakow footprints).
+ * Only history-bearing buildings are sent, so the payload stays small.
  */
 
 interface CachedFeature {
-	id: number
-	osmId: number
-	address: string | null
-	txCount: number
-	geometry: { type: "Polygon"; coordinates: number[][][] }
+	id: number;
+	osmId: number;
+	address: string | null;
+	txCount: number;
+	geometry: { type: "Polygon"; coordinates: number[][][] };
 }
 
-let cache: CachedFeature[] | null = null
+let cache: CachedFeature[] | null = null;
 
 async function getFeatures(): Promise<CachedFeature[]> {
-	if (cache) return cache
+	if (cache) return cache;
 
 	// Count transactions per building in one pass, then join.
 	const txRows = await db
 		.select({ buildingId: transactions.buildingId, count: count() })
 		.from(transactions)
-		.where(sql`${transactions.buildingId} is not null`)
-		.groupBy(transactions.buildingId)
+		.where(isNotNull(transactions.buildingId))
+		.groupBy(transactions.buildingId);
 	const txByBuilding = new Map(
 		txRows.map((r) => [r.buildingId as number, r.count]),
-	)
+	);
 
 	const rows = await db
 		.select({
@@ -41,7 +41,7 @@ async function getFeatures(): Promise<CachedFeature[]> {
 			address: buildings.address,
 			geometry: buildings.geometry,
 		})
-		.from(buildings)
+		.from(buildings);
 
 	cache = rows
 		.filter((r) => r.geometry)
@@ -53,22 +53,26 @@ async function getFeatures(): Promise<CachedFeature[]> {
 			// The stored geometry is a ring of {lat, lon}; wrap it into a
 			// GeoJSON Polygon ([lng, lat] coordinate order).
 			geometry: {
-				type: "Polygon",
+				type: "Polygon" as const,
 				coordinates: [
-					(JSON.parse(r.geometry as string) as Array<{ lat: number; lon: number }>).map(
-						(p) => [p.lon, p.lat],
-					),
+					(
+						JSON.parse(r.geometry as string) as Array<{
+							lat: number;
+							lon: number;
+						}>
+					).map((p) => [p.lon, p.lat]),
 				],
 			},
 		}))
-	return cache
+		.filter((f) => f.txCount > 0);
+	return cache;
 }
 
 export const Route = createFileRoute("/api/buildings/geojson")({
 	server: {
 		handlers: {
 			GET: async () => {
-				const features = await getFeatures()
+				const features = await getFeatures();
 				return json({
 					type: "FeatureCollection",
 					features: features.map((f) => ({
@@ -81,8 +85,8 @@ export const Route = createFileRoute("/api/buildings/geojson")({
 							txCount: f.txCount,
 						},
 					})),
-				})
+				});
 			},
 		},
 	},
-})
+});

@@ -23,8 +23,12 @@ function transactionSummary(): Promise<BuildingSummary[]> {
 			txAvgPricePerM2: sql<number | null>`avg(${transactions.pricePerM2})`,
 			// `date` is a unix timestamp; render as YYYY-MM-DD strings so the
 			// client can slice years without type gymnastics.
-			txMinDate: sql<string | null>`strftime('%Y-%m-%d', min(${transactions.date}), 'unixepoch')`,
-			txMaxDate: sql<string | null>`strftime('%Y-%m-%d', max(${transactions.date}), 'unixepoch')`,
+			txMinDate: sql<
+				string | null
+			>`strftime('%Y-%m-%d', min(${transactions.date}), 'unixepoch')`,
+			txMaxDate: sql<
+				string | null
+			>`strftime('%Y-%m-%d', max(${transactions.date}), 'unixepoch')`,
 		})
 		.from(transactions)
 		.innerJoin(buildings, eq(transactions.buildingId, buildings.id))
@@ -70,8 +74,24 @@ export const Route = createFileRoute("/api/listings")({
 					summary.map((s) => [String(s.buildingId), s]),
 				);
 
+				// Morizon and Gratka share the same feed, so the same offer
+				// appears under both sources. Dedupe by natural key
+				// (price + area + rooms + district), keeping morizon as the
+				// canonical source (it is sorted first by scrapedAt desc).
+				const seen = new Set<string>();
+				const unique = rows.filter((r) => {
+					const key = [r.price, r.areaM2, r.rooms, r.district].join("|");
+					if (r.source === "morizon") {
+						seen.add(key);
+						return true;
+					}
+					if (r.source === "gratka" && seen.has(key)) return false;
+					seen.add(key);
+					return true;
+				});
+
 				return json({
-					listings: rows.map((r) => ({
+					listings: unique.map((r) => ({
 						...r,
 						// Prefer building centroid (assigned via point-in-polygon) as the
 						// map anchor: offers are shown on the building they belong to.
