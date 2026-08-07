@@ -1,0 +1,21 @@
+node_modules
+.DS_Store
+dist
+dist-ssr
+*.local
+.env
+.nitro
+.tanstack
+.wrangler
+.output
+.vinxi
+__unconfig*
+todos.json
+
+# Crawl data (large GML downloads)
+data/
+storage/
+
+# SQLite dev database (regenerate with db:migrate + crawl/import)
+dev.db
+dev.db-journal
