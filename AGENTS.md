@@ -115,9 +115,12 @@ price, pricePerM2, areaM2, rooms, floor, district, lat, lng, listedAt).
 - **Listings** (`assignBuildingsToListings`) — point-in-polygon against the
   local `osm_buildings` index; portal coordinates are approximate so a
   nearest-centroid fallback within 40 m is used.
-- **Transactions** — same local matcher; RCN points come from
-  `RCN_Lokal.georeferencja` and sit inside the building, so containment
-  hits are exact.
+- **Transactions** — `matchPointStreetAware`: point-in-polygon first (RCN
+  points come from `RCN_Lokal.georeferencja` and usually sit inside the
+  building), then a 150 m fallback preferring a building whose
+  `addr:street` matches the transaction street. This recovers new
+  developments whose georeferenced point sits on the plot centroid; all
+  84k transactions are assigned (100%).
 - The older Overpass path (`geocode.ts`) remains for ad-hoc lookups but is
   not used for bulk assignment (rate-limited: 429s on all mirrors).
 

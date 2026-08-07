@@ -8,6 +8,7 @@ import {
   buildOsmIndex,
   loadOsmIndex,
   matchPointLocal,
+  matchPointStreetAware,
   osmIndexReady,
   type OsmBuilding,
 } from "./osm-index.ts";
@@ -57,7 +58,12 @@ async function assignBuildingsToListingsLocal(): Promise<number> {
 
 async function assignBuildingsToTransactionsLocal(): Promise<number> {
   const unassigned = await db
-    .select({ id: transactions.id, lat: transactions.lat, lng: transactions.lng })
+    .select({
+      id: transactions.id,
+      lat: transactions.lat,
+      lng: transactions.lng,
+      street: transactions.street,
+    })
     .from(transactions)
     .where(and(isNull(transactions.buildingId), isNotNull(transactions.lat)));
 
@@ -67,7 +73,7 @@ async function assignBuildingsToTransactionsLocal(): Promise<number> {
   let assigned = 0;
   for (const t of unassigned) {
     if (t.lat === null || t.lng === null) continue;
-    const b = matchPointLocal(tree, t.lat, t.lng, 40);
+    const b = matchPointStreetAware(tree, t.lat, t.lng, t.street);
     if (!b) continue;
     const buildingId = await ensureBuilding(b);
     if (buildingId !== null) {

@@ -306,7 +306,6 @@ export function matchPointLocal(
   for (const b of candidates) {
     if (pointInPolygon(lat, lng, b.polygon)) return b;
   }
-
   // 2. Nearest centroid within the radius.
   let best: IndexedBuilding | null = null;
   let bestDist = radiusM;
@@ -318,6 +317,59 @@ export function matchPointLocal(
     }
   }
   return best;
+}
+
+function normStreet(s: string | null): string {
+  return (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Street-aware matching for RCN transactions. RCN georeferenced points can
+ * sit on the plot centroid tens of meters from the building footprint
+ * (new developments), so beyond the exact 40 m fallback we accept a
+ * building whose addr:street matches the transaction street within
+ * `streetRadiusM` (default 150 m). Only used for transactions, whose
+ * addresses come from the authoritative notarial records.
+ */
+export function matchPointStreetAware(
+  tree: RBush<IndexedBuilding>,
+  lat: number,
+  lng: number,
+  street: string | null,
+  streetRadiusM = 150,
+): IndexedBuilding | null {
+  // 1-2. Exact containment / 40 m nearest, as before.
+  const exact = matchPointLocal(tree, lat, lng, 40);
+  if (exact) return exact;
+
+  const d = 0.002; // ~220 m search box
+  const candidates = tree.search({
+    minX: lng - d,
+    minY: lat - d,
+    maxX: lng + d,
+    maxY: lat + d,
+  });
+
+  const streetNorm = normStreet(street);
+  let bestStreet: IndexedBuilding | null = null;
+  let bestStreetDist = streetRadiusM;
+  let bestAny: IndexedBuilding | null = null;
+  let bestAnyDist = streetRadiusM;
+
+  for (const b of candidates) {
+    const dist = haversineMeters(lat, lng, b.centroidLat, b.centroidLng);
+    if (dist >= bestStreetDist && dist >= bestAnyDist) continue;
+    const addr = normStreet(b.address);
+    if (streetNorm && addr.startsWith(streetNorm) && dist < bestStreetDist) {
+      bestStreetDist = dist;
+      bestStreet = b;
+    }
+    if (dist < bestAnyDist) {
+      bestAnyDist = dist;
+      bestAny = b;
+    }
+  }
+  return bestStreet ?? bestAny;
 }
 
 export async function osmIndexReady(): Promise<boolean> {
