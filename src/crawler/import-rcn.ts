@@ -1,5 +1,10 @@
 import "dotenv/config";
-import { createReadStream, createWriteStream } from "node:fs";
+import {
+	createReadStream,
+	createWriteStream,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import { mkdir, rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -28,15 +33,84 @@ import { transactions } from "#/db/schema";
  * Only sales (rodzajTransakcji=1) of apartments (funkcjaLokalu=1,
  * mieszkalny) are imported. Rows are keyed by oznaczenieTransakcji, so
  * re-runs are idempotent.
+ *
+ * INCREMENTAL: every run starts with a HEAD request on the zip. The
+ * server's ETag/Last-Modified are compared against data/rcn/version.json
+ * (written after the previous import). When nothing changed, the run
+ * skips the 2 GB download+parse entirely and reports 0 new transactions.
+ * When the file changed, only rows that are actually NEW are inserted
+ * (INSERT OR IGNORE), so the run reports exactly the diff of transactions
+ * the registry has added since the last run. Pass --force to re-download
+ * and re-import everything.
  */
 
 const RCN_ZIP_URL = "https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip";
 const DATA_DIR = "data/rcn";
 const ZIP_PATH = `${DATA_DIR}/1261_RCN.zip`;
+const VERSION_PATH = `${DATA_DIR}/version.json`;
 /** Override for testing with a partial file, e.g. RCN_GML_PATH=scripts/sample.gml */
 const GML_PATH = process.env.RCN_GML_PATH ?? `${DATA_DIR}/RCN_4120101.gml`;
 
 const BATCH_SIZE = 500;
+
+/** Remote file identity recorded after a successful import. */
+interface RcnVersion {
+	etag: string | null;
+	lastModified: string | null;
+	contentLength: string | null;
+	checkedAt: string;
+}
+
+/** HEAD the remote zip and read its validators (null when unreachable). */
+async function headRemote(): Promise<RcnVersion | null> {
+	if (process.env.RCN_GML_PATH) return null; // test override: no remote
+	try {
+		const res = await fetch(RCN_ZIP_URL, {
+			method: "HEAD",
+			signal: AbortSignal.timeout(30_000),
+		});
+		if (!res.ok) return null;
+		return {
+			etag: res.headers.get("etag"),
+			lastModified: res.headers.get("last-modified"),
+			contentLength: res.headers.get("content-length"),
+			checkedAt: new Date().toISOString(),
+		};
+	} catch {
+		return null;
+	}
+}
+
+function readMarker(): RcnVersion | null {
+	try {
+		return JSON.parse(readFileSync(VERSION_PATH, "utf8")) as RcnVersion;
+	} catch {
+		return null;
+	}
+}
+
+function writeMarker(v: RcnVersion): void {
+	writeFileSync(VERSION_PATH, JSON.stringify(v, null, 2));
+}
+
+/** ETag equality, falling back to Last-Modified + Content-Length. */
+function sameVersion(a: RcnVersion, b: RcnVersion): boolean {
+	if (a.etag && b.etag) return a.etag === b.etag;
+	if (a.lastModified && b.lastModified)
+		return (
+			a.lastModified === b.lastModified && a.contentLength === b.contentLength
+		);
+	return false;
+}
+
+async function fileExists(path: string): Promise<boolean> {
+	try {
+		await stat(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 /** Text fields we care about per feature type, minus the rcn: prefix. */
 const TEXT_FIELDS = new Set([
@@ -261,15 +335,48 @@ export function parseGml(filePath: string): Promise<ParsedGml> {
 	});
 }
 
-async function downloadIfMissing(): Promise<void> {
+/**
+ * Ensure the local GML matches the remote zip.
+ *
+ * - RCN_GML_PATH override: trust the given file, no remote interaction.
+ * - Remote unreachable: keep the cached file (previous behavior).
+ * - No marker yet: trust the cache when its mtime is newer than the
+ *   remote's Last-Modified (a download after the last change cannot be
+ *   stale); otherwise re-download once to establish a truthful baseline.
+ * - --force: always re-download.
+ */
+async function downloadIfMissing(
+	force: boolean,
+	remote: RcnVersion | null,
+	marker: RcnVersion | null,
+): Promise<void> {
 	if (process.env.RCN_GML_PATH) return; // test override: file already present
 	await mkdir(DATA_DIR, { recursive: true });
-	try {
-		await stat(GML_PATH);
-		console.log(`Using cached ${GML_PATH}`);
-		return;
-	} catch {
-		// not cached yet, download
+	const cached = await fileExists(GML_PATH);
+	if (cached && !force) {
+		if (!remote || (marker && sameVersion(remote, marker))) {
+			console.log(`Using cached ${GML_PATH}`);
+			return;
+		}
+		if (!marker) {
+			// First incremental run: no baseline yet. The file's mtime tells
+			// us whether it was fetched after the remote's last change.
+			const st = await stat(GML_PATH);
+			const remoteMtime = remote.lastModified
+				? Date.parse(remote.lastModified)
+				: NaN;
+			if (!Number.isNaN(remoteMtime) && st.mtimeMs >= remoteMtime) {
+				console.log(
+					`Using cached ${GML_PATH} (mtime newer than remote Last-Modified); establishing baseline`,
+				);
+				return;
+			}
+			console.log(
+				"No version marker and cache may be stale; re-downloading to establish baseline...",
+			);
+		} else {
+			console.log("Remote RCN file changed; re-downloading...");
+		}
 	}
 
 	console.log(`Downloading ${RCN_ZIP_URL} ...`);
@@ -292,7 +399,22 @@ async function downloadIfMissing(): Promise<void> {
 }
 
 async function importTransactions(): Promise<void> {
-	await downloadIfMissing();
+	const force = process.argv.includes("--force");
+	const remote = await headRemote();
+	const marker = readMarker();
+
+	// The diff check: when the remote identity matches the marker of the
+	// last successful import, nothing was added on the registry — skip the
+	// 2 GB download+parse entirely.
+	if (!force && remote && marker && sameVersion(remote, marker)) {
+		console.log(
+			`RCN unchanged since ${marker.checkedAt.slice(0, 10)} ` +
+				`(etag ${marker.etag}); 0 new transactions`,
+		);
+		return;
+	}
+
+	await downloadIfMissing(force, remote, marker);
 
 	console.log("Parsing GML (streams ~2 GB, this takes a few minutes)...");
 	const {
@@ -329,7 +451,8 @@ async function importTransactions(): Promise<void> {
 	let skippedNotFlat = 0;
 	let skippedNoGeom = 0;
 	let skippedNoDate = 0;
-	let imported = 0;
+	let parsed = 0;
+	let newCount = 0;
 
 	for (const tx of txMap.values()) {
 		if (tx.rodzaj !== "1") {
@@ -389,17 +512,25 @@ async function importTransactions(): Promise<void> {
 		});
 
 		if (rows.length >= BATCH_SIZE) {
-			await flush(rows);
-			imported += BATCH_SIZE;
+			newCount += await flush(rows);
+			parsed += BATCH_SIZE;
 		}
 	}
 
-	await flush(rows);
-	imported += rows.length;
+	newCount += await flush(rows);
+	parsed += rows.length;
+
+	// Record the remote identity we just imported, so the next run can
+	// skip straight to the diff check.
+	if (remote) {
+		writeMarker(remote);
+		console.log(`Version marker written (etag ${remote.etag})`);
+	}
 
 	console.log(
-		`Imported ${imported} apartment sales. Skipped: ${skippedNotSale} non-sales, ` +
-			`${skippedNotFlat} without flat, ${skippedNoGeom} without geometry, ${skippedNoDate} without date`,
+		`Imported ${newCount} NEW apartment sales (diff since last run; ${parsed} parsed total). ` +
+			`Skipped: ${skippedNotSale} non-sales, ${skippedNotFlat} without flat, ` +
+			`${skippedNoGeom} without geometry, ${skippedNoDate} without date`,
 	);
 }
 
@@ -418,10 +549,17 @@ async function flush(
 		lat: number | null;
 		lng: number | null;
 	}>,
-): Promise<void> {
-	if (rows.length === 0) return;
-	await db.insert(transactions).values(rows).onConflictDoNothing();
+): Promise<number> {
+	if (rows.length === 0) return 0;
+	// INSERT OR IGNORE ... RETURNING: only rows that are actually NEW come
+	// back, which is exactly the diff of transactions the registry added.
+	const inserted = await db
+		.insert(transactions)
+		.values(rows)
+		.onConflictDoNothing()
+		.returning({ id: transactions.id });
 	rows.length = 0;
+	return inserted.length;
 }
 
 importTransactions().catch((err) => {

@@ -26,8 +26,9 @@
     "crawl:domiporta": "tsx src/crawler/run.ts --site domiporta --save-db",
     "crawl:nol": "tsx src/crawler/run.ts --site nieruchomosci-online --save-db",
     "crawl:rynekpierwotny": "tsx src/crawler/run.ts --site rynekpierwotny --save-db",
-    "crawl:all": "tsx src/crawler/run.ts --site otodom --save-db && tsx src/crawler/run.ts --site olx --save-db && tsx src/crawler/run.ts --site morizon --save-db && tsx src/crawler/run.ts --site gratka --save-db && tsx src/crawler/run.ts --site domiporta --save-db && tsx src/crawler/run.ts --site nieruchomosci-online --save-db && tsx src/crawler/run.ts --site rynekpierwotny --save-db",
+    "crawl:all": "tsx src/crawler/run.ts --site otodom --save-db && tsx src/crawler/run.ts --site olx --save-db && tsx src/crawler/run.ts --site morizon --save-db && tsx src/crawler/run.ts --site gratka --save-db && tsx src/crawler/run.ts --site domiporta --save-db && tsx src/crawler/run.ts --site nieruchomosci-online --save-db && tsx src/crawler/run.ts --site rynekpierwotny --save-db && npm run import-rcn",
     "import-rcn": "tsx src/crawler/import-rcn.ts",
+    "import-rcn:force": "tsx src/crawler/import-rcn.ts --force",
     "assign-buildings": "tsx src/crawler/assign-buildings.ts",
     "geocode-addresses": "tsx src/crawler/geocode-addresses.ts"
   },

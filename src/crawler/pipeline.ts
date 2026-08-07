@@ -1,7 +1,7 @@
 import { Data, Effect, Schedule, Schema } from "effect";
 
 import { crawlSite } from "./crawler.ts";
-import { saveListings } from "./db-sink.ts";
+import { type SaveReport, saveListings } from "./db-sink.ts";
 import type { SiteAdapter } from "./types.ts";
 
 /**
@@ -42,7 +42,10 @@ export interface CrawlReport {
 	site: string;
 	listings: number;
 	pages: number;
-	inserted: number;
+	/** Listings that did not exist before this run (the portal diff). */
+	newListings: number;
+	/** Existing listings overwritten with fresh data (refined records). */
+	updatedListings: number;
 	elapsedSeconds: number;
 }
 
@@ -70,13 +73,16 @@ export const runCrawl = (
 			catch: (cause) => new CrawlError({ site: adapter.id, cause }),
 		});
 
-		const inserted = saveToDb ? yield* saveEffect(adapter.id, validated) : 0;
+		const saved = saveToDb
+			? yield* saveEffect(adapter.id, validated)
+			: { newCount: 0, updatedCount: 0 };
 
 		return {
 			site: adapter.id,
 			listings: validated.length,
 			pages: result.pages,
-			inserted,
+			newListings: saved.newCount,
+			updatedListings: saved.updatedCount,
 			elapsedSeconds: (Date.now() - started) / 1000,
 		};
 	});
@@ -84,7 +90,7 @@ export const runCrawl = (
 const saveEffect = (
 	site: string,
 	list: readonly import("./types.ts").Listing[],
-): Effect.Effect<number, CrawlError> =>
+): Effect.Effect<SaveReport, CrawlError> =>
 	Effect.tryPromise({
 		try: () => saveListings([...list]),
 		catch: (cause) => new CrawlError({ site, cause }),

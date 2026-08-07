@@ -30,8 +30,9 @@ npm run db:migrate        # apply migrations
 npm run crawl -- --site <id> [--save-db] [--since-days N]   # crawl one site
 npm run crawl:otodom      # otodom Krakow, saves to DB
 npm run crawl:olx         # olx Krakow, saves to DB
-npm run crawl:all         # both sources sequentially (hourly cron entry point)
-npm run import-rcn        # import historical RCN transactions (large download)
+npm run crawl:all         # all 7 sites + incremental RCN diff (hourly cron entry)
+npm run import-rcn        # RCN transactions: HEADs the zip, imports only NEW rows (diff)
+npm run import-rcn:force  # re-download + re-import everything
 npm run assign-buildings  # match listings/transactions to OSM buildings
 npm run geocode-addresses # geocode listings that carry only an address
 ```
@@ -49,15 +50,25 @@ Nominatim (1 req/s, descriptive UA) for street-level points. Re-run
 Crawls are incremental and idempotent, designed for a once-per-hour cron:
 
 ```bash
-# every hour: refetch both sources, upsert new/changed listings,
-# prune otodom/olx listings older than the since window (default 90 days)
+# every hour: refetch all sources, upsert new/changed listings,
+# prune otodom/olx listings older than the since window (default 90 days),
+# then refresh RCN transactions (HEAD check; skips when nothing changed)
 npm run crawl:all
 ```
 
 - Upserts by `(source, externalId)`: re-running is safe and self-refining
-  (detail pages add coordinates to list-page records).
+  (detail pages add coordinates to list-page records). Each run reports
+  the portal diff — how many listings are NEW vs UPDATED.
 - `--since-days N` bounds the fetch window and prunes older portal
   listings afterwards, so the DB only holds active/recent offers.
+- `import-rcn` (part of `crawl:all`) starts with a HEAD request on the
+  zip; when ETag/Last-Modified match `data/rcn/version.json`, it skips
+  the 2 GB download+parse and reports 0 new transactions. When the file
+  changed, only rows that are actually NEW are inserted
+  (`INSERT OR IGNORE ... RETURNING`), so each run imports exactly the
+  diff the registry added. `--force` re-downloads and re-imports.
+  Run `npm run assign-buildings` after an RCN refresh to anchor the new
+  transactions.
 - The crawler paces requests (3 concurrent, ~350 ms delay) and retries
   403s with backoff to stay under portal throttling.
 - For a production cron, wire `runCrawlWithRetry` (exponential backoff)

@@ -1,16 +1,47 @@
-import { and, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
 
 import type { Listing } from "./types.ts";
 
+export interface SaveReport {
+	/** Listings that did not exist before this run (the diff of new offers). */
+	newCount: number;
+	/** Listings that already existed and were overwritten (refined records). */
+	updatedCount: number;
+}
+
 /**
  * Upsert listings into SQLite by (source, externalId). Detail-page records
  * (with coordinates) overwrite list-page records for the same ad, making
  * crawls idempotent and self-refining.
+ *
+ * Returns how many rows were NEW versus UPDATED, so a rerun reports the
+ * diff of what the portal actually added since the last crawl.
  */
-export async function saveListings(list: Listing[]): Promise<number> {
-	if (list.length === 0) return 0;
+export async function saveListings(list: Listing[]): Promise<SaveReport> {
+	if (list.length === 0) return { newCount: 0, updatedCount: 0 };
+
+	// A crawl run is single-source, but keep it safe for multi-source batches.
+	const sources = [...new Set(list.map((l) => l.source))];
+	const existing = new Set<string>();
+	for (const source of sources) {
+		const ids = list
+			.filter((l) => l.source === source)
+			.map((l) => l.externalId);
+		const rows = await db
+			.select({ externalId: listings.externalId })
+			.from(listings)
+			.where(
+				and(eq(listings.source, source), inArray(listings.externalId, ids)),
+			);
+		for (const r of rows) existing.add(`${source}:${r.externalId}`);
+	}
+
+	const newCount = list.filter(
+		(l) => !existing.has(`${l.source}:${l.externalId}`),
+	).length;
+	const updatedCount = list.length - newCount;
 
 	const rows = list.map((l) => ({
 		source: l.source,
@@ -30,7 +61,7 @@ export async function saveListings(list: Listing[]): Promise<number> {
 		scrapedAt: new Date(l.scrapedAt),
 	}));
 
-	const result = await db
+	await db
 		.insert(listings)
 		.values(rows)
 		.onConflictDoUpdate({
@@ -53,7 +84,7 @@ export async function saveListings(list: Listing[]): Promise<number> {
 		})
 		.returning({ id: listings.id });
 
-	return result.length;
+	return { newCount, updatedCount };
 }
 
 /**

@@ -42,7 +42,10 @@ async function main() {
 		return;
 	}
 
-	const sinceDays = Math.max(0, Number.parseInt(values["since-days"] ?? "90", 10) || 90);
+	const sinceDays = Math.max(
+		0,
+		Number.parseInt(values["since-days"] ?? "90", 10) || 90,
+	);
 	const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000);
 
 	const base = getAdapter(values.site);
@@ -61,10 +64,14 @@ async function main() {
 		`Done in ${report.elapsedSeconds.toFixed(1)}s: ${report.pages} pages, ${report.listings} listings`,
 	);
 	if (values["save-db"]) {
-		console.log(`Upserted ${report.inserted} rows in SQLite`);
+		console.log(
+			`DB diff: ${report.newListings} new, ${report.updatedListings} updated`,
+		);
 		if (sinceDays > 0 && (adapter.id === "otodom" || adapter.id === "olx")) {
 			const pruned = await pruneOldListings(since);
-			console.log(`Pruned ${pruned} otodom/olx listings older than ${since.toISOString().slice(0, 10)}`);
+			console.log(
+				`Pruned ${pruned} otodom/olx listings older than ${since.toISOString().slice(0, 10)}`,
+			);
 		}
 	}
 }
