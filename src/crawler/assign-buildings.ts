@@ -1,6 +1,6 @@
 import "dotenv/config";
 
-import { and, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import { buildings, listings, transactions } from "#/db/schema";
 import { buildStreetIndex, matchByAddress } from "./address-index.ts";
@@ -22,6 +22,10 @@ import {
  * street-aware 150m fallback. Transactions without an address match use
  * the geo fallbacks directly.
  *
+ * Also backfills buildings.address from RCN transactions (most common
+ * street + housenumber among the building's transactions) when the
+ * building has no OSM address.
+ *
  * Usage: npm run assign-buildings
  */
 async function main() {
@@ -32,6 +36,36 @@ async function main() {
 	console.log("Assigning buildings to transactions (address-first)...");
 	const txDone = await assignBuildingsToTransactionsLocal();
 	console.log(`  ${txDone} transactions assigned by address`);
+
+	console.log("Backfilling building addresses from transactions...");
+	const backfilled = await backfillBuildingAddresses();
+	console.log(`  ${backfilled} buildings got an address from transactions`);
+}
+
+/** buildings.address from the most common (street, number) in its txns. */
+async function backfillBuildingAddresses(): Promise<number> {
+	const result = await db
+		.update(buildings)
+		.set({
+			address: sql`(
+				select trim(t.street || ' ' || coalesce(t.streetNumber, ''))
+				from ${transactions} t
+				where t.building_id = ${buildings.id}
+				  and t.street is not null and t.street != ''
+				group by t.street, t.streetNumber
+				order by count(*) desc, max(t.date) desc
+				limit 1
+			)`,
+		})
+		.where(
+			sql`${buildings.address} is null and exists (
+				select 1 from ${transactions} t
+				where t.building_id = ${buildings.id}
+				  and t.street is not null and t.street != ''
+			)`,
+		)
+		.returning({ id: buildings.id });
+	return result.length;
 }
 
 async function assignBuildingsToListingsLocal(): Promise<number> {
