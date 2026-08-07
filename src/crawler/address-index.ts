@@ -20,6 +20,14 @@ export function normStreet(s: string): string {
 		.trim();
 }
 
+/** Remove "ul./al./os./..." so "ul. Sarego" and "Sarego" key alike. */
+const STREET_PREFIX_RE =
+	/^(?:ul\.?|al\.?|aleja|os\.?|osiedle|pl\.?|plac|rynek|bulwar|rondo)\s+/iu;
+
+export function stripStreetPrefix(s: string): string {
+	return s.replace(STREET_PREFIX_RE, "").trim();
+}
+
 /** Split "ul. Jakuba Bojki 12" into {street, number}. */
 export function parseAddress(address: string): {
 	street: string;
@@ -55,7 +63,7 @@ export async function buildStreetIndex(): Promise<
 	for (const r of rows) {
 		if (!r.address) continue;
 		const { street, number } = parseAddress(r.address);
-		const key = normStreet(street);
+		const key = normStreet(stripStreetPrefix(street));
 		if (!key) continue;
 		const list = index.get(key) ?? [];
 		list.push({
