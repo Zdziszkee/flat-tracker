@@ -14,6 +14,7 @@ import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as MapRouteImport } from './routes/map'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
+import { Route as ApiBuildingsLookupRouteImport } from './routes/api/buildings/lookup'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -40,6 +41,11 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   path: '/api/auth/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiBuildingsLookupRoute = ApiBuildingsLookupRouteImport.update({
+  id: '/api/buildings/lookup',
+  path: '/api/buildings/lookup',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -47,6 +53,7 @@ export interface FileRoutesByFullPath {
   '/map': typeof MapRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -54,6 +61,7 @@ export interface FileRoutesByTo {
   '/map': typeof MapRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -62,13 +70,33 @@ export interface FileRoutesById {
   '/map': typeof MapRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
+  '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/listings' | '/map' | '/api/listings' | '/api/auth/$'
+  fullPaths:
+    | '/'
+    | '/listings'
+    | '/map'
+    | '/api/listings'
+    | '/api/auth/$'
+    | '/api/buildings/lookup'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/listings' | '/map' | '/api/listings' | '/api/auth/$'
-  id: '__root__' | '/' | '/listings' | '/map' | '/api/listings' | '/api/auth/$'
+  to:
+    | '/'
+    | '/listings'
+    | '/map'
+    | '/api/listings'
+    | '/api/auth/$'
+    | '/api/buildings/lookup'
+  id:
+    | '__root__'
+    | '/'
+    | '/listings'
+    | '/map'
+    | '/api/listings'
+    | '/api/auth/$'
+    | '/api/buildings/lookup'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -77,6 +105,7 @@ export interface RootRouteChildren {
   MapRoute: typeof MapRoute
   ApiListingsRoute: typeof ApiListingsRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
+  ApiBuildingsLookupRoute: typeof ApiBuildingsLookupRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -116,6 +145,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAuthSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/buildings/lookup': {
+      id: '/api/buildings/lookup'
+      path: '/api/buildings/lookup'
+      fullPath: '/api/buildings/lookup'
+      preLoaderRoute: typeof ApiBuildingsLookupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -125,6 +161,7 @@ const rootRouteChildren: RootRouteChildren = {
   MapRoute: MapRoute,
   ApiListingsRoute: ApiListingsRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
+  ApiBuildingsLookupRoute: ApiBuildingsLookupRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

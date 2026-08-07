@@ -112,7 +112,16 @@ graph TD
   F --> I
   I --> J[Map page /map]
   I --> K[Listings page /listings]
+  J --> L[API route /api/buildings/lookup]
+  L --> F
 ```
+
+Clicking a 3D building on the map queries `/api/buildings/lookup?lat&lng`
+(point-in-polygon over the `buildings` table, 30 m nearest-centroid
+fallback) and shows the building's RCN price history: transaction count,
+average/range zł/m², year-by-year breakdown and the 5 most recent sales.
+This is the same RCN data that portals like deweloperuch.pl aggregate —
+imported locally by `npm run import-rcn`, no extra scraping needed.
 
 ### Adding a new site (e.g. Facebook Marketplace, Morizon)
 

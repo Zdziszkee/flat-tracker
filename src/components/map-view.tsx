@@ -106,6 +106,94 @@ function popupHtml(l: ApiListing): string {
     </div>`;
 }
 
+interface BuildingLookup {
+	building: {
+		id: number;
+		osmId: number;
+		address: string | null;
+		lat: number;
+		lng: number;
+		stats: {
+			txCount: number;
+			avgPricePerM2: number | null;
+			minPricePerM2: number | null;
+			maxPricePerM2: number | null;
+			minPrice: number | null;
+			maxPrice: number | null;
+			minDate: string | null;
+			maxDate: string | null;
+			byYear: Array<{
+				year: string;
+				count: number;
+				avgPricePerM2: number | null;
+			}>;
+			recent: Array<{
+				date: string;
+				price: number;
+				pricePerM2: number | null;
+				areaM2: number | null;
+				rooms: number | null;
+			}>;
+		};
+	} | null;
+}
+
+function buildingPopupHtml(data: BuildingLookup): string {
+	if (!data?.building) {
+		return `<div class="min-w-48 p-1 text-sm text-gray-600">
+      <div class="font-medium">Budynek</div>
+      <div>Brak danych historycznych dla tego budynku.</div>
+    </div>`;
+	}
+	const b = data.building;
+	const s = b.stats;
+	const range =
+		s.minDate && s.maxDate
+			? ` (${s.minDate.slice(0, 4)}-${s.maxDate.slice(0, 4)})`
+			: "";
+	const byYear =
+		s.byYear.length > 0
+			? `<div class="mt-1 border-t pt-1">
+          ${s.byYear
+						.map(
+							(y) =>
+								`<div class="flex justify-between gap-3">
+                  <span>${y.year}: ${y.count} ${y.count === 1 ? "transakcja" : y.count < 5 ? "transakcje" : "transakcji"}</span>
+                  <span class="font-medium">${s.avgPricePerM2 ? `${Math.round(y.avgPricePerM2 ?? 0).toLocaleString("pl-PL")} zł/m²` : ""}</span>
+                </div>`,
+						)
+						.join("")}
+        </div>`
+			: "";
+	const recent =
+		s.recent.length > 0
+			? `<div class="mt-1 border-t pt-1 text-xs">
+          ${s.recent
+						.map(
+							(t) =>
+								`<div class="flex justify-between gap-3">
+                  <span>${t.date.slice(0, 7)}</span>
+                  <span>${t.price.toLocaleString("pl-PL")} zł${t.areaM2 ? ` · ${Math.round(t.areaM2)} m²` : ""}${t.pricePerM2 ? ` · ${Math.round(t.pricePerM2).toLocaleString("pl-PL")} zł/m²` : ""}</span>
+                </div>`,
+						)
+						.join("")}
+        </div>`
+			: "";
+	return `<div class="min-w-60 space-y-1 text-sm">
+    <div class="font-semibold">${escapeHtml(b.address ?? "Budynek (bez adresu)")}</div>
+    <div class="text-xs text-gray-500">Historia transakcji RCN</div>
+    ${
+			s.txCount > 0
+				? `<div class="border-t pt-1">
+          <div class="flex justify-between gap-3"><span>Liczba transakcji</span><span class="font-medium">${s.txCount}${range}</span></div>
+          <div class="flex justify-between gap-3"><span>Średnia cena</span><span class="font-medium">${s.avgPricePerM2 ? `${Math.round(s.avgPricePerM2).toLocaleString("pl-PL")} zł/m²` : "n/d"}</span></div>
+          <div class="flex justify-between gap-3"><span>Zakres</span><span>${s.minPricePerM2 ? `${Math.round(s.minPricePerM2).toLocaleString("pl-PL")} – ${Math.round(s.maxPricePerM2 ?? 0).toLocaleString("pl-PL")} zł/m²` : "n/d"}</span></div>
+        </div>${byYear}${recent}`
+				: `<div class="text-xs text-gray-500">Brak transakcji w tym budynku.</div>`
+		}
+  </div>`;
+}
+
 type GeoJsonFeatureCollection = {
 	type: "FeatureCollection";
 	features: Array<{
@@ -264,6 +352,43 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 					"circle-stroke-color": "#ffffff",
 					"circle-stroke-width": 1,
 				},
+			});
+
+			map.on("mouseenter", "3d-buildings", () => {
+				map.getCanvas().style.cursor = "pointer";
+			});
+			map.on("mouseleave", "3d-buildings", () => {
+				map.getCanvas().style.cursor = "";
+			});
+			// Click a 3D building to see its RCN price history.
+			map.on("click", "3d-buildings", (e) => {
+				// If a listing dot is under the cursor, the listing popup wins.
+				if (
+					map.queryRenderedFeatures(e.point, {
+						layers: ["listings-circle"],
+					}).length > 0
+				) {
+					return;
+				}
+				void fetch(
+					`/api/buildings/lookup?lat=${e.lngLat.lat}&lng=${e.lngLat.lng}`,
+				)
+					.then((r) => r.json())
+					.then((data: BuildingLookup) => {
+						popupRef.current?.remove();
+						const popup = new mapboxgl.Popup({
+							offset: 16,
+							closeButton: false,
+							maxWidth: "340px",
+						})
+							.setLngLat(e.lngLat)
+							.setHTML(buildingPopupHtml(data))
+							.addTo(map);
+						popupRef.current = popup;
+					})
+					.catch(() => {
+						// Ignore fetch errors; the map stays usable.
+					});
 			});
 
 			map.on("mouseenter", "listings-circle", () => {
