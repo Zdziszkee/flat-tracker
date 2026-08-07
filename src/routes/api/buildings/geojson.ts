@@ -16,7 +16,24 @@ interface CachedFeature {
 	osmId: number;
 	address: string | null;
 	txCount: number;
+	/** Estimated building height in meters, for the 3D extrusion. */
+	height: number;
 	geometry: { type: "Polygon"; coordinates: number[][][] };
+}
+
+/** Height from OSM height tag, else building:levels * 3 m, else 12 m. */
+function buildingHeight(tagsJson: string | null): number {
+	if (!tagsJson) return 12;
+	try {
+		const t = JSON.parse(tagsJson) as Record<string, string>;
+		const h = Number.parseFloat(t.height ?? "");
+		if (Number.isFinite(h) && h > 0) return Math.min(h, 100);
+		const levels = Number.parseInt(t["building:levels"] ?? "", 10);
+		if (Number.isFinite(levels) && levels > 0) return Math.min(levels * 3, 100);
+	} catch {
+		// ignore malformed tags
+	}
+	return 12;
 }
 
 let cache: CachedFeature[] | null = null;
@@ -40,6 +57,7 @@ async function getFeatures(): Promise<CachedFeature[]> {
 			osmId: buildings.osmId,
 			address: buildings.address,
 			geometry: buildings.geometry,
+			tags: buildings.tags,
 		})
 		.from(buildings);
 
@@ -50,6 +68,7 @@ async function getFeatures(): Promise<CachedFeature[]> {
 			osmId: r.osmId,
 			address: r.address,
 			txCount: txByBuilding.get(r.id) ?? 0,
+			height: buildingHeight(r.tags),
 			// The stored geometry is a ring of {lat, lon}; wrap it into a
 			// GeoJSON Polygon ([lng, lat] coordinate order).
 			geometry: {
@@ -83,6 +102,7 @@ export const Route = createFileRoute("/api/buildings/geojson")({
 							osmId: f.osmId,
 							address: f.address,
 							txCount: f.txCount,
+							height: f.height,
 						},
 					})),
 				});

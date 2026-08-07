@@ -208,7 +208,12 @@ type BuildingGeoJsonFeatureCollection = {
 	features: Array<{
 		type: "Feature";
 		geometry: unknown;
-		properties: { osmId: number; address: string | null; txCount: number };
+		properties: {
+			osmId: number;
+			address: string | null;
+			txCount: number;
+			height: number;
+		};
 	}>;
 };
 
@@ -262,6 +267,15 @@ export default function MapView({ source }: { source: string }) {
 			<MapCanvas listings={listings} />
 
 			<footer className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-4 rounded-lg bg-white/90 px-4 py-1.5 text-xs text-gray-600 shadow">
+				<span className="flex items-center gap-1">
+					<span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-500" />{" "}
+					budynek z historią RCN
+				</span>
+				<span className="flex items-center gap-1">
+					<span className="inline-block h-2.5 w-2.5 rounded-sm bg-gray-300" />{" "}
+					bez historii
+				</span>
+				<span className="mx-1 h-3 w-px bg-gray-300" />
 				<span className="flex items-center gap-1">
 					<span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />{" "}
 					&lt;12k zł/m²
@@ -345,10 +359,12 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 							type: "fill-extrusion",
 							minzoom: 14.5,
 							paint: {
-								"fill-extrusion-color": "#d9a441",
-								"fill-extrusion-height": 12,
+								"fill-extrusion-color": "#e8a33d",
+								"fill-extrusion-height": ["coalesce", ["get", "height"], 12],
 								"fill-extrusion-base": 0,
-								"fill-extrusion-opacity": 0.7,
+								// fill-extrusion-opacity only accepts constants
+								// (no data expressions in Mapbox GL).
+								"fill-extrusion-opacity": 0.85,
 							},
 						},
 						"waterway-label",
@@ -386,15 +402,9 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			});
 
 			// Click a 3D building (base or amber history overlay) to see its
-			// RCN price history.
-			const buildingLayers = ["3d-buildings", "buildings-rcn-extrude"];
-			map.on("mouseenter", buildingLayers.join(","), () => {
-				map.getCanvas().style.cursor = "pointer";
-			});
-			map.on("mouseleave", buildingLayers.join(","), () => {
-				map.getCanvas().style.cursor = "";
-			});
-			map.on("click", buildingLayers.join(","), (e) => {
+			// RCN price history. Mapbox only accepts ONE layer id per event
+			// binding, so register each layer separately.
+			const showBuildingHistory = (e: mapboxgl.MapLayerMouseEvent) => {
 				// If a listing dot is under the cursor, the listing popup wins.
 				if (
 					map.queryRenderedFeatures(e.point, {
@@ -422,7 +432,17 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 					.catch(() => {
 						// Ignore fetch errors; the map stays usable.
 					});
-			});
+			};
+			const buildingLayers = ["3d-buildings", "buildings-rcn-extrude"];
+			for (const layerId of buildingLayers) {
+				map.on("mouseenter", layerId, () => {
+					map.getCanvas().style.cursor = "pointer";
+				});
+				map.on("mouseleave", layerId, () => {
+					map.getCanvas().style.cursor = "";
+				});
+				map.on("click", layerId, showBuildingHistory);
+			}
 
 			map.on("mouseenter", "listings-circle", () => {
 				map.getCanvas().style.cursor = "pointer";
