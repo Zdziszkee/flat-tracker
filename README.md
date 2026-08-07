@@ -9,12 +9,16 @@ OpenStreetMap building.
 
 ```bash
 npm install
+cp .env.local.example .env.local   # set DATABASE_URL, VITE_MAPBOX_TOKEN
 npm run db:migrate          # create SQLite DB from migrations
-npm run crawl:otodom        # crawl otodom Krakow (list + detail pages)
-npm run crawl:olx           # crawl olx Krakow
-npm run assign-buildings    # match listings to OSM buildings (Overpass)
+npm run crawl:all           # crawl all Krakow sources
+npm run assign-buildings    # match listings to OSM buildings (local index)
 npm run dev                 # web app at http://localhost:3000
 ```
+
+The map needs a public Mapbox token (`VITE_MAPBOX_TOKEN`) — free tier
+covers 50k map loads/month; restrict the token to your app domain in the
+Mapbox dashboard.
 
 Then open:
 

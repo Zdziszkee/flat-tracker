@@ -13,7 +13,11 @@ OpenStreetMap building.
 - **DB**: SQLite + Drizzle ORM (`drizzle-orm/better-sqlite3`)
 - **Orchestration**: Effect TS wraps the crawl pipeline (`src/crawler/pipeline.ts`)
 - **Geocoding**: Overpass API (free) — building footprints + point-in-polygon
-- **Map**: react-leaflet + OpenStreetMap tiles (free)
+- **Map**: mapbox-gl (light-v11 style) with 3D buildings
+  (`fill-extrusion` layer), listings as a GeoJSON circle layer, Krakow
+  `maxBounds` only. Token: `VITE_MAPBOX_TOKEN` in `.env.local` (public
+  `pk.` token — restrict it to the app domain in the Mapbox dashboard).
+  Free tier: 50k map loads/month.
 - **Runtime note**: `better-sqlite3` does NOT work under Bun. All DB-touching
   scripts must run with **Node via tsx** (`npm run ...`), never `bun run ...`.
 
@@ -173,9 +177,12 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
 - Be polite to free APIs: batching (10 points/request) + 1.2 s delay.
 - Crawlee storage: `Configuration({ storageClient: new MemoryStorage() })`
   avoids writing `storage/` dirs to the repo.
-- **Map is client-only**: `leaflet` touches `window` at import time and
+- **Map is client-only**: `mapbox-gl` touches `window` at import time and
   crashes SSR. `src/routes/map.tsx` gates the lazy `import()` behind a
-  `useEffect` mount flag — never import leaflet in a route module directly.
+  `useEffect` mount flag — never import mapbox-gl in a route module
+  directly. `map-view.tsx` keeps the map instance in a ref; a second
+  effect pushes `setData` into the GeoJSON source when the source filter
+  changes.
 - The RCN importer skips the download when `RCN_GML_PATH` points at an
   already-extracted file (handy for testing with a partial slice).
 - `scripts/` holds throwaway utilities (db-state, overpass-test).

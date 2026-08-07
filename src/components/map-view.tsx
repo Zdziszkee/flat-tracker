@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { divIcon } from "leaflet";
-import { MapContainer, Marker, Popup, TileLayer, Tooltip } from "react-leaflet";
+import mapboxgl from "mapbox-gl";
+import { useEffect, useRef } from "react";
 
-import "leaflet/dist/leaflet.css";
+import "mapbox-gl/dist/mapbox-gl.css";
+
+import { env } from "#/env";
 
 export interface ApiListing {
 	id: number;
@@ -39,13 +41,14 @@ interface ListingsResponse {
 	generatedAt: string;
 }
 
-function priceColor(pricePerM2: number | null): string {
-	if (!pricePerM2) return "#6b7280";
-	if (pricePerM2 < 12000) return "#10b981"; // green: cheap
-	if (pricePerM2 < 15000) return "#eab308"; // yellow
-	if (pricePerM2 < 18000) return "#f97316"; // orange
-	return "#ef4444"; // red: expensive
-}
+/** Krakow bounding box — the tracker only covers Krakow. */
+const KRAKOW_BOUNDS: [[number, number], [number, number]] = [
+	[19.75, 49.95],
+	[20.25, 50.15],
+];
+const KRAKOW_CENTER: [number, number] = [19.94, 50.06];
+
+const TOKEN = env.VITE_MAPBOX_TOKEN;
 
 function formatPln(n: number | null): string {
 	if (n === null) return "n/d";
@@ -65,62 +68,67 @@ function yearOf(d: string | number | null | undefined): string {
 	return d.slice(0, 4);
 }
 
-function ListingMarker({ l }: { l: ApiListing }) {
-	const color = priceColor(l.pricePerM2);
-	const icon = divIcon({
-		className: "",
-		html: `<div style="width:14px;height:14px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 1px 4px rgba(0,0,0,.5)"></div>`,
-		iconSize: [14, 14],
-		iconAnchor: [7, 7],
-	});
+function escapeHtml(s: string): string {
+	return s
+		.replaceAll("&", "&amp;")
+		.replaceAll("<", "&lt;")
+		.replaceAll(">", "&gt;")
+		.replaceAll('"', "&quot;");
+}
 
-	return (
-		<Marker position={[l.mapLat ?? 50.06, l.mapLng ?? 19.94]} icon={icon}>
-			<Tooltip direction="top" offset={[0, -8]}>
-				<span className="font-semibold">{formatPln(l.price)}</span>
-			</Tooltip>
-			<Popup>
-				<div className="min-w-56 space-y-1 text-sm">
-					<div className="font-semibold leading-tight">{l.title}</div>
-					<div className="text-muted-foreground">
-						{l.district ?? "Kraków"}
-						{l.buildingAddress ? ` · ${l.buildingAddress}` : ""}
-					</div>
-					<div className="flex justify-between gap-4 pt-1">
-						<span>{formatPln(l.price)}</span>
-						<span>
-							{l.pricePerM2 ? `${l.pricePerM2.toFixed(0)} zł/m²` : ""}
-						</span>
-					</div>
-					<div className="text-muted-foreground">
-						{l.areaM2 ? `${l.areaM2} m²` : ""}
-						{l.rooms ? ` · ${l.rooms} pok.` : ""}
-						{l.floor ? ` · ${l.floor}` : ""}
-					</div>
-					{l.transactionStats && (
-						<div className="border-t pt-1 text-xs">
-							<div className="font-medium text-amber-700">
-								RCN history: {l.transactionStats.txCount} transakcji
-							</div>
-							<div>
-								Śr. {formatPln(l.transactionStats.txAvgPricePerM2)}/m²
-								{yearOf(l.transactionStats.txMinDate) &&
-									` (${yearOf(l.transactionStats.txMinDate)}-${yearOf(l.transactionStats.txMaxDate)})`}
-							</div>
-						</div>
-					)}
-					<a
-						href={l.url}
-						target="_blank"
-						rel="noreferrer"
-						className="mt-1 block text-blue-600 underline"
-					>
-						Otwórz ogłoszenie
-					</a>
-				</div>
-			</Popup>
-		</Marker>
-	);
+function popupHtml(l: ApiListing): string {
+	const stats = l.transactionStats;
+	const minYear = yearOf(stats?.txMinDate);
+	const maxYear = yearOf(stats?.txMaxDate);
+	const range = minYear && maxYear ? ` (${minYear}-${maxYear})` : "";
+	return `
+    <div class="min-w-56 space-y-1 text-sm">
+      <div class="font-semibold leading-tight">${escapeHtml(l.title)}</div>
+      <div class="text-gray-500">
+        ${escapeHtml(l.district ?? "Kraków")}${l.buildingAddress ? ` · ${escapeHtml(l.buildingAddress)}` : ""}
+      </div>
+      <div class="flex justify-between gap-4 pt-1">
+        <span class="font-medium">${formatPln(l.price)}</span>
+        <span>${l.pricePerM2 ? `${l.pricePerM2.toFixed(0)} zł/m²` : ""}</span>
+      </div>
+      <div class="text-gray-500">
+        ${l.areaM2 ? `${l.areaM2} m²` : ""}${l.rooms ? ` · ${l.rooms} pok.` : ""}${l.floor ? ` · ${escapeHtml(l.floor)}` : ""}
+      </div>
+      ${
+				stats
+					? `<div class="border-t pt-1 text-xs">
+          <div class="font-medium text-amber-700">RCN history: ${stats.txCount} transakcji</div>
+          <div>Śr. ${formatPln(stats.txAvgPricePerM2)}/m²${range}</div>
+        </div>`
+					: ""
+			}
+      <a href="${l.url}" target="_blank" rel="noreferrer" class="mt-1 block text-blue-600 underline">Otwórz ogłoszenie</a>
+    </div>`;
+}
+
+type GeoJsonFeatureCollection = {
+	type: "FeatureCollection";
+	features: Array<{
+		type: "Feature";
+		geometry: { type: "Point"; coordinates: number[] };
+		properties: ApiListing;
+	}>;
+};
+
+function toGeoJson(listings: ApiListing[]): GeoJsonFeatureCollection {
+	return {
+		type: "FeatureCollection",
+		features: listings
+			.filter((l) => l.mapLat !== null && l.mapLng !== null)
+			.map((l) => ({
+				type: "Feature",
+				geometry: {
+					type: "Point",
+					coordinates: [l.mapLng as number, l.mapLat as number],
+				},
+				properties: l,
+			})),
+	};
 }
 
 export default function MapView({
@@ -137,36 +145,30 @@ export default function MapView({
 		(l) => source === "all" || l.source === source,
 	);
 
-	return (
-		<div className="flex h-full flex-col">
-			<div className="relative flex-1">
-				{isLoading && (
-					<div className="absolute inset-0 z-[1000] flex items-center justify-center bg-white/60 text-sm text-gray-600">
-						Ładowanie ofert...
-					</div>
-				)}
-				{error && (
-					<div className="absolute inset-0 z-[1000] flex items-center justify-center bg-red-50 p-4 text-sm text-red-700">
-						Nie udało się pobrać danych: {String(error)}
-					</div>
-				)}
-				<MapContainer
-					center={[50.061, 19.937]}
-					zoom={13}
-					className="h-full w-full"
-					scrollWheelZoom
-				>
-					<TileLayer
-						attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-						url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-					/>
-					{listings.map((l) => (
-						<ListingMarker key={`${l.source}-${l.externalId}`} l={l} />
-					))}
-				</MapContainer>
+	if (!TOKEN) {
+		return (
+			<div className="flex h-full items-center justify-center p-6 text-center text-sm text-red-700">
+				Brak klucza VITE_MAPBOX_TOKEN w .env.local — mapa nie działa bez tokena
+				Mapbox.
 			</div>
+		);
+	}
 
-			<footer className="flex items-center gap-4 border-t px-4 py-1.5 text-xs text-muted-foreground">
+	return (
+		<div className="relative h-full w-full">
+			{isLoading && (
+				<div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 text-sm text-gray-600">
+					Ładowanie ofert...
+				</div>
+			)}
+			{error && (
+				<div className="absolute inset-0 z-10 flex items-center justify-center bg-red-50 p-4 text-sm text-red-700">
+					Nie udało się pobrać danych: {String(error)}
+				</div>
+			)}
+			<MapCanvas listings={listings} />
+
+			<footer className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-4 rounded-lg bg-white/90 px-4 py-1.5 text-xs text-gray-600 shadow">
 				<span className="flex items-center gap-1">
 					<span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />{" "}
 					&lt;12k zł/m²
@@ -183,10 +185,131 @@ export default function MapView({
 					<span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500" />{" "}
 					&gt;18k zł/m²
 				</span>
-				<span className="ml-auto">
-					Historia RCN: średnie ceny transakcyjne dla budynku
-				</span>
 			</footer>
 		</div>
 	);
+}
+
+function MapCanvas({ listings }: { listings: ApiListing[] }) {
+	const containerRef = useRef<HTMLDivElement>(null);
+	const mapRef = useRef<mapboxgl.Map | null>(null);
+	const popupRef = useRef<mapboxgl.Popup | null>(null);
+
+	// Create the map once. The listings snapshot at init is only used for
+	// the initial source data; the effect below pushes updates on changes,
+	// so `listings` is intentionally not a dependency here.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: see above
+	useEffect(() => {
+		if (!containerRef.current || mapRef.current) return;
+
+		const map = new mapboxgl.Map({
+			container: containerRef.current,
+			style: "mapbox://styles/mapbox/light-v11",
+			center: KRAKOW_CENTER,
+			zoom: 12.5,
+			pitch: 45,
+			bearing: -20,
+			maxBounds: KRAKOW_BOUNDS,
+			accessToken: TOKEN,
+		});
+		mapRef.current = map;
+
+		map.addControl(
+			new mapboxgl.NavigationControl({ visualizePitch: true }),
+			"top-right",
+		);
+
+		map.on("load", () => {
+			// 3D buildings from Mapbox's composite source (OSM-derived).
+			map.addLayer(
+				{
+					id: "3d-buildings",
+					source: "composite",
+					"source-layer": "building",
+					filter: ["==", "extrude", "true"],
+					type: "fill-extrusion",
+					minzoom: 14.5,
+					paint: {
+						"fill-extrusion-color": "#c8c8cc",
+						"fill-extrusion-height": ["coalesce", ["get", "height"], 0],
+						"fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
+						"fill-extrusion-opacity": 0.55,
+					},
+				},
+				"waterway-label",
+			);
+
+			// Listings as a GeoJSON circle layer (fast with thousands of points).
+			map.addSource("listings", {
+				type: "geojson",
+				data: toGeoJson(listings),
+			});
+			map.addLayer({
+				id: "listings-circle",
+				type: "circle",
+				source: "listings",
+				paint: {
+					"circle-color": [
+						"step",
+						["coalesce", ["get", "pricePerM2"], 0],
+						"#10b981",
+						12000,
+						"#eab308",
+						15000,
+						"#f97316",
+						18000,
+						"#ef4444",
+					],
+					"circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 4, 16, 9],
+					"circle-stroke-color": "#ffffff",
+					"circle-stroke-width": 1,
+				},
+			});
+
+			map.on("mouseenter", "listings-circle", () => {
+				map.getCanvas().style.cursor = "pointer";
+			});
+			map.on("mouseleave", "listings-circle", () => {
+				map.getCanvas().style.cursor = "";
+			});
+			map.on("click", "listings-circle", (e) => {
+				const feature = e.features?.[0] as { properties?: unknown } | undefined;
+				const props = feature?.properties;
+				if (!props) return;
+				const listing = props as ApiListing;
+				popupRef.current?.remove();
+				const popup = new mapboxgl.Popup({
+					offset: 16,
+					closeButton: false,
+				})
+					.setLngLat(e.lngLat)
+					.setHTML(popupHtml(listing))
+					.addTo(map);
+				popupRef.current = popup;
+			});
+		});
+
+		return () => {
+			map.remove();
+			mapRef.current = null;
+			popupRef.current = null;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
+
+	// Push updated listings into the source whenever the filter changes.
+	useEffect(() => {
+		const map = mapRef.current;
+		if (!map) return;
+		const apply = () => {
+			const src = map.getSource("listings");
+			if (src && "setData" in src) {
+				(src as mapboxgl.GeoJSONSource).setData(toGeoJson(listings));
+			}
+		};
+		if (map.isStyleLoaded()) apply();
+		else map.once("load", apply);
+	}, [listings]);
+
+	return <div ref={containerRef} className="h-full w-full" />;
 }
