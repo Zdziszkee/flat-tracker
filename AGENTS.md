@@ -30,6 +30,14 @@ npm run import-rcn        # import historical RCN transactions (large download)
 npm run assign-buildings  # match listings/transactions to OSM buildings
 ```
 
+`assign-buildings` uses a **local OSM building index** (`osm_buildings`
+table) built from a Geofabrik extract of the małopolskie region
+(`data/osm/malopolskie.osm.pbf`, ~200 MB, streamed with `osm-pbf-parser`).
+Point-in-polygon matching then runs in-memory via RBush — the public
+Overpass API is far too rate-limited for the ~84k RCN transactions. The
+index is rebuilt automatically when missing; `npm run assign-buildings`
+assigns all 84k transactions in minutes, not hours.
+
 ## Data sources
 
 | Source | What | Access |
@@ -69,7 +77,7 @@ graph TD
   B --> C[Effect pipeline: validate + save]
   C --> D[(SQLite: listings)]
   E[import-rcn.ts] --> F[(SQLite: transactions)]
-  G[Overpass API] --> H[assign-buildings.ts]
+  G[Geofabrik extract] --> H[osm-index.ts: local RBush index]
   H --> D
   H --> F
   D --> I[API route /api/listings]
@@ -96,8 +104,22 @@ price, pricePerM2, areaM2, rooms, floor, district, lat, lng, listedAt).
 
 - `listings` — active offers; unique `(source, externalId)`; upserted by the
   sink, so detail-page records refine list-page records
-- `buildings` — OSM buildings (osmId unique, address, tags, geometry)
+- `buildings` — OSM buildings referenced by listings/transactions
+  (osmId unique, address, tags, geometry)
+- `osm_buildings` — local OSM footprint index for Krakow (bbox, centroid,
+  polygon JSON); built from the Geofabrik extract by `osm-index.ts`
 - `transactions` — RCN history; unique `transactionId`
+
+## Building assignment
+
+- **Listings** (`assignBuildingsToListings`) — point-in-polygon against the
+  local `osm_buildings` index; portal coordinates are approximate so a
+  nearest-centroid fallback within 40 m is used.
+- **Transactions** — same local matcher; RCN points come from
+  `RCN_Lokal.georeferencja` and sit inside the building, so containment
+  hits are exact.
+- The older Overpass path (`geocode.ts`) remains for ad-hoc lookups but is
+  not used for bulk assignment (rate-limited: 429s on all mirrors).
 
 ## Effect TS usage
 

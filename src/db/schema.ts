@@ -101,3 +101,34 @@ export const transactions = sqliteTable(
 	},
 	(t) => [index("transactions_building_idx").on(t.buildingId)],
 );
+
+/**
+ * Local copy of OSM building footprints for Krakow, built from a Geofabrik
+ * extract. Used for fast, dependency-free point-in-polygon matching of
+ * transactions (the public Overpass API is too rate-limited for 80k+ points).
+ */
+export const osmBuildings = sqliteTable(
+	"osm_buildings",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		osmId: integer({ mode: "number" }).notNull().unique(),
+		bboxMinLat: real().notNull(),
+		bboxMinLng: real().notNull(),
+		bboxMaxLat: real().notNull(),
+		bboxMaxLng: real().notNull(),
+		centroidLat: real().notNull(),
+		centroidLng: real().notNull(),
+		/** Polygon ring as JSON array of {lat, lng}. */
+		polygon: text().notNull(),
+		address: text(),
+		tags: text(),
+	},
+	(t) => [
+		index("osm_buildings_bbox_idx").on(
+			t.bboxMinLat,
+			t.bboxMinLng,
+			t.bboxMaxLat,
+			t.bboxMaxLng,
+		),
+	],
+);
