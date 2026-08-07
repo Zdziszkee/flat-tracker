@@ -231,6 +231,46 @@ export const Route = createFileRoute("/api/buildings/lookup")({
 				const url = new URL(request.url);
 				const lat = Number(url.searchParams.get("lat"));
 				const lng = Number(url.searchParams.get("lng"));
+				const osmIdParam = url.searchParams.get("osmId");
+
+				// Exact OSM id match (from the clicked composite feature) is
+				// the most reliable; coordinates are a fallback.
+				if (osmIdParam) {
+					const osmId = Number(osmIdParam);
+					if (Number.isFinite(osmId)) {
+						const rows = await getBuildingsCache();
+						const b = rows.find((r) => r.osmId === osmId);
+						if (b) {
+							const stats = await buildingStats(b.id);
+							return json({
+								building: {
+									id: b.id,
+									osmId: b.osmId,
+									address: b.address,
+									lat: b.lat,
+									lng: b.lng,
+									stats,
+								},
+							});
+						}
+						// Fallback: address-only from osm_buildings.
+						const osmRows = await getOsmBuildingsCache();
+						const osm = osmRows.find((r) => r.osmId === osmId);
+						if (osm) {
+							return json({
+								building: {
+									id: null,
+									osmId: osm.osmId,
+									address: osm.address,
+									lat: osm.lat,
+									lng: osm.lng,
+									stats: null,
+								},
+							});
+						}
+					}
+				}
+
 				if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
 					return json({ building: null });
 				}

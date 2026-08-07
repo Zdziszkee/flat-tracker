@@ -444,9 +444,40 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				) {
 					return;
 				}
-				void fetch(
-					`/api/buildings/lookup?lat=${e.lngLat.lat}&lng=${e.lngLat.lng}`,
-				)
+				// For 3D fill-extrusions, e.lngLat is the ground point, which
+				// can be far from where the user visually clicked on a tall
+				// building. Use the clicked feature's own geometry instead.
+				const feature = map.queryRenderedFeatures(e.point, {
+					layers: ["3d-buildings"],
+				})[0] as
+					| {
+							geometry?: { type: string; coordinates?: number[][][][] };
+							id?: number;
+					  }
+					| undefined;
+				if (!feature) return;
+				// Prefer the feature's OSM id; coordinates are a fallback.
+				const osmId = typeof feature.id === "number" ? feature.id : undefined;
+				const geom = feature.geometry as
+					| { type: "Polygon"; coordinates: number[][][] }
+					| undefined;
+				const coords = geom?.coordinates?.[0]?.[0];
+				const lat = coords?.[1];
+				const lng = coords?.[0];
+				if (
+					osmId === undefined &&
+					(typeof lat !== "number" || typeof lng !== "number")
+				) {
+					return;
+				}
+				const params = new URLSearchParams();
+				if (osmId !== undefined) params.set("osmId", String(osmId));
+				if (typeof lat === "number" && typeof lng === "number") {
+					params.set("lat", String(lat));
+					params.set("lng", String(lng));
+				}
+
+				void fetch(`/api/buildings/lookup?${params.toString()}`)
 					.then((r) => r.json())
 					.then((data: BuildingLookup) => {
 						popupRef.current?.remove();
