@@ -1,9 +1,9 @@
 import "dotenv/config";
 
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
-
 import { db } from "#/db/index";
-import { listings, osmBuildings } from "#/db/schema";
+import { buildings, listings } from "#/db/schema";
+import { buildStreetIndex, matchAddressString } from "./address-index.ts";
 
 /**
  * Geocode listings that have an address but no coordinates (portals that
@@ -22,75 +22,23 @@ import { listings, osmBuildings } from "#/db/schema";
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 
-function normStreet(s: string): string {
-	return s
-		.toLowerCase()
-		.normalize("NFD")
-		.replace(/[\u0300-\u036f]/g, "")
-		.replace(/[^a-z0-9 ]/g, "")
-		.replace(/\s+/g, " ")
-		.trim();
-}
+/** Resolve an osmId to a row in the `buildings` table (insert if missing). */
+async function ensureBuildingByOsmId(
+	osmId: number,
+	lat: number,
+	lng: number,
+): Promise<number | null> {
+	const existing = await db.query.buildings.findFirst({
+		where: (row) => eq(row.osmId, osmId),
+	});
+	if (existing) return existing.id;
 
-/** Split "ul. Jakuba Bojki 12" into {street, number}. */
-function parseAddress(address: string): { street: string; number?: string } {
-	const m = address.match(/^(.+?)\s+(\d{1,4}[A-Za-z]?)$/);
-	if (m) return { street: m[1].trim(), number: m[2] };
-	return { street: address.trim() };
-}
-
-interface StreetBuilding {
-	number?: string;
-	lat: number;
-	lng: number;
-	id: number;
-}
-
-/** streetNorm -> buildings on that street. */
-async function buildStreetIndex(): Promise<Map<string, StreetBuilding[]>> {
-	const rows = await db
-		.select({
-			id: osmBuildings.id,
-			address: osmBuildings.address,
-			centroidLat: osmBuildings.centroidLat,
-			centroidLng: osmBuildings.centroidLng,
-		})
-		.from(osmBuildings)
-		.where(isNotNull(osmBuildings.address));
-
-	const index = new Map<string, StreetBuilding[]>();
-	for (const r of rows) {
-		if (!r.address) continue;
-		const { street, number } = parseAddress(r.address);
-		const key = normStreet(street);
-		if (!key) continue;
-		const list = index.get(key) ?? [];
-		list.push({ number, lat: r.centroidLat, lng: r.centroidLng, id: r.id });
-		index.set(key, list);
-	}
-	console.log(`street index: ${index.size} streets, ${rows.length} buildings`);
-	return index;
-}
-
-function localMatch(
-	index: Map<string, StreetBuilding[]>,
-	address: string,
-): { lat: number; lng: number; buildingId: number | null } | null {
-	const { street, number } = parseAddress(address);
-	const buildings = index.get(normStreet(street));
-	if (!buildings || buildings.length === 0) return null;
-
-	// Exact street+housenumber -> that building (its RCN history is valid).
-	if (number) {
-		const exact = buildings.find((b) => b.number === number);
-		if (exact) return { lat: exact.lat, lng: exact.lng, buildingId: exact.id };
-	}
-	// Street-only: centroid of the street's buildings; no buildingId, so the
-	// map shows a street-level point without claiming a specific building's
-	// transaction history.
-	const lat = buildings.reduce((s, b) => s + b.lat, 0) / buildings.length;
-	const lng = buildings.reduce((s, b) => s + b.lng, 0) / buildings.length;
-	return { lat, lng, buildingId: null };
+	const [row] = await db
+		.insert(buildings)
+		.values({ osmId, lat, lng })
+		.onConflictDoNothing()
+		.returning({ id: buildings.id });
+	return row?.id ?? null;
 }
 
 async function nominatimGeocode(
@@ -139,14 +87,21 @@ async function main(): Promise<void> {
 		if (!l.address) continue;
 
 		// 1. Exact local building match.
-		const local = localMatch(streetIndex, l.address);
+		const local = matchAddressString(streetIndex, l.address);
 		if (local) {
+			const buildingId = local.building
+				? await ensureBuildingByOsmId(
+						local.building.osmId,
+						local.building.lat,
+						local.building.lng,
+					)
+				: null;
 			await db
 				.update(listings)
 				.set({
 					lat: local.lat,
 					lng: local.lng,
-					buildingId: local.buildingId,
+					...(buildingId ? { buildingId } : {}),
 				})
 				.where(eq(listings.id, l.id));
 			localHits++;
