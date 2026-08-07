@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
 
-// Leaflet touches `window` at module load, so it must never be imported
+// mapbox-gl touches `window` at module load, so it must never be imported
 // during SSR. The lazy import is only triggered after mount on the client.
 const MapView = lazy(() => import("../components/map-view"));
 
@@ -9,12 +9,29 @@ export const Route = createFileRoute("/map")({
 	component: MapPage,
 });
 
+const SOURCE_LABELS: Record<string, string> = {
+	otodom: "Otodom",
+	olx: "OLX",
+	morizon: "Morizon",
+	gratka: "Gratka",
+	domiporta: "Domiporta",
+	"nieruchomosci-online": "Nieruchomosci-online",
+	rynekpierwotny: "Rynekpierwotny",
+};
+
 function MapPage() {
-	const [source, setSource] = useState<"all" | "otodom" | "olx">("all");
+	const [source, setSource] = useState("all");
+	const [sources, setSources] = useState<string[]>([]);
 	const [mounted, setMounted] = useState(false);
 
 	useEffect(() => {
 		setMounted(true);
+		fetch("/api/sources")
+			.then((r) => r.json())
+			.then((d: { sources?: string[] }) => setSources(d.sources ?? []))
+			.catch(() => {
+				// Dropdown stays at "Wszystkie" if the fetch fails.
+			});
 	}, []);
 
 	return (
@@ -23,12 +40,15 @@ function MapPage() {
 				<h1 className="text-lg font-semibold">Mapa ofert · Kraków</h1>
 				<select
 					value={source}
-					onChange={(e) => setSource(e.target.value as typeof source)}
+					onChange={(e) => setSource(e.target.value)}
 					className="rounded border px-2 py-1 text-sm"
 				>
 					<option value="all">Wszystkie</option>
-					<option value="otodom">Otodom</option>
-					<option value="olx">OLX</option>
+					{sources.map((s) => (
+						<option key={s} value={s}>
+							{SOURCE_LABELS[s] ?? s}
+						</option>
+					))}
 				</select>
 			</header>
 

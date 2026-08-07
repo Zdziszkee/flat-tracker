@@ -228,11 +228,7 @@ function toGeoJson(listings: ApiListing[]): GeoJsonFeatureCollection {
 	};
 }
 
-export default function MapView({
-	source,
-}: {
-	source: "all" | "otodom" | "olx";
-}) {
+export default function MapView({ source }: { source: string }) {
 	const { data, isLoading, error } = useQuery<ListingsResponse>({
 		queryKey: ["listings"],
 		queryFn: () => fetch("/api/listings").then((r) => r.json()),
@@ -339,12 +335,9 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 								],
 								"fill-extrusion-height": 12,
 								"fill-extrusion-base": 0,
-								"fill-extrusion-opacity": [
-									"case",
-									["==", ["get", "txCount"], 0],
-									0.4,
-									0.7,
-								],
+								// fill-extrusion-opacity only accepts constants
+								// (no data expressions in Mapbox GL).
+								"fill-extrusion-opacity": 0.65,
 							},
 						},
 						"waterway-label",
