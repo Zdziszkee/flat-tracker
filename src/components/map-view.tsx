@@ -108,7 +108,7 @@ function popupHtml(l: ApiListing): string {
 
 interface BuildingLookup {
 	building: {
-		id: number;
+		id: number | null;
 		osmId: number;
 		address: string | null;
 		lat: number;
@@ -134,7 +134,7 @@ interface BuildingLookup {
 				areaM2: number | null;
 				rooms: number | null;
 			}>;
-		};
+		} | null;
 	} | null;
 }
 
@@ -142,11 +142,18 @@ function buildingPopupHtml(data: BuildingLookup): string {
 	if (!data?.building) {
 		return `<div class="min-w-48 p-1 text-sm text-gray-600">
       <div class="font-medium">Budynek</div>
-      <div>Brak danych historycznych dla tego budynku.</div>
+      <div>Brak danych o tym budynku.</div>
     </div>`;
 	}
 	const b = data.building;
 	const s = b.stats;
+	if (!s) {
+		// Building found but no RCN history (address fallback).
+		return `<div class="min-w-56 space-y-1 text-sm">
+      <div class="font-semibold">${escapeHtml(b.address ?? "Budynek (bez adresu)")}</div>
+      <div class="text-xs text-gray-500">Brak transakcji RCN dla tego budynku.</div>
+    </div>`;
+	}
 	const range =
 		s.minDate && s.maxDate
 			? ` (${s.minDate.slice(0, 4)}-${s.maxDate.slice(0, 4)})`
@@ -200,6 +207,15 @@ type GeoJsonFeatureCollection = {
 		type: "Feature";
 		geometry: { type: "Point"; coordinates: number[] };
 		properties: ApiListing;
+	}>;
+};
+
+type AddressLabelFeatureCollection = {
+	type: "FeatureCollection";
+	features: Array<{
+		type: "Feature";
+		geometry: { type: "Point"; coordinates: number[] };
+		properties: { osmId: number; address: string };
 	}>;
 };
 
@@ -360,6 +376,35 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				})
 				.catch(() => {
 					// Coloring is optional; the map works without it.
+				});
+
+			// Address labels on 3D footprints (street + housenumber),
+			// visible when zoomed in close.
+			void fetch("/api/buildings/labels")
+				.then((r) => r.json())
+				.then((fc: AddressLabelFeatureCollection) => {
+					map.addSource("building-labels", { type: "geojson", data: fc });
+					map.addLayer({
+						id: "building-address-labels",
+						type: "symbol",
+						source: "building-labels",
+						minzoom: 15.2,
+						layout: {
+							"text-field": ["get", "address"],
+							"text-size": 10,
+							"text-offset": [0, 0.6],
+							"text-anchor": "top",
+							"text-allow-overlap": false,
+						},
+						paint: {
+							"text-color": "#3d3d3d",
+							"text-halo-color": "#ffffff",
+							"text-halo-width": 1.5,
+						},
+					});
+				})
+				.catch(() => {
+					// Labels are optional; the map works without them.
 				});
 
 			// Listings as a GeoJSON circle layer (fast with thousands of points).

@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
 import { desc, eq, sql } from "drizzle-orm";
 import { db } from "#/db/index";
-import { buildings, transactions } from "#/db/schema";
+import { buildings, osmBuildings, transactions } from "#/db/schema";
 
 /**
  * Click-to-inspect for the 3D buildings layer: given a clicked point,
@@ -24,6 +24,52 @@ interface CachedBuilding {
 }
 
 let cache: CachedBuilding[] | null = null;
+
+interface OsmBuildingLight {
+	osmId: number;
+	address: string | null;
+	lat: number;
+	lng: number;
+}
+
+let osmCache: OsmBuildingLight[] | null = null;
+
+async function getOsmBuildingsCache(): Promise<OsmBuildingLight[]> {
+	if (osmCache) return osmCache;
+	const rows = await db
+		.select({
+			osmId: osmBuildings.osmId,
+			address: osmBuildings.address,
+			centroidLat: osmBuildings.centroidLat,
+			centroidLng: osmBuildings.centroidLng,
+		})
+		.from(osmBuildings);
+	osmCache = rows.map((r) => ({
+		osmId: r.osmId,
+		address: r.address,
+		lat: r.centroidLat,
+		lng: r.centroidLng,
+	}));
+	return osmCache;
+}
+
+/** Nearest osm_buildings centroid within 25 m (address-only fallback). */
+function findNearestOsm(
+	rows: OsmBuildingLight[],
+	lat: number,
+	lng: number,
+): OsmBuildingLight | null {
+	let best: OsmBuildingLight | null = null;
+	let bestDist = 25;
+	for (const b of rows) {
+		const d = haversineMeters(lat, lng, b.lat, b.lng);
+		if (d < bestDist) {
+			bestDist = d;
+			best = b;
+		}
+	}
+	return best;
+}
 
 async function getBuildingsCache(): Promise<CachedBuilding[]> {
 	if (cache) return cache;
@@ -190,19 +236,40 @@ export const Route = createFileRoute("/api/buildings/lookup")({
 				}
 				const rows = await getBuildingsCache();
 				const building = findBuildingAt(rows, lat, lng);
-				if (!building) return json({ building: null });
 
-				const stats = await buildingStats(building.id);
-				return json({
-					building: {
-						id: building.id,
-						osmId: building.osmId,
-						address: building.address,
-						lat: building.lat,
-						lng: building.lng,
-						stats,
-					},
-				});
+				// Building in our RCN-anchored table: full stats.
+				if (building) {
+					const stats = await buildingStats(building.id);
+					return json({
+						building: {
+							id: building.id,
+							osmId: building.osmId,
+							address: building.address,
+							lat: building.lat,
+							lng: building.lng,
+							stats,
+						},
+					});
+				}
+
+				// Fallback: any Krakow building (osm_buildings) so the
+				// address is always shown, even without RCN history.
+				const osmRows = await getOsmBuildingsCache();
+				const osm = findNearestOsm(osmRows, lat, lng);
+				if (osm) {
+					return json({
+						building: {
+							id: null,
+							osmId: osm.osmId,
+							address: osm.address,
+							lat: osm.lat,
+							lng: osm.lng,
+							stats: null,
+						},
+					});
+				}
+
+				return json({ building: null });
 			},
 		},
 	},

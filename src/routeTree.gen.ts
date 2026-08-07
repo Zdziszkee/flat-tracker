@@ -17,6 +17,7 @@ import { Route as ApiSourcesRouteImport } from './routes/api/sources'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiBuildingsGeojsonRouteImport } from './routes/api/buildings/geojson'
 import { Route as ApiBuildingsHistoryIdsRouteImport } from './routes/api/buildings/history-ids'
+import { Route as ApiBuildingsLabelsRouteImport } from './routes/api/buildings/labels'
 import { Route as ApiBuildingsLookupRouteImport } from './routes/api/buildings/lookup'
 
 const IndexRoute = IndexRouteImport.update({
@@ -59,6 +60,11 @@ const ApiBuildingsHistoryIdsRoute = ApiBuildingsHistoryIdsRouteImport.update({
   path: '/api/buildings/history-ids',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiBuildingsLabelsRoute = ApiBuildingsLabelsRouteImport.update({
+  id: '/api/buildings/labels',
+  path: '/api/buildings/labels',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiBuildingsLookupRoute = ApiBuildingsLookupRouteImport.update({
   id: '/api/buildings/lookup',
   path: '/api/buildings/lookup',
@@ -74,6 +80,7 @@ export interface FileRoutesByFullPath {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
   '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
+  '/api/buildings/labels': typeof ApiBuildingsLabelsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
 }
 export interface FileRoutesByTo {
@@ -85,6 +92,7 @@ export interface FileRoutesByTo {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
   '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
+  '/api/buildings/labels': typeof ApiBuildingsLabelsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
 }
 export interface FileRoutesById {
@@ -97,6 +105,7 @@ export interface FileRoutesById {
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
   '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
+  '/api/buildings/labels': typeof ApiBuildingsLabelsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
 }
 export interface FileRouteTypes {
@@ -110,6 +119,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/buildings/geojson'
     | '/api/buildings/history-ids'
+    | '/api/buildings/labels'
     | '/api/buildings/lookup'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -121,6 +131,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/buildings/geojson'
     | '/api/buildings/history-ids'
+    | '/api/buildings/labels'
     | '/api/buildings/lookup'
   id:
     | '__root__'
@@ -132,6 +143,7 @@ export interface FileRouteTypes {
     | '/api/auth/$'
     | '/api/buildings/geojson'
     | '/api/buildings/history-ids'
+    | '/api/buildings/labels'
     | '/api/buildings/lookup'
   fileRoutesById: FileRoutesById
 }
@@ -144,6 +156,7 @@ export interface RootRouteChildren {
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiBuildingsGeojsonRoute: typeof ApiBuildingsGeojsonRoute
   ApiBuildingsHistoryIdsRoute: typeof ApiBuildingsHistoryIdsRoute
+  ApiBuildingsLabelsRoute: typeof ApiBuildingsLabelsRoute
   ApiBuildingsLookupRoute: typeof ApiBuildingsLookupRoute
 }
 
@@ -205,6 +218,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiBuildingsHistoryIdsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/buildings/labels': {
+      id: '/api/buildings/labels'
+      path: '/api/buildings/labels'
+      fullPath: '/api/buildings/labels'
+      preLoaderRoute: typeof ApiBuildingsLabelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/buildings/lookup': {
       id: '/api/buildings/lookup'
       path: '/api/buildings/lookup'
@@ -224,6 +244,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiBuildingsGeojsonRoute: ApiBuildingsGeojsonRoute,
   ApiBuildingsHistoryIdsRoute: ApiBuildingsHistoryIdsRoute,
+  ApiBuildingsLabelsRoute: ApiBuildingsLabelsRoute,
   ApiBuildingsLookupRoute: ApiBuildingsLookupRoute,
 }
 export const routeTree = rootRouteImport
