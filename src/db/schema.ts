@@ -55,6 +55,9 @@ export const listings = sqliteTable(
 		rooms: integer({ mode: "number" }),
 		floor: text(),
 		district: text(),
+		/** Street address parsed from the feed (e.g. "Jakuba Bojki 12"), used
+		 * to geocode portals that hide coordinates. */
+		address: text(),
 		/** Nullable because some portals (otodom list view) hide coordinates. */
 		lat: real(),
 		lng: real(),

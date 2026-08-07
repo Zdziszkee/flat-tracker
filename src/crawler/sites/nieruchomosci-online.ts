@@ -1,4 +1,5 @@
 import type { CheerioAdapter, Listing } from "../types.ts";
+import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
 import { num, str } from "./ldoffer.ts";
 
@@ -57,6 +58,10 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 	const description = str(item.description) ?? "";
 	const area = extractArea(description);
 	const rooms = extractRooms(description);
+	const parsed = parseAddressFromText(description);
+	const address = parsed
+		? formatAddressForGeocode(parsed.street, parsed.number)
+		: null;
 
 	// No title in the feed; derive a readable one from the description.
 	const title =
@@ -73,6 +78,7 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 		rooms,
 		floor: null,
 		district: null,
+		address,
 		lat: null,
 		lng: null,
 		listedAt: null,

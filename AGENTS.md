@@ -33,7 +33,16 @@ npm run crawl:olx         # olx Krakow, saves to DB
 npm run crawl:all         # both sources sequentially (hourly cron entry point)
 npm run import-rcn        # import historical RCN transactions (large download)
 npm run assign-buildings  # match listings/transactions to OSM buildings
+npm run geocode-addresses # geocode listings that carry only an address
 ```
+
+`geocode-addresses` fills the coordinate gap for portals that hide
+lat/lng (morizon, gratka, domiporta, nieruchomosci-online): the adapters
+parse a street address into `listings.address`, then this script matches
+it against the local `osm_buildings` index (exact street+housenumber →
+building centroid, street-only → street centroid) and falls back to
+Nominatim (1 req/s, descriptive UA) for street-level points. Re-run
+`assign-buildings` afterwards to anchor the new points.
 
 ## Scheduled (hourly) refresh
 

@@ -18,6 +18,21 @@ export interface LdOfferConfig {
 	offerToListing(offer: Record<string, unknown>): Listing | null;
 }
 
+/** Structured street info commonly found on Offer.itemOffered.address. */
+export interface OfferAddress {
+	streetAddress?: unknown;
+	addressLocality?: unknown;
+}
+
+export function ldOfferAddress(offer: Record<string, unknown>): OfferAddress {
+	const item = (offer.itemOffered ?? {}) as Record<string, unknown>;
+	const address = (item.address ?? {}) as Record<string, unknown>;
+	return {
+		streetAddress: address.streetAddress,
+		addressLocality: address.addressLocality,
+	};
+}
+
 export function makeLdOfferAdapter(cfg: LdOfferConfig): CheerioAdapter {
 	const firstPage = cfg.firstPage ?? 1;
 	return {

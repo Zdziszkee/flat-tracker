@@ -203,6 +203,15 @@ type GeoJsonFeatureCollection = {
 	}>;
 };
 
+type BuildingGeoJsonFeatureCollection = {
+	type: "FeatureCollection";
+	features: Array<{
+		type: "Feature";
+		geometry: unknown;
+		properties: { osmId: number; address: string | null; txCount: number };
+	}>;
+};
+
 function toGeoJson(listings: ApiListing[]): GeoJsonFeatureCollection {
 	return {
 		type: "FeatureCollection",
@@ -308,24 +317,42 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 		);
 
 		map.on("load", () => {
-			// 3D buildings from Mapbox's composite source (OSM-derived).
-			map.addLayer(
-				{
-					id: "3d-buildings",
-					source: "composite",
-					"source-layer": "building",
-					filter: ["==", "extrude", "true"],
-					type: "fill-extrusion",
-					minzoom: 14.5,
-					paint: {
-						"fill-extrusion-color": "#c8c8cc",
-						"fill-extrusion-height": ["coalesce", ["get", "height"], 0],
-						"fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
-						"fill-extrusion-opacity": 0.55,
-					},
-				},
-				"waterway-label",
-			);
+			// Load buildings with their RCN transaction counts, then draw them
+			// color-coded: amber = has price history, gray = none.
+			void fetch("/api/buildings/geojson")
+				.then((r) => r.json())
+				.then((fc: BuildingGeoJsonFeatureCollection) => {
+					map.addSource("buildings-rcn", { type: "geojson", data: fc });
+					map.addLayer(
+						{
+							id: "3d-buildings",
+							source: "buildings-rcn",
+							type: "fill-extrusion",
+							minzoom: 14.5,
+							paint: {
+								"fill-extrusion-color": [
+									"step",
+									["coalesce", ["get", "txCount"], 0],
+									"#b8b8c0", // no history: neutral gray
+									1,
+									"#d9a441", // has history: warm amber
+								],
+								"fill-extrusion-height": 12,
+								"fill-extrusion-base": 0,
+								"fill-extrusion-opacity": [
+									"case",
+									["==", ["get", "txCount"], 0],
+									0.4,
+									0.7,
+								],
+							},
+						},
+						"waterway-label",
+					);
+				})
+				.catch(() => {
+					// Buildings layer is optional; the map works without it.
+				});
 
 			// Listings as a GeoJSON circle layer (fast with thousands of points).
 			map.addSource("listings", {

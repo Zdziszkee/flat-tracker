@@ -29,6 +29,7 @@ export const ListingSchema = Schema.Struct({
 	rooms: Schema.Union(Schema.Number, Schema.Null),
 	floor: Schema.Union(Schema.String, Schema.Null),
 	district: Schema.Union(Schema.String, Schema.Null),
+	address: Schema.Union(Schema.String, Schema.Null),
 	lat: Schema.Union(Schema.Number, Schema.Null),
 	lng: Schema.Union(Schema.Number, Schema.Null),
 	listedAt: Schema.Union(Schema.String, Schema.Null),

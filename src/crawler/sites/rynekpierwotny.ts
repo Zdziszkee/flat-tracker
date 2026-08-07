@@ -125,7 +125,8 @@ function offerToListing(offer: RpOffer): Listing | null {
 	// Vendor slug for a stable offer URL (/oferty/<vendor>/<slug>-<id>/).
 	const stages = offer.groups?.stages ?? [];
 	const vendorSlug =
-		stages.find((s) => s.offer?.vendor?.slug)?.offer?.vendor?.slug ?? "deweloper";
+		stages.find((s) => s.offer?.vendor?.slug)?.offer?.vendor?.slug ??
+		"deweloper";
 	const url = `https://rynekpierwotny.pl/oferty/${vendorSlug}/${slug}-${id}/`;
 
 	const coords = offer.geo_point?.coordinates ?? [];
@@ -140,6 +141,7 @@ function offerToListing(offer: RpOffer): Listing | null {
 		rooms: null,
 		floor: null,
 		district: offer.region?.district ?? null,
+		address: null,
 		// GeoJSON Point coordinates are [lng, lat].
 		lat: coords.length >= 2 ? coords[1] : null,
 		lng: coords.length >= 2 ? coords[0] : null,

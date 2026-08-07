@@ -1,5 +1,6 @@
 import type { Listing } from "../types.ts";
-import { makeLdOfferAdapter, num, str } from "./ldoffer.ts";
+import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
+import { ldOfferAddress, makeLdOfferAdapter, num, str } from "./ldoffer.ts";
 
 function offerToListing(offer: Record<string, unknown>): Listing | null {
 	const url = str(offer.url);
@@ -8,11 +9,25 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 	if (!url || !title || price === null) return null;
 
 	const item = (offer.itemOffered ?? {}) as Record<string, unknown>;
-	const address = (item.address ?? {}) as Record<string, unknown>;
+	const addr = ldOfferAddress(offer);
 	const size = (item.floorSize ?? {}) as Record<string, unknown>;
 	const rooms = num(item.numberOfRooms ?? item.rooms);
 	const floor = num(item.floorLevel ?? item.floor);
 	const area = num(size.value);
+	const district = str(addr.addressLocality);
+
+	const street = str(addr.streetAddress);
+	const desc = str(item.description);
+	const parsed = desc ? parseAddressFromText(desc) : null;
+	const geocodeAddress = street
+		? formatAddressForGeocode(
+				street,
+				parsed && parsed.street.toLowerCase() === street.toLowerCase()
+					? parsed.number
+					: undefined,
+				district,
+			)
+		: null;
 
 	return {
 		source: "gratka",
@@ -25,7 +40,8 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 		areaM2: area,
 		rooms,
 		floor: floor !== null ? String(floor) : null,
-		district: str(address.addressLocality),
+		district,
+		address: geocodeAddress,
 		lat: null,
 		lng: null,
 		listedAt: null,

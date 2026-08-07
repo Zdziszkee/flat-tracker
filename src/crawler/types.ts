@@ -26,6 +26,9 @@ export interface Listing {
 	rooms: number | null;
 	floor: string | null;
 	district: string | null;
+	/** Street address parsed from the feed, used for geocoding when the
+	 * portal hides coordinates (e.g. "Jakuba Bojki 12"). */
+	address: string | null;
 	lat: number | null;
 	lng: number | null;
 	/** When the ad was created on the portal, ISO string or null. */

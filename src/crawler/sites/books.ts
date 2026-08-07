@@ -39,6 +39,7 @@ export const booksAdapter: CheerioAdapter = {
 			rooms: null,
 			floor: null,
 			district: null,
+			address: null,
 			lat: null,
 			lng: null,
 			listedAt: null,

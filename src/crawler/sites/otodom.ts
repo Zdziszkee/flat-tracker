@@ -84,6 +84,7 @@ function listItemToListing(item: OtodomListItem): Listing {
 		rooms: item.roomsNumber ? (ROOMS[item.roomsNumber] ?? null) : null,
 		floor: item.floorNumber ?? null,
 		district: districtOf(item.location?.reverseGeocoding?.locations),
+		address: null,
 		lat: null,
 		lng: null,
 		listedAt: item.dateCreated
@@ -108,6 +109,7 @@ function detailToListing(detail: OtodomDetail, url: string): Listing {
 		rooms: Number(attrs.rooms_num) || null,
 		floor: typeof attrs.floor_no === "string" ? attrs.floor_no : null,
 		district: districtOf(detail.location?.reverseGeocoding?.locations),
+		address: null,
 		lat: detail.location?.coordinates?.latitude ?? null,
 		lng: detail.location?.coordinates?.longitude ?? null,
 		listedAt: detail.lifecycle?.createdAt ?? null,

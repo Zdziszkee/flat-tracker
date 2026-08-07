@@ -1,4 +1,5 @@
 import type { CheerioAdapter, Listing } from "../types.ts";
+import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
 import { num, str } from "./ldoffer.ts";
 
@@ -48,8 +49,13 @@ function itemToListing(item: Record<string, unknown>): Listing | null {
 	const price = num(offer.price);
 	if (!title || !url || price === null) return null;
 
-	// No structured address; the district is embedded in the title.
+	// No structured address; parse street (+ number) from the title/description.
 	const district = extractDistrict(title);
+	const desc = str(item.description);
+	const parsed = parseAddressFromText(desc) ?? parseAddressFromText(title);
+	const address = parsed
+		? formatAddressForGeocode(parsed.street, parsed.number, district)
+		: null;
 
 	return {
 		source: "domiporta",
@@ -62,6 +68,7 @@ function itemToListing(item: Record<string, unknown>): Listing | null {
 		rooms: null,
 		floor: null,
 		district,
+		address,
 		lat: null,
 		lng: null,
 		listedAt: str(item.datePosted),
