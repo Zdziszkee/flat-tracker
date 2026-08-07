@@ -133,6 +133,9 @@ interface BuildingLookup {
 				pricePerM2: number | null;
 				areaM2: number | null;
 				rooms: number | null;
+				street: string | null;
+				streetNumber: string | null;
+				district: string | null;
 			}>;
 		} | null;
 	} | null;
@@ -176,13 +179,15 @@ function buildingPopupHtml(data: BuildingLookup): string {
 		s.recent.length > 0
 			? `<div class="mt-1 border-t pt-1 text-xs">
           ${s.recent
-						.map(
-							(t) =>
-								`<div class="flex justify-between gap-3">
-                  <span>${t.date.slice(0, 7)}</span>
+						.map((t) => {
+							const addr = t.street
+								? `${escapeHtml(t.street)}${t.streetNumber ? ` ${escapeHtml(t.streetNumber)}` : ""}`
+								: null;
+							return `<div class="flex justify-between gap-3">
+                  <span>${t.date.slice(0, 7)}${addr ? ` · ${addr}` : ""}</span>
                   <span>${t.price.toLocaleString("pl-PL")} zł${t.areaM2 ? ` · ${Math.round(t.areaM2)} m²` : ""}${t.pricePerM2 ? ` · ${Math.round(t.pricePerM2).toLocaleString("pl-PL")} zł/m²` : ""}</span>
-                </div>`,
-						)
+                </div>`;
+						})
 						.join("")}
         </div>`
 			: "";

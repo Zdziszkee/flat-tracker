@@ -203,6 +203,9 @@ interface BuildingStats {
 		pricePerM2: number | null;
 		areaM2: number | null;
 		rooms: number | null;
+		street: string | null;
+		streetNumber: string | null;
+		district: string | null;
 	}>;
 }
 
@@ -243,6 +246,9 @@ async function buildingStats(buildingId: number): Promise<BuildingStats> {
 			pricePerM2: transactions.pricePerM2,
 			areaM2: transactions.areaM2,
 			rooms: transactions.rooms,
+			street: transactions.street,
+			streetNumber: transactions.streetNumber,
+			district: transactions.district,
 		})
 		.from(transactions)
 		.where(eq(transactions.buildingId, buildingId))
