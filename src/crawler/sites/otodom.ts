@@ -136,7 +136,7 @@ export const otodomAdapter: CheerioAdapter = {
 	name: "Otodom - Krakow flats for sale",
 	kind: "cheerio",
 	startUrls: [KRAKOW_LIST_URL],
-	maxRequestsPerCrawl: 120,
+	maxRequestsPerCrawl: 6000,
 
 	async extractHtml(html, url, enqueue) {
 		const data = parseOtodomHtml(html);
@@ -153,16 +153,43 @@ export const otodomAdapter: CheerioAdapter = {
 		const items = searchAds?.items ?? [];
 		const pagination = searchAds?.pagination;
 
+		// dateCreated looks like "2026-08-04 21:39:19" (Europe/Warsaw local).
+		const since = this.since ? new Date(this.since) : null;
+		const itemDate = (item: OtodomListItem): Date | null =>
+			item.dateCreated ? new Date(item.dateCreated.replace(" ", "T")) : null;
+		const isRecent = (item: OtodomListItem): boolean => {
+			if (!since) return true;
+			const d = itemDate(item);
+			return d === null || d >= since; // cannot judge, keep it
+		};
+
 		const listings = items.map(listItemToListing);
 
-		const detailUrls = listings.map((l) => l.url);
-		enqueue(detailUrls);
+		// Only enqueue detail pages for postings within the since window.
+		const recentItems = items.filter(isRecent);
+		await enqueue(
+			recentItems.map((item) => `https://www.otodom.pl/pl/oferta/${item.slug}`),
+		);
 
-		// Follow pagination while within the run cap.
-		if (pagination?.currentPage) {
+		// The list is sorted newest-first (by push date, so a single pushed-up
+		// old ad can sit on page 1). Continue pagination while the newest
+		// creation date on the page is still inside the window; once an entire
+		// page predates `since`, later pages do too.
+		const newest = items.reduce<Date | null>(
+			(max, item) => {
+				const d = itemDate(item);
+				return d && (!max || d > max) ? d : max;
+			},
+			null,
+		);
+		console.log(
+			`otodom list: items=${items.length} recent=${recentItems.length} currentPage=${pagination?.currentPage ?? "?"} newest=${newest?.toISOString().slice(0, 10) ?? "?"}`,
+		);
+		const pageStillFresh = !since || newest === null || newest >= since;
+		if (pagination?.currentPage && pageStillFresh && items.length > 0) {
 			const current = pagination.currentPage;
 			const nextUrl = `${KRAKOW_LIST_URL}&page=${current + 1}`;
-			enqueue([nextUrl]);
+			await enqueue([nextUrl]);
 		}
 
 		return listings;

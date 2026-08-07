@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { and, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
 
@@ -51,5 +51,27 @@ export async function saveListings(list: Listing[]): Promise<number> {
 		})
 		.returning({ id: listings.id });
 
+	return result.length;
+}
+
+/**
+ * Delete portal listings created before `since`. The crawl only fetches
+ * postings within the window, so anything older is stale and would
+ * otherwise linger in the DB forever.
+ */
+export async function pruneOldListings(
+	since: Date,
+	sources: string[] = ["otodom", "olx"],
+): Promise<number> {
+	const result = await db
+		.delete(listings)
+		.where(
+			and(
+				inArray(listings.source, sources),
+				isNotNull(listings.listedAt),
+				lt(listings.listedAt, since),
+			),
+		)
+		.returning({ id: listings.id });
 	return result.length;
 }

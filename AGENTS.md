@@ -23,12 +23,32 @@ OpenStreetMap building.
 npm run dev               # start dev server (vite, port 3000)
 npm run db:generate       # new migration from schema changes
 npm run db:migrate        # apply migrations
-npm run crawl -- --site <id> [--save-db]   # crawl one site
+npm run crawl -- --site <id> [--save-db] [--since-days N]   # crawl one site
 npm run crawl:otodom      # otodom Krakow, saves to DB
 npm run crawl:olx         # olx Krakow, saves to DB
+npm run crawl:all         # both sources sequentially (hourly cron entry point)
 npm run import-rcn        # import historical RCN transactions (large download)
 npm run assign-buildings  # match listings/transactions to OSM buildings
 ```
+
+## Scheduled (hourly) refresh
+
+Crawls are incremental and idempotent, designed for a once-per-hour cron:
+
+```bash
+# every hour: refetch both sources, upsert new/changed listings,
+# prune otodom/olx listings older than the since window (default 90 days)
+npm run crawl:all
+```
+
+- Upserts by `(source, externalId)`: re-running is safe and self-refining
+  (detail pages add coordinates to list-page records).
+- `--since-days N` bounds the fetch window and prunes older portal
+  listings afterwards, so the DB only holds active/recent offers.
+- The crawler paces requests (3 concurrent, ~350 ms delay) and retries
+  403s with backoff to stay under portal throttling.
+- For a production cron, wire `runCrawlWithRetry` (exponential backoff)
+  from `src/crawler/pipeline.ts` or run `npm run crawl:all -- --retry`.
 
 `assign-buildings` uses a **local OSM building index** (`osm_buildings`
 table) built from a Geofabrik extract of the małopolskie region

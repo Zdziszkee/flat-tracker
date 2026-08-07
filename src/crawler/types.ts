@@ -41,6 +41,12 @@ interface AdapterBase {
 	startUrls: string[];
 	/** Hard cap on pages per run. */
 	maxRequestsPerCrawl?: number;
+	/**
+	 * Only keep listings created at or after this ISO date. List pages are
+	 * sorted newest-first, so adapters stop paginating once a page is fully
+	 * older than `since`.
+	 */
+	since?: string;
 }
 
 /**
@@ -65,7 +71,7 @@ export interface CheerioAdapter extends AdapterBase {
 	extractHtml?: (
 		html: string,
 		url: string,
-		enqueue: (urls: string[]) => void,
+		enqueue: (urls: string[]) => void | Promise<void>,
 	) => Promise<Listing[]>;
 }
 

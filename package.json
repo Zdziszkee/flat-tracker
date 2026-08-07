@@ -21,6 +21,7 @@
     "crawl": "tsx src/crawler/run.ts",
     "crawl:otodom": "tsx src/crawler/run.ts --site otodom --save-db",
     "crawl:olx": "tsx src/crawler/run.ts --site olx --save-db",
+    "crawl:all": "tsx src/crawler/run.ts --site otodom --save-db && tsx src/crawler/run.ts --site olx --save-db",
     "import-rcn": "tsx src/crawler/import-rcn.ts",
     "assign-buildings": "tsx src/crawler/assign-buildings.ts"
   },

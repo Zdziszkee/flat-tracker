@@ -46,14 +46,21 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 	const crawler = new CheerioCrawler(
 		{
 			maxRequestsPerCrawl,
-			maxConcurrency: 6,
-			maxRequestRetries: 3,
+			maxConcurrency: 3,
+			maxRequestRetries: 5,
+			// Otodom/OLX return 403 when we burst; retry those with backoff
+			// instead of giving up immediately.
+			retryOnBlocked: true,
 			async requestHandler({ $, request, enqueueLinks, body }) {
+				// Polite pacing: portals throttle bursty crawlers.
+				await new Promise((r) => setTimeout(r, 350));
 				// Strategy B: whole-page HTML extraction (embedded JSON).
 				if (adapter.extractHtml) {
-					const pushUrls = (urls: string[]) => {
-						void enqueueLinks({ urls, label: "internal" });
-					};
+					// Return the promise so the handler awaits queue adds; a
+					// fire-and-forget enqueue can race the crawler's empty-queue
+					// check and end the run before the next page is enqueued.
+					const pushUrls = (urls: string[]) =>
+						enqueueLinks({ urls, label: "internal" }).then(() => undefined);
 					const pageListings = await adapter.extractHtml(
 						body.toString(),
 						request.url,

@@ -92,27 +92,42 @@ const KRAKOW_LIST_URL =
  * Adapter for olx.pl flat listings in Krakow.
  *
  * OLX renders server-side and embeds the full ad list (including map
- * coordinates) as JSON in the HTML, so no browser is needed.
+ * coordinates) as JSON in the HTML, so no browser is needed. OLX has ~25
+ * result pages; the adapter walks them all (the request cap bounds the run)
+ * and keeps only postings created within the `since` window.
  */
 export const olxAdapter: CheerioAdapter = {
 	id: "olx",
 	name: "OLX - Krakow flats for sale",
 	kind: "cheerio",
 	startUrls: [KRAKOW_LIST_URL],
-	maxRequestsPerCrawl: 50,
+	maxRequestsPerCrawl: 1500,
 
 	async extractHtml(html, _url, enqueue) {
 		const state = parseOlxHtml(html);
 		const listing = state.listing?.listing;
 		const ads = listing?.ads ?? [];
 
-		// Pagination: OLX uses 0-based ?page=N.
+		console.log(
+			`olx page: pageNumber=${listing?.pageNumber ?? "?"} totalPages=${listing?.totalPages ?? "?"} ads=${ads.length}`,
+		);
+
+		const since = this.since ? new Date(this.since) : null;
+		const recent = ads.filter((ad) => {
+			if (!since) return true;
+			if (!ad.createdTime) return true;
+			return new Date(ad.createdTime) >= since;
+		});
+
+		// Pagination: state pageNumber is 0-based, but the ?page=N URL param
+		// is 1-based (?page=1 === page 0). Enqueue ?page=pageNumber+2 to get
+		// the next page; the since filter above drops older postings.
 		const pageNumber = listing?.pageNumber ?? 0;
 		const totalPages = listing?.totalPages ?? 0;
 		if (pageNumber + 1 < totalPages) {
-			enqueue([`${KRAKOW_LIST_URL}?page=${pageNumber + 1}`]);
+			await enqueue([`${KRAKOW_LIST_URL}?page=${pageNumber + 2}`]);
 		}
 
-		return ads.map(adToListing);
+		return recent.map(adToListing);
 	},
 };

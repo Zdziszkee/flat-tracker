@@ -62,7 +62,7 @@ export const Route = createFileRoute("/api/listings")({
 					.leftJoin(buildings, eq(listings.buildingId, buildings.id))
 					.where(isNotNull(listings.lat))
 					.orderBy(sql`${listings.scrapedAt} desc`)
-					.limit(2000);
+					.limit(6000);
 
 				const summary = await transactionSummary();
 
