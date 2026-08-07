@@ -21,8 +21,10 @@ function transactionSummary(): Promise<BuildingSummary[]> {
 			address: buildings.address,
 			txCount: sql<number>`count(${transactions.id})`,
 			txAvgPricePerM2: sql<number | null>`avg(${transactions.pricePerM2})`,
-			txMinDate: sql<string | null>`min(${transactions.date})`,
-			txMaxDate: sql<string | null>`max(${transactions.date})`,
+			// `date` is a unix timestamp; render as YYYY-MM-DD strings so the
+			// client can slice years without type gymnastics.
+			txMinDate: sql<string | null>`strftime('%Y-%m-%d', min(${transactions.date}), 'unixepoch')`,
+			txMaxDate: sql<string | null>`strftime('%Y-%m-%d', max(${transactions.date}), 'unixepoch')`,
 		})
 		.from(transactions)
 		.innerJoin(buildings, eq(transactions.buildingId, buildings.id))

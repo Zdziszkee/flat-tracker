@@ -28,8 +28,8 @@ export interface ApiListing {
 		address: string | null;
 		txCount: number;
 		txAvgPricePerM2: number | null;
-		txMinDate: string | null;
-		txMaxDate: string | null;
+		txMinDate: string | number | null;
+		txMaxDate: string | number | null;
 	} | null;
 }
 
@@ -54,6 +54,15 @@ function formatPln(n: number | null): string {
 		currency: "PLN",
 		maximumFractionDigits: 0,
 	}).format(n);
+}
+
+/** Extract the 4-digit year from a date string ("2022-05-30") or unix timestamp. */
+function yearOf(d: string | number | null | undefined): string {
+	if (d === null || d === undefined) return "";
+	if (typeof d === "number") {
+		return new Date(d * 1000).getUTCFullYear().toString();
+	}
+	return d.slice(0, 4);
 }
 
 function ListingMarker({ l }: { l: ApiListing }) {
@@ -95,8 +104,8 @@ function ListingMarker({ l }: { l: ApiListing }) {
 							</div>
 							<div>
 								Śr. {formatPln(l.transactionStats.txAvgPricePerM2)}/m²
-								{l.transactionStats.txMinDate &&
-									` (${l.transactionStats.txMinDate.slice(0, 4)}-${l.transactionStats.txMaxDate?.slice(0, 4)})`}
+								{yearOf(l.transactionStats.txMinDate) &&
+									` (${yearOf(l.transactionStats.txMinDate)}-${yearOf(l.transactionStats.txMaxDate)})`}
 							</div>
 						</div>
 					)}
