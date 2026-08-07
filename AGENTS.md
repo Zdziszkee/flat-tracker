@@ -64,6 +64,10 @@ assigns all 84k transactions in minutes, not hours.
 |---|---|---|
 | otodom.pl | Active sale listings, Krakow | HTML `__NEXT_DATA__` JSON; list pages have no coords, detail pages (`/pl/oferta/`) add lat/lng |
 | olx.pl | Active sale listings, Krakow | HTML `window.__PRERENDERED_STATE__` JSON incl. coordinates |
+| morizon.pl / gratka.pl | Same feed (one company), agency-heavy | schema.org LD+JSON (`Offer` nodes); pagination `?page=N` |
+| domiporta.pl | Agency listings | LD+JSON `@graph` `ItemList` of `RealEstateListing`; pagination `?PageNumber=N` |
+| nieruchomosci-online.pl | Agency listings | LD+JSON `CollectionPage` offers; pagination `&p=N` |
+| rynekpierwotny.pl | New-development projects (osiedla) | `window.__INITIAL_STATE__` `offerList.list.offers` with geo points + price ranges; pagination `?page=N` |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
 
@@ -114,6 +118,10 @@ graph TD
    - **DOM cards**: `listingSelector` + `parseListingCard($, el)`
    - **Embedded JSON**: `extractHtml(html, url, enqueue)` — return listings,
      call `enqueue(urls)` for detail pages / pagination (see `otodom.ts`)
+   - **LD+JSON**: many Polish portals (morizon, gratka, domiporta,
+     nieruchomosci-online) embed their feed as schema.org JSON. Use
+     `parseLdJson`/`findLdNodes` from `ldjson.ts`, or the
+     `makeLdOfferAdapter` factory for the shared Morizon/Gratka shape.
 3. Register it in `src/crawler/sites/index.ts`.
 4. Test: `npm run crawl -- --site <id> --save-db` (uses Node/tsx).
 

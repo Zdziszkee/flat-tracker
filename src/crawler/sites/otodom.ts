@@ -175,13 +175,10 @@ export const otodomAdapter: CheerioAdapter = {
 		// old ad can sit on page 1). Continue pagination while the newest
 		// creation date on the page is still inside the window; once an entire
 		// page predates `since`, later pages do too.
-		const newest = items.reduce<Date | null>(
-			(max, item) => {
-				const d = itemDate(item);
-				return d && (!max || d > max) ? d : max;
-			},
-			null,
-		);
+		const newest = items.reduce<Date | null>((max, item) => {
+			const d = itemDate(item);
+			return d && (!max || d > max) ? d : max;
+		}, null);
 		console.log(
 			`otodom list: items=${items.length} recent=${recentItems.length} currentPage=${pagination?.currentPage ?? "?"} newest=${newest?.toISOString().slice(0, 10) ?? "?"}`,
 		);
