@@ -1,27 +1,238 @@
 /**
  * Address parsing helpers for feeds that carry street names but no
  * coordinates (morizon, gratka, domiporta, nieruchomosci-online).
+ *
+ * The parser is deliberately strict: ad descriptions are full of boilerplate
+ * ("Oferujemy...", "Zapraszam...", "Biuro...") and a loose regex happily
+ * emits garbage like "Sztuka, Krowodrza, Kraków" as an address, which then
+ * geocodes to a random point. We only accept a street when it is
+ * explicitly prefixed (ul./al./os./...) or carries a housenumber, and the
+ * words must not be ad-speak.
  */
+
+const WORD = "[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]";
+const REST = "[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż .'-]";
+const PREFIX_SRC =
+	"(?:ul\\.?|al\\.?|aleja|os\\.?|osiedle|pl\\.?|plac|rynek|bulwar|rondo)";
+
+/** "ul. Jakuba Bojki 12/5" — explicit prefix, number optional. */
+const PREFIXED_RE = new RegExp(
+	`(?:^|[,\\s(:"'“”„»])(${PREFIX_SRC}\\s+${WORD}${REST}{0,60})\\s*(\\d{1,4}[A-Za-z]?)?(?:\\/\\d+)?(?=[,\\s/)]|$)`,
+	"giu",
+);
+
+/** "Jakuba Bojki 12" — bare street, housenumber REQUIRED. */
+const BARE_RE = new RegExp(
+	`(?:^|[,\\s(:"'“”„»])(${WORD}${REST}{1,60})\\s+(\\d{1,4}[A-Za-z]?)(?:\\/\\d+)?(?=[,\\s/)]|$)`,
+	"giu",
+);
+
+/** Words that never start a street name (ad-speak, real-estate jargon). */
+const STOPWORDS = new Set([
+	"mieszkanie",
+	"mieszkania",
+	"mieszkaniowe",
+	"mieszkaniowy",
+	"sprzedaz",
+	"sprzedam",
+	"sprzedaje",
+	"sprzedajemy",
+	"sprzedazy",
+	"oferta",
+	"oferty",
+	"ofert",
+	"oferujemy",
+	"oferuje",
+	"oferujemy",
+	"zapraszam",
+	"zapraszamy",
+	"biuro",
+	"zakup",
+	"kupno",
+	"kupie",
+	"kupimy",
+	"pokoje",
+	"pokoj",
+	"pokojowe",
+	"pokojowa",
+	"pokoik",
+	"kawalerka",
+	"kawalerki",
+	"apartament",
+	"apartamenty",
+	"dom",
+	"domy",
+	"pietro",
+	"pietra",
+	"budynek",
+	"budynki",
+	"lokal",
+	"lokale",
+	"klatka",
+	"kondygnacja",
+	"cena",
+	"powierzchnia",
+	"parking",
+	"szukam",
+	"szukamy",
+	"start",
+	"krakow",
+	"krakowie",
+	"nowoczesne",
+	"nowoczesna",
+	"komfortowe",
+	"komfortowa",
+	"atrakcyjne",
+	"atrakcyjna",
+	"piekne",
+	"piekna",
+	"swietne",
+	"swietna",
+	"idealne",
+	"idealna",
+	"dobre",
+	"dobra",
+	"duze",
+	"duza",
+	"male",
+	"mala",
+	"tanie",
+	"tania",
+	"drogie",
+	"droga",
+	"wysokie",
+	"wysoka",
+	"niskie",
+	"niska",
+	"wygodne",
+	"wygodna",
+	"przestronne",
+	"przestronna",
+	"serdecznie",
+	"witam",
+	"kontaktu",
+	"telefonu",
+	"zainteresowanych",
+	"szczegolami",
+	"bezposrednio",
+	"polecam",
+	"inwestycja",
+	"zl",
+	"zł",
+	"zlotych",
+	"tys",
+	"tysiecy",
+	"osob",
+	"osoby",
+	"piwnica",
+	"balkon",
+	"taras",
+	"ogrod",
+	"garaz",
+	"winda",
+	"sztuka",
+	"sztuki",
+	"nabor",
+	"inwestor",
+	"deweloper",
+	"dewelopera",
+	"standard",
+	"wykonczenie",
+	"ul",
+	"al",
+	"os",
+	"pl",
+	"ulica",
+	"aleja",
+	"osiedle",
+	"plac",
+	"rynek",
+	"bulwar",
+	"rondo",
+	"sw",
+	"ks",
+	"gen",
+	"prof",
+	"dr",
+	"mgr",
+	"nr",
+]);
+
+/** Short function words allowed inside a street name ("ul. Na Błoniach"). */
+const FUNCTION_WORDS = new Set([
+	"na",
+	"w",
+	"z",
+	"do",
+	"od",
+	"po",
+	"przy",
+	"pod",
+	"nad",
+	"i",
+	"oraz",
+	"u",
+	"o",
+	"a",
+	"im",
+	"dla",
+	"bez",
+	"między",
+	"miedzy",
+	"ku",
+]);
+
+function stripPrefix(street: string): string {
+	return street
+		.replace(
+			/^(?:ul\.?|al\.?|aleja|os\.?|osiedle|pl\.?|plac|rynek|bulwar|rondo)\s+/iu,
+			"",
+		)
+		.trim();
+}
+
+function validStreet(street: string): boolean {
+	if (street.length < 3) return false;
+	const words = street.toLowerCase().split(/\s+/);
+	return words.every((w) => {
+		const clean = w.replace(/\.$/, ""); // "ul." -> "ul"
+		if (FUNCTION_WORDS.has(clean)) return true;
+		return !STOPWORDS.has(clean);
+	});
+}
 
 /** Extract "Street 12" from free text like "ul. Jakuba Bojki 12/5, Kraków". */
 export function parseAddressFromText(
 	text: string | null | undefined,
 ): { street: string; number?: string } | null {
 	if (!text) return null;
-	const m = text.match(
-		/(?:ul\.?|al\.?|aleja|os\.?|osiedle|pl\.?|rynek)?\s*([A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż][A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż .'-]{1,60}?)\s*(\d{1,4}[A-Za-z]?)?(?:\/\d+)?(?:[,\s]|$)/iu,
+	const t = text.replace(/\s+/g, " ").trim();
+
+	const candidates: Array<{ index: number; street: string; number?: string }> =
+		[];
+	for (const m of t.matchAll(PREFIXED_RE)) {
+		candidates.push({ index: m.index ?? 0, street: m[1], number: m[2] });
+	}
+	for (const m of t.matchAll(BARE_RE)) {
+		candidates.push({ index: m.index ?? 0, street: m[1], number: m[2] });
+	}
+	candidates.sort((a, b) => a.index - b.index);
+
+	for (const c of candidates) {
+		const street = stripPrefix(c.street).replace(/\s+/g, " ").trim();
+		if (!validStreet(street)) continue;
+		return { street, number: c.number ?? undefined };
+	}
+	return null;
+}
+
+/** True if the string plausibly names a street (housenumber or prefix). */
+export function plausibleAddress(address: string | null | undefined): boolean {
+	if (!address) return false;
+	if (/\d/.test(address)) return true;
+	return new RegExp(`(?:^|[,\\s])${PREFIX_SRC}\\s+${WORD}`, "giu").test(
+		address,
 	);
-	if (!m) return null;
-	const street = m[1].trim().replace(/\s+/g, " ");
-	// Heuristic: the match must look like a street (not a sentence fragment):
-	// at least 2 chars, not a stopword, and ideally followed by a number or
-	// at the start of a line.
-	if (street.length < 2) return null;
-	if (
-		/^(na|w|z|do|przy|dla|bez|nowe|mieszkanie|sprzedaż|oferta)$/iu.test(street)
-	)
-		return null;
-	return { street, number: m[2] ?? undefined };
 }
 
 /** Build a geocodable address string, e.g. "Jakuba Bojki 12, Kraków". */

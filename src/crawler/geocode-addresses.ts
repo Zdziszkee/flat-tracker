@@ -4,6 +4,7 @@ import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { db } from "#/db/index";
 import { buildings, listings } from "#/db/schema";
 import { buildStreetIndex, matchAddressString } from "./address-index.ts";
+import { plausibleAddress } from "./sites/address.ts";
 
 /**
  * Geocode listings that have an address but no coordinates (portals that
@@ -108,7 +109,13 @@ async function main(): Promise<void> {
 			continue;
 		}
 
-		// 2. Nominatim street-level geocode.
+		// 2. Nominatim street-level geocode. Only for plausible addresses
+		// (housenumber or explicit street prefix) — ad-speak like
+		// "Oferujemy, Kraków" would otherwise geocode to a random point.
+		if (!plausibleAddress(l.address)) {
+			misses++;
+			continue;
+		}
 		const q = l.district
 			? `${l.address}, ${l.district}, Kraków`
 			: `${l.address}, Kraków`;
