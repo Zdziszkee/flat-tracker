@@ -203,20 +203,6 @@ type GeoJsonFeatureCollection = {
 	}>;
 };
 
-type BuildingGeoJsonFeatureCollection = {
-	type: "FeatureCollection";
-	features: Array<{
-		type: "Feature";
-		geometry: unknown;
-		properties: {
-			osmId: number;
-			address: string | null;
-			txCount: number;
-			height: number;
-		};
-	}>;
-};
-
 function toGeoJson(listings: ApiListing[]): GeoJsonFeatureCollection {
 	return {
 		type: "FeatureCollection",
@@ -327,7 +313,10 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 		);
 
 		map.on("load", () => {
-			// 1. All OSM buildings extruded in 3D (Mapbox composite source).
+			// All OSM buildings extruded in 3D (Mapbox composite source).
+			// Buildings WITH RCN history get colored amber via feature-state
+			// (keyed by OSM id), so the color uses the building's REAL height
+			// from the Mapbox tiles - no separate overlay, no height mismatch.
 			map.addLayer(
 				{
 					id: "3d-buildings",
@@ -337,41 +326,40 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 					type: "fill-extrusion",
 					minzoom: 14.5,
 					paint: {
-						"fill-extrusion-color": "#c8c8cc",
+						"fill-extrusion-color": [
+							"case",
+							["==", ["feature-state", "hasHistory"], true],
+							"#e8a33d", // has RCN history: amber
+							"#c8c8cc", // no history: gray
+						],
 						"fill-extrusion-height": ["coalesce", ["get", "height"], 0],
 						"fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
-						"fill-extrusion-opacity": 0.55,
+						"fill-extrusion-opacity": 0.75,
 					},
 				},
 				"waterway-label",
 			);
 
-			// 2. Overlay: buildings WITH RCN history, colored amber. Only these
-			// are sent (a few thousand), so the payload stays small.
-			void fetch("/api/buildings/geojson")
+			// Mark history buildings with feature-state. Composite building
+			// features carry OSM ids (verified against our osm_buildings), so
+			// setFeatureState colors exactly the right buildings.
+			void fetch("/api/buildings/history-ids")
 				.then((r) => r.json())
-				.then((fc: BuildingGeoJsonFeatureCollection) => {
-					map.addSource("buildings-rcn", { type: "geojson", data: fc });
-					map.addLayer(
-						{
-							id: "buildings-rcn-extrude",
-							source: "buildings-rcn",
-							type: "fill-extrusion",
-							minzoom: 14.5,
-							paint: {
-								"fill-extrusion-color": "#e8a33d",
-								"fill-extrusion-height": ["coalesce", ["get", "height"], 12],
-								"fill-extrusion-base": 0,
-								// fill-extrusion-opacity only accepts constants
-								// (no data expressions in Mapbox GL).
-								"fill-extrusion-opacity": 0.85,
+				.then((d: { osmIds: number[] }) => {
+					for (const osmId of d.osmIds) {
+						map.setFeatureState(
+							{
+								source: "composite",
+								sourceLayer: "building",
+								id: osmId,
 							},
-						},
-						"waterway-label",
-					);
+							{ hasHistory: true },
+						);
+					}
+					console.log(`marked ${d.osmIds.length} buildings with history`);
 				})
 				.catch(() => {
-					// History overlay is optional; the map works without it.
+					// Coloring is optional; the map works without it.
 				});
 
 			// Listings as a GeoJSON circle layer (fast with thousands of points).
@@ -401,9 +389,7 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				},
 			});
 
-			// Click a 3D building (base or amber history overlay) to see its
-			// RCN price history. Mapbox only accepts ONE layer id per event
-			// binding, so register each layer separately.
+			// Click a 3D building to see its RCN price history.
 			const showBuildingHistory = (e: mapboxgl.MapLayerMouseEvent) => {
 				// If a listing dot is under the cursor, the listing popup wins.
 				if (
@@ -433,16 +419,13 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 						// Ignore fetch errors; the map stays usable.
 					});
 			};
-			const buildingLayers = ["3d-buildings", "buildings-rcn-extrude"];
-			for (const layerId of buildingLayers) {
-				map.on("mouseenter", layerId, () => {
-					map.getCanvas().style.cursor = "pointer";
-				});
-				map.on("mouseleave", layerId, () => {
-					map.getCanvas().style.cursor = "";
-				});
-				map.on("click", layerId, showBuildingHistory);
-			}
+			map.on("mouseenter", "3d-buildings", () => {
+				map.getCanvas().style.cursor = "pointer";
+			});
+			map.on("mouseleave", "3d-buildings", () => {
+				map.getCanvas().style.cursor = "";
+			});
+			map.on("click", "3d-buildings", showBuildingHistory);
 
 			map.on("mouseenter", "listings-circle", () => {
 				map.getCanvas().style.cursor = "pointer";

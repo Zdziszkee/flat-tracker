@@ -16,6 +16,7 @@ import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiSourcesRouteImport } from './routes/api/sources'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiBuildingsGeojsonRouteImport } from './routes/api/buildings/geojson'
+import { Route as ApiBuildingsHistoryIdsRouteImport } from './routes/api/buildings/history-ids'
 import { Route as ApiBuildingsLookupRouteImport } from './routes/api/buildings/lookup'
 
 const IndexRoute = IndexRouteImport.update({
@@ -53,6 +54,11 @@ const ApiBuildingsGeojsonRoute = ApiBuildingsGeojsonRouteImport.update({
   path: '/api/buildings/geojson',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiBuildingsHistoryIdsRoute = ApiBuildingsHistoryIdsRouteImport.update({
+  id: '/api/buildings/history-ids',
+  path: '/api/buildings/history-ids',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiBuildingsLookupRoute = ApiBuildingsLookupRouteImport.update({
   id: '/api/buildings/lookup',
   path: '/api/buildings/lookup',
@@ -67,6 +73,7 @@ export interface FileRoutesByFullPath {
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
+  '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
 }
 export interface FileRoutesByTo {
@@ -77,6 +84,7 @@ export interface FileRoutesByTo {
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
+  '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
 }
 export interface FileRoutesById {
@@ -88,6 +96,7 @@ export interface FileRoutesById {
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
+  '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
 }
 export interface FileRouteTypes {
@@ -100,6 +109,7 @@ export interface FileRouteTypes {
     | '/api/sources'
     | '/api/auth/$'
     | '/api/buildings/geojson'
+    | '/api/buildings/history-ids'
     | '/api/buildings/lookup'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -110,6 +120,7 @@ export interface FileRouteTypes {
     | '/api/sources'
     | '/api/auth/$'
     | '/api/buildings/geojson'
+    | '/api/buildings/history-ids'
     | '/api/buildings/lookup'
   id:
     | '__root__'
@@ -120,6 +131,7 @@ export interface FileRouteTypes {
     | '/api/sources'
     | '/api/auth/$'
     | '/api/buildings/geojson'
+    | '/api/buildings/history-ids'
     | '/api/buildings/lookup'
   fileRoutesById: FileRoutesById
 }
@@ -131,6 +143,7 @@ export interface RootRouteChildren {
   ApiSourcesRoute: typeof ApiSourcesRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiBuildingsGeojsonRoute: typeof ApiBuildingsGeojsonRoute
+  ApiBuildingsHistoryIdsRoute: typeof ApiBuildingsHistoryIdsRoute
   ApiBuildingsLookupRoute: typeof ApiBuildingsLookupRoute
 }
 
@@ -185,6 +198,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiBuildingsGeojsonRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/buildings/history-ids': {
+      id: '/api/buildings/history-ids'
+      path: '/api/buildings/history-ids'
+      fullPath: '/api/buildings/history-ids'
+      preLoaderRoute: typeof ApiBuildingsHistoryIdsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/buildings/lookup': {
       id: '/api/buildings/lookup'
       path: '/api/buildings/lookup'
@@ -203,6 +223,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiSourcesRoute: ApiSourcesRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiBuildingsGeojsonRoute: ApiBuildingsGeojsonRoute,
+  ApiBuildingsHistoryIdsRoute: ApiBuildingsHistoryIdsRoute,
   ApiBuildingsLookupRoute: ApiBuildingsLookupRoute,
 }
 export const routeTree = rootRouteImport
