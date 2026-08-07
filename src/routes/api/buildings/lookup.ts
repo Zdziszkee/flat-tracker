@@ -71,6 +71,45 @@ function findNearestOsm(
 	return best;
 }
 
+/** Reverse-geocode a point via Nominatim (street-level address). */
+async function reverseGeocode(
+	lat: number,
+	lng: number,
+): Promise<string | null> {
+	const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=18`;
+	try {
+		const res = await fetch(url, {
+			headers: {
+				"user-agent": "flat-tracker/0.1 (personal project)",
+				accept: "application/json",
+			},
+			signal: AbortSignal.timeout(10_000),
+		});
+		if (!res.ok) return null;
+		const j = (await res.json()) as { address?: Record<string, string> };
+		const a = j.address ?? {};
+		const street = a.road ?? a.pedestrian ?? a.footway ?? a.cycleway ?? null;
+		const number = a.house_number ?? null;
+		if (!street) return null;
+		return number ? `${street} ${number}` : street;
+	} catch {
+		return null;
+	}
+}
+
+/** Reverse-geocode with a small in-memory cache (1 per building per run). */
+const reverseCache = new Map<string, string | null>();
+async function reverseGeocodeCached(
+	lat: number,
+	lng: number,
+): Promise<string | null> {
+	const key = `${lat.toFixed(5)},${lng.toFixed(5)}`;
+	if (reverseCache.has(key)) return reverseCache.get(key) ?? null;
+	const addr = await reverseGeocode(lat, lng);
+	reverseCache.set(key, addr);
+	return addr;
+}
+
 async function getBuildingsCache(): Promise<CachedBuilding[]> {
 	if (cache) return cache;
 	const rows = await db.select().from(buildings);
@@ -257,11 +296,13 @@ export const Route = createFileRoute("/api/buildings/lookup")({
 						const osmRows = await getOsmBuildingsCache();
 						const osm = osmRows.find((r) => r.osmId === osmId);
 						if (osm) {
+							const address =
+								osm.address ?? (await reverseGeocodeCached(osm.lat, osm.lng));
 							return json({
 								building: {
 									id: null,
 									osmId: osm.osmId,
-									address: osm.address,
+									address,
 									lat: osm.lat,
 									lng: osm.lng,
 									stats: null,
@@ -297,11 +338,13 @@ export const Route = createFileRoute("/api/buildings/lookup")({
 				const osmRows = await getOsmBuildingsCache();
 				const osm = findNearestOsm(osmRows, lat, lng);
 				if (osm) {
+					const address =
+						osm.address ?? (await reverseGeocodeCached(osm.lat, osm.lng));
 					return json({
 						building: {
 							id: null,
 							osmId: osm.osmId,
-							address: osm.address,
+							address,
 							lat: osm.lat,
 							lng: osm.lng,
 							stats: null,
