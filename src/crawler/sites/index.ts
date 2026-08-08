@@ -3,6 +3,7 @@ import { booksAdapter } from "./books.ts";
 import { domiportaAdapter } from "./domiporta.ts";
 import { gratkaAdapter } from "./gratka.ts";
 import { komornikAdapter } from "./komornik.ts";
+import { investmapAdapter } from "./investmap.ts";
 import { morizonAdapter } from "./morizon.ts";
 import { nieruchomosciOnlineAdapter } from "./nieruchomosci-online.ts";
 import { olxAdapter } from "./olx.ts";
@@ -21,6 +22,7 @@ export const adapters: SiteAdapter[] = [
 	nieruchomosciOnlineAdapter,
 	rynekpierwotnyAdapter,
 	komornikAdapter,
+	investmapAdapter,
 	skalecznaAdapter,
 	quotesAdapter,
 	booksAdapter,

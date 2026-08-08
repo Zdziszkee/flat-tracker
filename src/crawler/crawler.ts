@@ -55,16 +55,17 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 			// Otodom/OLX return 403 when we burst; retry those with backoff
 			// instead of giving up immediately.
 			retryOnBlocked: true,
-			async requestHandler({ $, request, enqueueLinks, body }) {
+			async requestHandler({ $, request, enqueueLinks, addRequests, body }) {
 				// Polite pacing: portals throttle bursty crawlers.
 				await new Promise((r) => setTimeout(r, 350));
-				// Strategy B: whole-page HTML extraction (embedded JSON).
+				// Strategy B: whole-page extraction (embedded JSON or raw API).
 				if (adapter.extractHtml) {
-					// Return the promise so the handler awaits queue adds; a
-					// fire-and-forget enqueue can race the crawler's empty-queue
-					// check and end the run before the next page is enqueued.
+					// Use the request manager directly instead of `enqueueLinks`:
+					// Crawlee swaps `enqueueLinks` for a no-op stub on non-HTML
+					// responses (JSON APIs), silently dropping pagination.
+					// `addRequests` works for any content type.
 					const pushUrls = (urls: string[]) =>
-						enqueueLinks({ urls, label: "internal" }).then(() => undefined);
+						addRequests(urls).then(() => undefined);
 					const pageListings = await adapter.extractHtml(
 						body.toString(),
 						request.url,

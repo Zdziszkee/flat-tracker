@@ -61,28 +61,33 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 		scrapedAt: new Date(l.scrapedAt),
 	}));
 
-	await db
-		.insert(listings)
-		.values(rows)
-		.onConflictDoUpdate({
-			target: [listings.source, listings.externalId],
-			set: {
-				url: sql.raw(`excluded.url`),
-				title: sql.raw(`excluded.title`),
-				price: sql.raw(`excluded.price`),
-				pricePerM2: sql.raw(`excluded.pricePerM2`),
-				areaM2: sql.raw(`excluded.areaM2`),
-				rooms: sql.raw(`excluded.rooms`),
-				floor: sql.raw(`excluded.floor`),
-				district: sql.raw(`excluded.district`),
-				address: sql.raw(`excluded.address`),
-				lat: sql.raw(`excluded.lat`),
-				lng: sql.raw(`excluded.lng`),
-				listedAt: sql.raw(`excluded.listed_at`),
-				scrapedAt: sql.raw(`excluded.scraped_at`),
-			},
-		})
-		.returning({ id: listings.id });
+	// SQLite caps bound variables at ~999 per statement; big feeds
+	// (investmap: 5k+ flats per run) need chunked upserts.
+	const BATCH = 400;
+	for (let i = 0; i < rows.length; i += BATCH) {
+		await db
+			.insert(listings)
+			.values(rows.slice(i, i + BATCH))
+			.onConflictDoUpdate({
+				target: [listings.source, listings.externalId],
+				set: {
+					url: sql.raw(`excluded.url`),
+					title: sql.raw(`excluded.title`),
+					price: sql.raw(`excluded.price`),
+					pricePerM2: sql.raw(`excluded.pricePerM2`),
+					areaM2: sql.raw(`excluded.areaM2`),
+					rooms: sql.raw(`excluded.rooms`),
+					floor: sql.raw(`excluded.floor`),
+					district: sql.raw(`excluded.district`),
+					address: sql.raw(`excluded.address`),
+					lat: sql.raw(`excluded.lat`),
+					lng: sql.raw(`excluded.lng`),
+					listedAt: sql.raw(`excluded.listed_at`),
+					scrapedAt: sql.raw(`excluded.scraped_at`),
+				},
+			})
+			.returning({ id: listings.id });
+	}
 
 	return { newCount, updatedCount };
 }

@@ -31,8 +31,10 @@ npm run db:migrate        # apply migrations
 npm run crawl -- --site <id> [--save-db] [--since-days N]   # crawl one site
 npm run crawl:otodom      # otodom Krakow, saves to DB
 npm run crawl:olx         # olx Krakow, saves to DB
-npm run crawl:all         # all 8 sites + incremental RCN diff (same program as the server refresh task)
+npm run crawl:all         # all 10 sites + incremental RCN diff (same program as the server refresh task)
 npm run crawl:komornik    # licytacje.komornik.pl (Krakow flats+plots), saves to DB
+npm run crawl:skaleczna   # skaleczna.pl (Koneser Group, Kazimierz), saves to DB
+npm run crawl:investmap   # investmap.pl — every Krakow investment + flats (auto-discovery of private developments)
 npm run import-rcn        # RCN transactions: HEADs the zip, imports only NEW rows (diff)
 npm run import-rcn:force  # re-download + re-import everything
 npm run assign-buildings  # match listings/transactions to OSM buildings
@@ -95,7 +97,9 @@ history is pruned to the 7-day cap. The hourly cron keeps the full
   Run `npm run assign-buildings` after an RCN refresh to anchor the new
   transactions.
 - The crawler paces requests (3 concurrent, ~350 ms delay) and retries
-  403s with backoff to stay under portal throttling.
+  403s with backoff to stay under portal throttling. Note: Crawlee swaps
+  `enqueueLinks` for a no-op stub on non-HTML responses, so JSON-API
+  adapters (investmap, komornik) paginate via `addRequests` instead.
 - `runCrawlWithRetry` (exponential backoff) backs every site crawl in the
   server refresh task and the `--retry` CLI flag.
 
@@ -116,7 +120,9 @@ assigns all 84k transactions in minutes, not hours.
 | morizon.pl / gratka.pl | Same feed (one company), agency-heavy | schema.org LD+JSON (`Offer` nodes); pagination `?page=N` |
 | domiporta.pl | Agency listings | LD+JSON `@graph` `ItemList` of `RealEstateListing`; pagination `?PageNumber=N` |
 | nieruchomosci-online.pl | Agency listings | LD+JSON `CollectionPage` offers; pagination `&p=N` |
-| rynekpierwotny.pl | New-development projects (osiedla) | `window.__INITIAL_STATE__` `offerList.list.offers` with geo points + price ranges; pagination `?page=N` |
+| rynekpierwotny.pl | New-development projects (osiedla) | `window.__INITIAL_STATE__` `offerList.list.offers` with geo points + price ranges; pagination `?page=N` (all pages) |
+| investmap.pl | **Every registered Krakow investment with its flats** (incl. small private ones) | Public JSON API `GET /api/investment/search?withEstates=1&categorySlug=mieszkania&citySlug=krakow&offset=N` — flats inline (`es[].list`): area, price, price_m2, floor, rooms; coordinates from the investment |
+| skaleczna.pl | Koneser Group private investment (Skałeczna 1/3/5/7, Kazimierz) | WordPress table `#offer-table` — unit rows with area, promo/regular price, status; only `Wolne` kept |
 | licytacje.komornik.pl | Court auction notices (Krakow flats+plots) | Playwright only (WAF blocks non-browser TLS); anonymous JSON API `POST /services/item-back/rest/item/search` (same-origin, `termFilters` + `fullTextFilters` city, `offset` pagination); subcategories APARTMENTS/LAND |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
