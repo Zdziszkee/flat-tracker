@@ -1,8 +1,15 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { and, eq, isNotNull, isNull } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { buildings, listings } from "#/db/schema";
-import { buildStreetIndex, matchByAddress } from "./address-index.ts";
+import {
+	buildStreetIndex,
+	matchAddressString,
+	matchByAddress,
+	normStreet,
+} from "./address-index.ts";
 import { parseAddressFromText, plausibleAddress } from "./sites/address.ts";
 
 /**
@@ -129,6 +136,29 @@ export interface GeocodeReport {
 	misses: number;
 }
 
+/**
+ * Persistent Nominatim result cache (data/crawler/nominatim-cache.json).
+ * The drain runs in short-lived processes (chunked loops), so an
+ * in-memory cache dies with each chunk and the same streets get
+ * re-queried. Keyed by normalized street name; null = known miss.
+ */
+const NOM_CACHE_PATH = "data/crawler/nominatim-cache.json";
+
+type NomCache = Record<string, { lat: number; lng: number } | null>;
+
+async function loadNomCache(): Promise<NomCache> {
+	try {
+		return JSON.parse(await readFile(NOM_CACHE_PATH, "utf8")) as NomCache;
+	} catch {
+		return {};
+	}
+}
+
+async function saveNomCache(cache: NomCache): Promise<void> {
+	await mkdir(dirname(NOM_CACHE_PATH), { recursive: true });
+	await writeFile(NOM_CACHE_PATH, JSON.stringify(cache));
+}
+
 export async function geocodeUnlocatedListings(
 	opts: {
 		/** Max Nominatim requests this run (undefined = unlimited). */
@@ -158,21 +188,27 @@ export async function geocodeUnlocatedListings(
 	if (rows.length === 0) return report;
 
 	const streetIndex = await buildStreetIndex();
-	// Nominatim results are cached per query — morizon/gratka carry the
-	// same offers, so one address should cost one request.
-	const nomCache = new Map<string, { lat: number; lng: number } | null>();
+	// Persistent Nominatim cache, keyed by normalized street — survives
+	// the chunked drain processes and dedupes morizon/gratka duplicates.
+	const nomCache = await loadNomCache();
 	let nomBudget = opts.nominatimLimit ?? Number.POSITIVE_INFINITY;
+	let nomWrites = 0;
 
 	for (let i = 0; i < rows.length; i++) {
 		const row = rows[i];
-		// 1. The street part is always the first comma segment of a stored
-		//    address; fall back to parsing it out of the title.
+		const hasStoredAddress = Boolean(row.address?.trim());
+		// The street part is always the first comma segment of a stored
+		// address; fall back to parsing it out of the title.
 		let streetPart = row.address?.split(",")[0]?.trim() ?? "";
 		let parsed = parseAddressFromText(streetPart);
 		let extractedAddress: string | null = null;
 
 		if (!parsed && !plausibleAddress(streetPart)) {
 			// No usable address: mine the title for "Street 12" patterns.
+			// The plausibleAddress gate only applies to title mining — ad
+			// speak like "Przytulne 27" would otherwise geocode to a random
+			// street. Stored addresses come from structured portal data and
+			// are trusted.
 			const titlePart = parseAddressFromText(row.title);
 			if (titlePart && plausibleAddress(row.title)) {
 				parsed = titlePart;
@@ -212,23 +248,54 @@ export async function geocodeUnlocatedListings(
 			}
 		}
 
-		// 2. Nominatim street-level fallback (bounded for scheduled runs).
-		if (!streetPart || !plausibleAddress(streetPart)) {
+		// Street-only fallback: exact building unknown, but the local index
+		// still has a street centroid — a good map anchor without claiming
+		// a specific building's history.
+		const centroid = matchAddressString(
+			streetIndex,
+			parsed
+				? `${parsed.street}${parsed.number ? ` ${parsed.number}` : ""}`
+				: streetPart,
+		);
+		if (centroid) {
+			await db
+				.update(listings)
+				.set({
+					lat: centroid.lat,
+					lng: centroid.lng,
+					...(extractedAddress ? { address: extractedAddress } : {}),
+				})
+				.where(eq(listings.id, row.id));
+			report.localHits++;
+			if (extractedAddress) report.titleExtracted++;
+			continue;
+		}
+
+		// Nominatim street-level fallback (bounded for scheduled runs).
+		// Stored structured addresses skip the plausibility gate; only
+		// title-mined street parts need it (ad-speak protection).
+		if (!streetPart || (!hasStoredAddress && !plausibleAddress(streetPart))) {
 			report.misses++;
 			continue;
 		}
-		const query = [streetPart, row.district, "Kraków"]
-			.filter(Boolean)
-			.join(", ");
-		let geo = nomCache.get(query);
+		const streetKey = normStreet(streetPart);
+		// `in` check: a cached null is a known miss and must not re-query.
+		let geo =
+			streetKey && streetKey in nomCache ? nomCache[streetKey] : undefined;
 		if (geo === undefined) {
 			if (nomBudget <= 0) {
 				report.misses++;
 				continue;
 			}
 			nomBudget--;
+			const query = [streetPart, row.district, "Kraków"]
+				.filter(Boolean)
+				.join(", ");
 			geo = await nominatimGeocode(query, streetPart);
-			nomCache.set(query, geo);
+			if (streetKey) {
+				nomCache[streetKey] = geo;
+				nomWrites++;
+			}
 			// Nominatim requires ~1 req/s.
 			await new Promise((r) => setTimeout(r, 1050));
 		}
@@ -252,8 +319,14 @@ export async function geocodeUnlocatedListings(
 				`  ${i + 1}/${rows.length}: local=${report.localHits} ` +
 					`nominatim=${report.nomHits} misses=${report.misses}`,
 			);
+			if (nomWrites > 0) {
+				await saveNomCache(nomCache);
+				nomWrites = 0;
+			}
 		}
 	}
+
+	if (nomWrites > 0) await saveNomCache(nomCache);
 
 	return report;
 }

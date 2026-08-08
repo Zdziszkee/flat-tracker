@@ -11,10 +11,15 @@ import { geocodeUnlocatedListings } from "./geocode-listings.ts";
  * runs skip straight to the local index.
  *
  * The hourly refresh runs the same pass with a small Nominatim budget
- * (see refresh.ts), so the backlog here is normally empty.
+ * (see refresh.ts), so the backlog here is normally empty. Pass
+ * `--local-only` to skip Nominatim entirely (e.g. while the shared
+ * instance is throttling).
  */
 async function main(): Promise<void> {
-	const report = await geocodeUnlocatedListings();
+	const localOnly = process.argv.includes("--local-only");
+	const report = await geocodeUnlocatedListings({
+		nominatimLimit: localOnly ? 0 : undefined,
+	});
 	console.log(
 		`done: local=${report.localHits} nominatim=${report.nomHits} ` +
 			`titles=${report.titleExtracted} misses=${report.misses} ` +
