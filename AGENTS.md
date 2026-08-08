@@ -56,7 +56,12 @@ The same pass runs automatically inside every `refreshAll()` with a
 Nominatim budget of 20/run (local index matches are instant), so the
 map stays populated between manual drains. Geocoded positions survive
 re-crawls: `saveListings` coalesces coordinates, so address-only
-adapters never overwrite them with NULL.
+adapters never overwrite them with NULL. Street-only addresses anchor
+to the local street centroid (no building claim); Nominatim results
+are cached per street in `data/crawler/nominatim-cache.json` so
+duplicate offers and chunked drain runs never re-query. Pass
+`--local-only` to the script to skip Nominatim (e.g. while the shared
+instance throttles).
 
 ## Scheduled (hourly) refresh
 
