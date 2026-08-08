@@ -80,8 +80,12 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					floor: sql.raw(`excluded.floor`),
 					district: sql.raw(`excluded.district`),
 					address: sql.raw(`excluded.address`),
-					lat: sql.raw(`excluded.lat`),
-					lng: sql.raw(`excluded.lng`),
+					// Address-only sources (morizon, domiporta, skaleczna,
+					// komornik...) carry no coordinates: keep the geocoded
+					// position instead of wiping it with NULL on re-crawl.
+					lat: sql`coalesce(excluded.lat, ${listings.lat})`,
+					lng: sql`coalesce(excluded.lng, ${listings.lng})`,
+					buildingId: sql`coalesce(excluded.building_id, ${listings.buildingId})`,
 					listedAt: sql.raw(`excluded.listed_at`),
 					scrapedAt: sql.raw(`excluded.scraped_at`),
 				},

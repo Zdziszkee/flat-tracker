@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { Effect } from "effect";
 
 import { pruneOldListings } from "./db-sink.ts";
+import { geocodeUnlocatedListings } from "./geocode-listings.ts";
 import { importRcn } from "./import-rcn.ts";
 import { runCrawlWithRetry } from "./pipeline.ts";
 import { adapters } from "./sites/index.ts";
@@ -49,6 +50,8 @@ export interface RefreshSummary {
 	pruned: number;
 	/** NEW transactions inserted by the RCN diff (0 when the registry is unchanged). */
 	rcnNew: number;
+	/** Listings anchored on the map this run (local index + Nominatim). */
+	geocoded: number;
 	startedAt: string;
 	elapsedSeconds: number;
 }
@@ -121,12 +124,17 @@ export async function refreshAll(
 	const pruned = await pruneOldListings(
 		new Date(now - sinceDays * 24 * 60 * 60 * 1000),
 	);
+	// Anchor new offers on the map: local OSM-index matches are instant,
+	// Nominatim is budgeted (20/run) so the hourly cron drains the backlog
+	// politely. Run `npm run geocode-addresses` for a full drain.
+	const geo = await geocodeUnlocatedListings({ nominatimLimit: 20 });
 	const rcnNew = opts.includeRcn === false ? 0 : await importRcn();
 
 	return {
 		sites,
 		pruned,
 		rcnNew,
+		geocoded: geo.localHits + geo.nomHits,
 		startedAt: new Date(started).toISOString(),
 		elapsedSeconds: (Date.now() - started) / 1000,
 	};

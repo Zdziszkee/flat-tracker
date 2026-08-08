@@ -27,7 +27,8 @@ export default defineTask({
 		console.log(
 			`[refresh${dev ? " dev" : ""}] ${ok}/${summary.sites.length} sites crawled in ` +
 				`${summary.elapsedSeconds.toFixed(1)}s, ${summary.pruned} pruned, ` +
-				`${summary.rcnNew} new RCN transactions`,
+				`${summary.rcnNew} new RCN transactions, ` +
+				`${summary.geocoded} geocoded`,
 		);
 		return { result: summary };
 	},

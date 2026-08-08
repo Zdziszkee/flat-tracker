@@ -43,12 +43,20 @@ npm run geocode-addresses # geocode listings that carry only an address
 
 `geocode-addresses` fills the coordinate gap for portals that hide
 lat/lng (morizon, gratka, domiporta, nieruchomosci-online,
-licytacje-komornik): the adapters parse a street address into
-`listings.address`, then this script matches it against the local
+licytacje-komornik, skaleczna): the adapters parse a street address
+into `listings.address`, this script matches it against the local
 `osm_buildings` index (exact street+housenumber → building centroid,
 street-only → street centroid) and falls back to Nominatim (1 req/s,
-descriptive UA) for street-level points. Re-run `assign-buildings`
-afterwards to anchor the new points.
+descriptive UA, validated to Krakow) for street-level points. Listings
+WITHOUT a stored address get one mined from their title (ad speak like
+"Łokietka 57B - mieszkanie 30 m²") — the extracted address is persisted.
+Re-run `assign-buildings` afterwards to anchor the new points.
+
+The same pass runs automatically inside every `refreshAll()` with a
+Nominatim budget of 20/run (local index matches are instant), so the
+map stays populated between manual drains. Geocoded positions survive
+re-crawls: `saveListings` coalesces coordinates, so address-only
+adapters never overwrite them with NULL.
 
 ## Scheduled (hourly) refresh
 
