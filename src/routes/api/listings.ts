@@ -64,7 +64,8 @@ export const Route = createFileRoute("/api/listings")({
 					})
 					.from(listings)
 					.leftJoin(buildings, eq(listings.buildingId, buildings.id))
-					.where(isNotNull(listings.lat))
+					// All rows: the map filters coordinate-less offers
+					// client-side, the listings table shows them regardless.
 					.orderBy(sql`${listings.scrapedAt} desc`)
 					.limit(6000);
 

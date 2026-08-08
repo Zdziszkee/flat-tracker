@@ -17,6 +17,7 @@ const SOURCE_LABELS: Record<string, string> = {
 	domiporta: "Domiporta",
 	"nieruchomosci-online": "Nieruchomosci-online",
 	rynekpierwotny: "Rynekpierwotny",
+	"licytacje-komornik": "Licytacje komornicze",
 };
 
 /** 0 = no time window (all offers). */

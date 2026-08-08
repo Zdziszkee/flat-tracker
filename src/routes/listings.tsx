@@ -35,6 +35,17 @@ const DAY_OPTIONS: Array<{ value: DaysFilter; label: string }> = [
 	{ value: 1, label: "Ostatnie 24 h" },
 ];
 
+const SOURCE_LABELS: Record<string, string> = {
+	otodom: "Otodom",
+	olx: "OLX",
+	morizon: "Morizon",
+	gratka: "Gratka",
+	domiporta: "Domiporta",
+	"nieruchomosci-online": "Nieruchomosci-online",
+	rynekpierwotny: "Rynekpierwotny",
+	"licytacje-komornik": "Licytacje komornicze",
+};
+
 function addedWithin(listedAt: string | null, days: DaysFilter): boolean {
 	if (days === 0) return true;
 	if (!listedAt) return false;
@@ -46,12 +57,17 @@ export const Route = createFileRoute("/listings")({
 });
 
 function ListingsPage() {
-	const [source, setSource] = useState<"all" | "otodom" | "olx">("all");
+	const [source, setSource] = useState("all");
 	const [days, setDays] = useState<DaysFilter>(0);
 	const { data, isLoading } = useQuery<ListingsResponse>({
 		queryKey: ["listings"],
 		queryFn: () => fetch("/api/listings").then((r) => r.json()),
 	});
+	const { data: sources } = useQuery<{ sources: string[] }>({
+		queryKey: ["sources"],
+		queryFn: () => fetch("/api/sources").then((r) => r.json()),
+	});
+	const sourceOptions = sources?.sources ?? ["otodom", "olx"];
 
 	const rows = (data?.listings ?? []).filter(
 		(r) =>
@@ -66,14 +82,17 @@ function ListingsPage() {
 				<div className="flex items-center gap-3 text-sm">
 					<select
 						value={source}
-						onChange={(e) => setSource(e.target.value as typeof source)}
+						onChange={(e) => setSource(e.target.value)}
 						className="rounded border px-2 py-1"
 					>
 						<option value="all">
 							Wszystkie ({data?.listings.length ?? 0})
 						</option>
-						<option value="otodom">Otodom</option>
-						<option value="olx">OLX</option>
+						{sourceOptions.map((s) => (
+							<option key={s} value={s}>
+								{SOURCE_LABELS[s] ?? s}
+							</option>
+						))}
 					</select>
 					<select
 						value={days}
