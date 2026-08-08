@@ -19,8 +19,19 @@ const SOURCE_LABELS: Record<string, string> = {
 	rynekpierwotny: "Rynekpierwotny",
 };
 
+/** 0 = no time window (all offers). */
+type DaysFilter = 0 | 1 | 7 | 30;
+
+const DAY_OPTIONS: Array<{ value: DaysFilter; label: string }> = [
+	{ value: 0, label: "Wszystkie" },
+	{ value: 30, label: "Ostatnie 30 dni" },
+	{ value: 7, label: "Ostatnie 7 dni" },
+	{ value: 1, label: "Ostatnie 24 h" },
+];
+
 function MapPage() {
 	const [source, setSource] = useState("all");
+	const [days, setDays] = useState<DaysFilter>(0);
 	const [sources, setSources] = useState<string[]>([]);
 	const [mounted, setMounted] = useState(false);
 
@@ -50,6 +61,17 @@ function MapPage() {
 						</option>
 					))}
 				</select>
+				<select
+					value={days}
+					onChange={(e) => setDays(Number(e.target.value) as DaysFilter)}
+					className="rounded border px-2 py-1 text-sm"
+				>
+					{DAY_OPTIONS.map((o) => (
+						<option key={o.value} value={o.value}>
+							{o.label}
+						</option>
+					))}
+				</select>
 			</header>
 
 			<div className="relative flex-1">
@@ -65,7 +87,7 @@ function MapPage() {
 							</div>
 						}
 					>
-						<MapView source={source} />
+						<MapView source={source} days={days} />
 					</Suspense>
 				)}
 			</div>

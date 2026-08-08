@@ -68,6 +68,13 @@ function yearOf(d: string | number | null | undefined): string {
 	return d.slice(0, 4);
 }
 
+/** 0 = no time window; otherwise keep offers listed within the last N days. */
+function addedWithin(listedAt: string | null, days: 0 | 1 | 7 | 30): boolean {
+	if (days === 0) return true;
+	if (!listedAt) return false;
+	return Date.now() - new Date(listedAt).getTime() <= days * 24 * 3600 * 1000;
+}
+
 function escapeHtml(s: string): string {
 	return s
 		.replaceAll("&", "&amp;")
@@ -240,14 +247,22 @@ function toGeoJson(listings: ApiListing[]): GeoJsonFeatureCollection {
 	};
 }
 
-export default function MapView({ source }: { source: string }) {
+export default function MapView({
+	source,
+	days,
+}: {
+	source: string;
+	days: 0 | 1 | 7 | 30;
+}) {
 	const { data, isLoading, error } = useQuery<ListingsResponse>({
 		queryKey: ["listings"],
 		queryFn: () => fetch("/api/listings").then((r) => r.json()),
 	});
 
 	const listings = (data?.listings ?? []).filter(
-		(l) => source === "all" || l.source === source,
+		(l) =>
+			(source === "all" || l.source === source) &&
+			addedWithin(l.listedAt, days),
 	);
 
 	if (!TOKEN) {

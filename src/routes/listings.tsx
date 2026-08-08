@@ -25,19 +25,38 @@ function fmt(n: number | null): string {
 	return new Intl.NumberFormat("pl-PL", { maximumFractionDigits: 0 }).format(n);
 }
 
+/** 0 = no time window (all offers). */
+type DaysFilter = 0 | 1 | 7 | 30;
+
+const DAY_OPTIONS: Array<{ value: DaysFilter; label: string }> = [
+	{ value: 0, label: "Wszystkie" },
+	{ value: 30, label: "Ostatnie 30 dni" },
+	{ value: 7, label: "Ostatnie 7 dni" },
+	{ value: 1, label: "Ostatnie 24 h" },
+];
+
+function addedWithin(listedAt: string | null, days: DaysFilter): boolean {
+	if (days === 0) return true;
+	if (!listedAt) return false;
+	return Date.now() - new Date(listedAt).getTime() <= days * 24 * 3600 * 1000;
+}
+
 export const Route = createFileRoute("/listings")({
 	component: ListingsPage,
 });
 
 function ListingsPage() {
 	const [source, setSource] = useState<"all" | "otodom" | "olx">("all");
+	const [days, setDays] = useState<DaysFilter>(0);
 	const { data, isLoading } = useQuery<ListingsResponse>({
 		queryKey: ["listings"],
 		queryFn: () => fetch("/api/listings").then((r) => r.json()),
 	});
 
 	const rows = (data?.listings ?? []).filter(
-		(r) => source === "all" || r.source === source,
+		(r) =>
+			(source === "all" || r.source === source) &&
+			addedWithin(r.listedAt, days),
 	);
 
 	return (
@@ -55,6 +74,17 @@ function ListingsPage() {
 						</option>
 						<option value="otodom">Otodom</option>
 						<option value="olx">OLX</option>
+					</select>
+					<select
+						value={days}
+						onChange={(e) => setDays(Number(e.target.value) as DaysFilter)}
+						className="rounded border px-2 py-1"
+					>
+						{DAY_OPTIONS.map((o) => (
+							<option key={o.value} value={o.value}>
+								{o.label}
+							</option>
+						))}
 					</select>
 					<Link to="/map" className="text-blue-600 underline">
 						Mapa
