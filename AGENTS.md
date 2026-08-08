@@ -86,6 +86,11 @@ history is pruned to the 7-day cap. The hourly cron keeps the full
 - Upserts by `(source, externalId)`: re-running is safe and self-refining
   (detail pages add coordinates to list-page records). Each run reports
   the portal diff — how many listings are NEW vs UPDATED.
+- Cross-source dedupe in `/api/listings`: rynekpierwotny project rows are
+  hidden when the same investment is covered by investmap (exact
+  street+housenumber, street-only when the project has no housenumber,
+  or normalized investment-title match). Both sources remain selectable
+  individually in the UI filters.
 - `--since-days N` bounds the fetch window and prunes older portal
   listings afterwards, so the DB only holds active/recent offers.
 - `import-rcn` (part of `crawl:all`) starts with a HEAD request on the

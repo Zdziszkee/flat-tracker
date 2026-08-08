@@ -12,7 +12,8 @@ import type { CheerioAdapter, Listing } from "../types.ts";
  * Each item carries the investment (title, street, district, location)
  * and `es[].list` — the flats for sale (area, price, price_m2, floor,
  * rooms, per-flat URL). Only investments with active flats appear in the
- * response body's estate lists; paginate until a page has none.
+ * response body's estate lists; paginate across the whole list, because
+ * small private investments sit past pages that have no flats.
  *
  * This is the auto-discovery answer for private investments: any new
  * development registered in Kraków shows up here with no per-site work.
@@ -66,11 +67,6 @@ export const investmapAdapter: CheerioAdapter = {
 		}
 
 		const investments = data.list ?? [];
-		const flatsThisPage = investments.reduce(
-			(sum, inv) => sum + ((inv.es?.[0]?.list ?? []).length || 0),
-			0,
-		);
-
 		const listings: Listing[] = [];
 		for (const inv of investments) {
 			const lat = inv.location?.lat;
@@ -87,7 +83,11 @@ export const investmapAdapter: CheerioAdapter = {
 					url: estate.url
 						? `https://investmap.pl${estate.url}`
 						: `https://investmap.pl${inv.url ?? ""}`,
-					title: estate.name ?? inv.title ?? "Mieszkanie na sprzedaż",
+					// Investment name prefix enables cross-source dedupe with
+					// rynekpierwotny (same investment, project-level there).
+					title: inv.title
+						? `${inv.title} — ${estate.name ?? "Mieszkanie na sprzedaż"}`
+						: (estate.name ?? "Mieszkanie na sprzedaż"),
 					price: estate.price ?? null,
 					pricePerM2: estate.price_m2 ?? null,
 					areaM2: area,
@@ -103,12 +103,12 @@ export const investmapAdapter: CheerioAdapter = {
 			}
 		}
 
-		// Continue while the API keeps returning flats; stop on an empty
-		// page (investments without active flats are not worth pages).
+		// The list is sorted with the big estates first, but investments
+		// with a handful of flats (the small private ones) still appear
+		// past pages that have none — so walk to the very end.
 		const offset = Number(new URL(url).searchParams.get("offset") ?? 0);
 		const count = data.count ?? 0;
 		if (
-			flatsThisPage > 0 &&
 			offset + PAGE_SIZE < count &&
 			offset + PAGE_SIZE < MAX_PAGES * PAGE_SIZE
 		) {

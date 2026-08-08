@@ -65,6 +65,8 @@ interface RpOffer {
 	address?: string;
 	geo_point?: { coordinates?: number[] };
 	region?: { district?: string; city?: string };
+	street_name?: string;
+	street_number?: string;
 	stats?: {
 		ranges_price_min?: number | string;
 		ranges_price_m2_min?: number | string;
@@ -140,6 +142,13 @@ function offerToListing(offer: RpOffer): Listing | null {
 	const url = `https://rynekpierwotny.pl/oferty/${vendorSlug}/${slug}-${id}/`;
 
 	const coords = offer.geo_point?.coordinates ?? [];
+	const district = offer.region?.district ?? null;
+	// Street + number, used for cross-source dedupe against investmap
+	// (same investment listed on both) and for geocoding.
+	const streetParts = [offer.street_name, offer.street_number].filter(Boolean);
+	const address = streetParts.length
+		? [streetParts.join(" "), district, "Kraków"].filter(Boolean).join(", ")
+		: null;
 	return {
 		source: "rynekpierwotny",
 		externalId: String(id),
@@ -150,8 +159,8 @@ function offerToListing(offer: RpOffer): Listing | null {
 		areaM2: areaMin,
 		rooms: null,
 		floor: null,
-		district: offer.region?.district ?? null,
-		address: null,
+		district,
+		address,
 		// GeoJSON Point coordinates are [lng, lat].
 		lat: coords.length >= 2 ? coords[1] : null,
 		lng: coords.length >= 2 ? coords[0] : null,
