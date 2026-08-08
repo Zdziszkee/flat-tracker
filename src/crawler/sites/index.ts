@@ -2,6 +2,7 @@ import type { SiteAdapter } from "../types.ts";
 import { booksAdapter } from "./books.ts";
 import { domiportaAdapter } from "./domiporta.ts";
 import { gratkaAdapter } from "./gratka.ts";
+import { komornikAdapter } from "./komornik.ts";
 import { morizonAdapter } from "./morizon.ts";
 import { nieruchomosciOnlineAdapter } from "./nieruchomosci-online.ts";
 import { olxAdapter } from "./olx.ts";
@@ -18,6 +19,7 @@ export const adapters: SiteAdapter[] = [
 	domiportaAdapter,
 	nieruchomosciOnlineAdapter,
 	rynekpierwotnyAdapter,
+	komornikAdapter,
 	quotesAdapter,
 	booksAdapter,
 ];

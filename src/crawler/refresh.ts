@@ -1,3 +1,5 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { Effect } from "effect";
 
 import { pruneOldListings } from "./db-sink.ts";
@@ -15,12 +17,21 @@ import type { SiteAdapter } from "./types.ts";
  * so the Nitro server can run it on dev startup and on an hourly schedule
  * without spawning CLI processes. Portal failures are isolated per site:
  * one blocked portal does not abort the rest of the run.
+ *
+ * Dev-start runs use `diffOnly`: each site's since window is bounded to
+ * `sinceDays` (7) AND rolled forward to the last successful crawl of that
+ * site, so a boot only fetches what the portals added since the previous
+ * load.
  */
 
 /** Demo adapters that must never hit real portal traffic. */
 const DEMO_SITES = new Set(["quotes", "books"]);
 
 const DEFAULT_SINCE_DAYS = 90;
+/** Dev-start diff window: never go further back than this. */
+export const DEV_SINCE_DAYS = 7;
+
+const STATE_PATH = "data/crawler/state.json";
 
 export interface SiteRefresh {
 	site: string;
@@ -42,18 +53,44 @@ export interface RefreshSummary {
 	elapsedSeconds: number;
 }
 
+type CrawlState = Record<string, string>;
+
+async function readState(): Promise<CrawlState> {
+	try {
+		return JSON.parse(await readFile(STATE_PATH, "utf8")) as CrawlState;
+	} catch {
+		return {};
+	}
+}
+
+async function writeState(state: CrawlState): Promise<void> {
+	await mkdir(dirname(STATE_PATH), { recursive: true });
+	await writeFile(STATE_PATH, JSON.stringify(state, null, 2));
+}
+
 export async function refreshAll(
-	opts: { sinceDays?: number; includeRcn?: boolean } = {},
+	opts: { sinceDays?: number; diffOnly?: boolean; includeRcn?: boolean } = {},
 ): Promise<RefreshSummary> {
 	const sinceDays = opts.sinceDays ?? DEFAULT_SINCE_DAYS;
-	const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000);
-	const started = Date.now();
+	const now = Date.now();
+	const started = now;
+	const state = await readState();
 
 	const sites: SiteRefresh[] = [];
 	for (const base of adapters) {
 		if (DEMO_SITES.has(base.id)) continue;
+		// Dev-start diff: since = max(now - sinceDays, last successful crawl)
+		// per site, so only offers added since the previous load are fetched.
+		const last = state[base.id] ? Date.parse(state[base.id]) : NaN;
+		const sinceMs = opts.diffOnly
+			? Math.max(
+					now - sinceDays * 24 * 60 * 60 * 1000,
+					Number.isNaN(last) ? 0 : last,
+				)
+			: now - sinceDays * 24 * 60 * 60 * 1000;
+		const since = new Date(sinceMs);
 		// A per-run clone carries the date window; only list-paginating
-		// sites (otodom, olx) use it, the rest ignore it.
+		// sites (otodom, olx, licytacje-komornik) use it, the rest ignore it.
 		const adapter: SiteAdapter = { ...base, since: since.toISOString() };
 		try {
 			const report = await Effect.runPromise(runCrawlWithRetry(adapter, true));
@@ -65,6 +102,8 @@ export async function refreshAll(
 				pages: report.pages,
 				elapsedSeconds: report.elapsedSeconds,
 			});
+			state[adapter.id] = new Date().toISOString();
+			await writeState(state);
 		} catch (err) {
 			console.error(`[refresh] crawl of "${adapter.id}" failed:`, err);
 			sites.push({
@@ -79,7 +118,9 @@ export async function refreshAll(
 		}
 	}
 
-	const pruned = await pruneOldListings(since);
+	const pruned = await pruneOldListings(
+		new Date(now - sinceDays * 24 * 60 * 60 * 1000),
+	);
 	const rcnNew = opts.includeRcn === false ? 0 : await importRcn();
 
 	return {

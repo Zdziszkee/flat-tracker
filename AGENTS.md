@@ -31,7 +31,8 @@ npm run db:migrate        # apply migrations
 npm run crawl -- --site <id> [--save-db] [--since-days N]   # crawl one site
 npm run crawl:otodom      # otodom Krakow, saves to DB
 npm run crawl:olx         # olx Krakow, saves to DB
-npm run crawl:all         # all 7 sites + incremental RCN diff (same program as the server refresh task)
+npm run crawl:all         # all 8 sites + incremental RCN diff (same program as the server refresh task)
+npm run crawl:komornik    # licytacje.komornik.pl (Krakow flats+plots), saves to DB
 npm run import-rcn        # RCN transactions: HEADs the zip, imports only NEW rows (diff)
 npm run import-rcn:force  # re-download + re-import everything
 npm run assign-buildings  # match listings/transactions to OSM buildings
@@ -39,12 +40,13 @@ npm run geocode-addresses # geocode listings that carry only an address
 ```
 
 `geocode-addresses` fills the coordinate gap for portals that hide
-lat/lng (morizon, gratka, domiporta, nieruchomosci-online): the adapters
-parse a street address into `listings.address`, then this script matches
-it against the local `osm_buildings` index (exact street+housenumber →
-building centroid, street-only → street centroid) and falls back to
-Nominatim (1 req/s, descriptive UA) for street-level points. Re-run
-`assign-buildings` afterwards to anchor the new points.
+lat/lng (morizon, gratka, domiporta, nieruchomosci-online,
+licytacje-komornik): the adapters parse a street address into
+`listings.address`, then this script matches it against the local
+`osm_buildings` index (exact street+housenumber → building centroid,
+street-only → street centroid) and falls back to Nominatim (1 req/s,
+descriptive UA) for street-level points. Re-run `assign-buildings`
+afterwards to anchor the new points.
 
 ## Scheduled (hourly) refresh
 
@@ -71,6 +73,13 @@ the rest of the run). The task and plugin are registered explicitly in
 `vite.config.ts` (no Nitro directory scanning — TanStack Start owns
 `src/routes`); the handler path must be an absolute file URL, relative
 paths fail to resolve from the virtual tasks module.
+
+**Dev-start runs are diff-only** (`payload: { mode: "dev" }`): each site's
+`since` window is `max(now - 7 days, last successful crawl)` — per-site
+last-run timestamps live in `data/crawler/state.json` — so a boot only
+loads what the portals added since the previous load, and otodom/olx
+history is pruned to the 7-day cap. The hourly cron keeps the full
+90-day window.
 
 - Upserts by `(source, externalId)`: re-running is safe and self-refining
   (detail pages add coordinates to list-page records). Each run reports
@@ -108,6 +117,7 @@ assigns all 84k transactions in minutes, not hours.
 | domiporta.pl | Agency listings | LD+JSON `@graph` `ItemList` of `RealEstateListing`; pagination `?PageNumber=N` |
 | nieruchomosci-online.pl | Agency listings | LD+JSON `CollectionPage` offers; pagination `&p=N` |
 | rynekpierwotny.pl | New-development projects (osiedla) | `window.__INITIAL_STATE__` `offerList.list.offers` with geo points + price ranges; pagination `?page=N` |
+| licytacje.komornik.pl | Court auction notices (Krakow flats+plots) | Playwright only (WAF blocks non-browser TLS); anonymous JSON API `POST /services/item-back/rest/item/search` (same-origin, `termFilters` + `fullTextFilters` city, `offset` pagination); subcategories APARTMENTS/LAND |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
 
