@@ -24,13 +24,14 @@ OpenStreetMap building.
 ## Commands
 
 ```bash
-npm run dev               # start dev server (vite, port 3000)
+npm run dev               # start dev server (vite, port 3000); kicks off a background
+                          # data refresh on boot (see `server/plugins/refresh-on-start.ts`)
 npm run db:generate       # new migration from schema changes
 npm run db:migrate        # apply migrations
 npm run crawl -- --site <id> [--save-db] [--since-days N]   # crawl one site
 npm run crawl:otodom      # otodom Krakow, saves to DB
 npm run crawl:olx         # olx Krakow, saves to DB
-npm run crawl:all         # all 7 sites + incremental RCN diff (hourly cron entry)
+npm run crawl:all         # all 7 sites + incremental RCN diff (same program as the server refresh task)
 npm run import-rcn        # RCN transactions: HEADs the zip, imports only NEW rows (diff)
 npm run import-rcn:force  # re-download + re-import everything
 npm run assign-buildings  # match listings/transactions to OSM buildings
@@ -47,14 +48,29 @@ Nominatim (1 req/s, descriptive UA) for street-level points. Re-run
 
 ## Scheduled (hourly) refresh
 
-Crawls are incremental and idempotent, designed for a once-per-hour cron:
+Crawls are incremental and idempotent, designed for a once-per-hour cron.
+The server itself runs the refresh: a Nitro scheduled task `refresh`
+(cron `0 * * * *`, wired in `vite.config.ts` -> `scheduledTasks`,
+`experimental.tasks`) executes `refreshAll()` from `src/crawler/refresh.ts`
+— the same program as `npm run crawl:all`. It runs in dev AND prod node
+servers, and the dev server additionally fires one refresh on startup
+(`server/plugins/refresh-on-start.ts`, gated on `import.meta.dev`).
+
+Manual equivalents:
 
 ```bash
-# every hour: refetch all sources, upsert new/changed listings,
-# prune otodom/olx listings older than the since window (default 90 days),
-# then refresh RCN transactions (HEAD check; skips when nothing changed)
-npm run crawl:all
+npm run crawl:all           # CLI: all 7 sites + incremental RCN diff
+curl -X POST http://localhost:3000/_nitro/tasks/refresh   # server task
 ```
+
+`refreshAll()`: refetches all sources, upserts new/changed listings, prunes
+otodom/olx listings older than the since window (default 90 days), then
+refreshes RCN transactions (HEAD check; skips when nothing changed).
+Portal failures are isolated per site (one blocked portal does not abort
+the rest of the run). The task and plugin are registered explicitly in
+`vite.config.ts` (no Nitro directory scanning — TanStack Start owns
+`src/routes`); the handler path must be an absolute file URL, relative
+paths fail to resolve from the virtual tasks module.
 
 - Upserts by `(source, externalId)`: re-running is safe and self-refining
   (detail pages add coordinates to list-page records). Each run reports
@@ -71,8 +87,8 @@ npm run crawl:all
   transactions.
 - The crawler paces requests (3 concurrent, ~350 ms delay) and retries
   403s with backoff to stay under portal throttling.
-- For a production cron, wire `runCrawlWithRetry` (exponential backoff)
-  from `src/crawler/pipeline.ts` or run `npm run crawl:all -- --retry`.
+- `runCrawlWithRetry` (exponential backoff) backs every site crawl in the
+  server refresh task and the `--retry` CLI flag.
 
 `assign-buildings` uses a **local OSM building index** (`osm_buildings`
 table) built from a Geofabrik extract of the małopolskie region
@@ -206,8 +222,10 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
 - Overpass rejects generic User-Agents with 406 — `queryOverpass` sends a
   descriptive UA and falls back across 3 mirrors with retries.
 - Be polite to free APIs: batching (10 points/request) + 1.2 s delay.
-- Crawlee storage: `Configuration({ storageClient: new MemoryStorage() })`
-  avoids writing `storage/` dirs to the repo.
+- Crawlee storage: `Configuration({ storageClient: new MemoryStorage({
+  persistStorage: false }) })` — truly in-memory, never writes `storage/`
+  dirs, and concurrent crawls (dev server + hourly task) can't race over
+  queue files on disk.
 - **Map is client-only**: `mapbox-gl` touches `window` at import time and
   crashes SSR. `src/routes/map.tsx` gates the lazy `import()` behind a
   `useEffect` mount flag — never import mapbox-gl in a route module
@@ -222,6 +240,5 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
 
 - Facebook Marketplace adapter (hard anti-bot; may need Patchright/Camoufox)
 - Transaction layer on the map (toggle RCN points per district)
-- `runCrawlWithRetry` wired into a cron (Nitro `scheduled` or host cron)
 - Price history snapshots per listing (table `listing_history`)
 - Cache Overpass results to avoid re-querying on every assignment run

@@ -18,7 +18,11 @@ export interface CrawlResult {
  */
 export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 	const listings: Listing[] = [];
-	const config = new Configuration({ storageClient: new MemoryStorage() });
+	// In-memory only: no storage/ dirs in the repo, and concurrent crawls
+	// (dev server + hourly task) must not race over queue files on disk.
+	const config = new Configuration({
+		storageClient: new MemoryStorage({ persistStorage: false }),
+	});
 
 	const maxRequestsPerCrawl = adapter.maxRequestsPerCrawl ?? 100;
 

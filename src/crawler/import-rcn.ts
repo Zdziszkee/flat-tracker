@@ -8,6 +8,7 @@ import {
 import { mkdir, rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { pathToFileURL } from "node:url";
 import proj4 from "proj4";
 import { SaxesParser } from "saxes";
 import { Extract } from "unzipper";
@@ -398,8 +399,13 @@ async function downloadIfMissing(
 	console.log(`Ready: ${GML_PATH}`);
 }
 
-async function importTransactions(): Promise<void> {
-	const force = process.argv.includes("--force");
+/**
+ * Incremental RCN import: HEAD the remote zip, skip when unchanged (the
+ * fast path — 0 new transactions), otherwise download, parse and insert
+ * exactly the diff of NEW rows. Returns how many transactions were added.
+ * `force` re-downloads and re-imports everything.
+ */
+export async function importRcn(force = false): Promise<number> {
 	const remote = await headRemote();
 	const marker = readMarker();
 
@@ -411,7 +417,7 @@ async function importTransactions(): Promise<void> {
 			`RCN unchanged since ${marker.checkedAt.slice(0, 10)} ` +
 				`(etag ${marker.etag}); 0 new transactions`,
 		);
-		return;
+		return 0;
 	}
 
 	await downloadIfMissing(force, remote, marker);
@@ -532,6 +538,7 @@ async function importTransactions(): Promise<void> {
 			`Skipped: ${skippedNotSale} non-sales, ${skippedNotFlat} without flat, ` +
 			`${skippedNoGeom} without geometry, ${skippedNoDate} without date`,
 	);
+	return newCount;
 }
 
 async function flush(
@@ -562,7 +569,14 @@ async function flush(
 	return inserted.length;
 }
 
-importTransactions().catch((err) => {
-	console.error(err);
-	process.exitCode = 1;
-});
+// CLI entry (`npm run import-rcn`). When imported as a module (e.g. by the
+// server refresh task), only the exported function is used.
+if (
+	process.argv[1] &&
+	import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+	importRcn(process.argv.includes("--force")).catch((err) => {
+		console.error(err);
+		process.exitCode = 1;
+	});
+}

@@ -1,23 +1,46 @@
-import { defineConfig } from 'vite'
-import { devtools } from '@tanstack/devtools-vite'
+import { fileURLToPath } from "node:url";
+import babel from "@rolldown/plugin-babel";
+import tailwindcss from "@tailwindcss/vite";
+import { devtools } from "@tanstack/devtools-vite";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import viteReact, { reactCompilerPreset } from "@vitejs/plugin-react";
+import { nitro } from "nitro/vite";
+import { defineConfig } from "vite";
 
-import { tanstackStart } from '@tanstack/react-start/plugin/vite'
-
-import viteReact, { reactCompilerPreset } from '@vitejs/plugin-react'
-import babel from '@rolldown/plugin-babel'
-import tailwindcss from '@tailwindcss/vite'
-import { nitro } from 'nitro/vite'
+const refreshTask = fileURLToPath(
+	new URL("./server/tasks/refresh.ts", import.meta.url),
+);
+const refreshPlugin = fileURLToPath(
+	new URL("./server/plugins/refresh-on-start.ts", import.meta.url),
+);
 
 const config = defineConfig({
-  resolve: { tsconfigPaths: true },
-  plugins: [
-    devtools(),
-    nitro({ rollupConfig: { external: [/^@sentry\//] } }),
-    tailwindcss(),
-    tanstackStart(),
-    viteReact(),
-    babel({ presets: [reactCompilerPreset()] }),
-  ],
-})
+	resolve: { tsconfigPaths: true },
+	plugins: [
+		devtools(),
+		nitro({
+			// @aws-sdk/* is an optional dep of `unzipper` (S3 zip sources);
+			// we only extract local files, so never bundle it.
+			rollupConfig: { external: [/^@sentry\//, /^@aws-sdk\//] },
+			experimental: { tasks: true },
+			// Register the refresh task and startup plugin explicitly (no
+			// directory scanning; TanStack Start manages its own routes).
+			plugins: [refreshPlugin],
+			tasks: {
+				refresh: {
+					handler: refreshTask,
+					description: "Crawl all sources, prune stale offers, import RCN diff",
+				},
+			},
+			// Hourly data refresh (same program as `npm run crawl:all`, which
+			// does an incremental RCN diff check before any 2 GB download).
+			scheduledTasks: { "0 * * * *": "refresh" },
+		}),
+		tailwindcss(),
+		tanstackStart(),
+		viteReact(),
+		babel({ presets: [reactCompilerPreset()] }),
+	],
+});
 
-export default config
+export default config;
