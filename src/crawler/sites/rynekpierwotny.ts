@@ -12,10 +12,12 @@ export const rynekpierwotnyAdapter: CheerioAdapter = {
 	id: "rynekpierwotny",
 	name: "Rynekpierwotny - Krakow new developments",
 	kind: "cheerio",
-	startUrls: ["https://rynekpierwotny.pl/s/nowe-mieszkania-krakow/"],
+	// sort=2 orders the list newest-first, so a bounded crawl always
+	// starts with the freshest investments.
+	startUrls: ["https://rynekpierwotny.pl/s/nowe-mieszkania-krakow/?sort=2"],
 	maxRequestsPerCrawl: 20,
 
-	async extractHtml(html, url, enqueue) {
+	async extractHtml(html, _url, enqueue) {
 		const state = parseInitialState(html);
 		const offers = state?.offerList?.list?.offers ?? [];
 
@@ -25,10 +27,15 @@ export const rynekpierwotnyAdapter: CheerioAdapter = {
 			if (listing) listings.push(listing);
 		}
 
-		// Pagination via the canonical "next" URL in the page metadata.
+		// Follow the canonical "next" link until the list is exhausted
+		// (count/page_size bounds it; the page state is authoritative).
+		const list = state?.offerList?.list;
+		const page = list?.page ?? 1;
+		const pageSize = list?.page_size ?? offers.length;
+		const count = list?.count ?? 0;
 		const next = state?.metaData?.standardMetaData?.next;
-		if (typeof next === "string" && next && !url.includes("?page=")) {
-			await enqueue([next]);
+		if (typeof next === "string" && next && page * pageSize < count) {
+			await enqueue([next.replaceAll("&amp;", "&")]);
 		}
 
 		return listings;
@@ -39,6 +46,9 @@ interface RpState {
 	offerList?: {
 		list?: {
 			offers?: RpOffer[];
+			page?: number;
+			page_size?: number;
+			count?: number;
 		};
 	};
 	metaData?: {

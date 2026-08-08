@@ -10,19 +10,24 @@ import {
 import { parseAddressFromText } from "../src/crawler/sites/address.ts";
 
 /**
- * Throwaway: anchor komornik listings via the local OSM building index
- * (exact street+housenumber -> building, else street centroid). No
- * Nominatim — the general `npm run geocode-addresses` covers everything
- * else but walks thousands of old rows at 1 req/s.
+ * Throwaway: anchor listings of one source via the local OSM building
+ * index (exact street+housenumber -> building, else street centroid,
+ * then Nominatim). Usage: npx tsx scripts/geocode-source.ts <source>
+ * The general `npm run geocode-addresses` covers everything else but
+ * walks thousands of old rows at 1 req/s.
  */
 async function main(): Promise<void> {
+	const source = process.argv[2];
+	if (!source) {
+		console.error("usage: npx tsx scripts/geocode-source.ts <source>");
+		process.exitCode = 1;
+		return;
+	}
 	const rows = await db
 		.select({ id: listings.id, address: listings.address })
 		.from(listings)
-		.where(
-			and(eq(listings.source, "licytacje-komornik"), isNull(listings.lat)),
-		);
-	console.log(`unlocated komornik rows: ${rows.length}`);
+		.where(and(eq(listings.source, source), isNull(listings.lat)));
+	console.log(`unlocated ${source} rows: ${rows.length}`);
 
 	const index = await buildStreetIndex();
 	let local = 0;

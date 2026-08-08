@@ -10,6 +10,8 @@ export interface CheerioSelection {
 	text(): string;
 	attr(name: string): string | undefined;
 	find(selector: string): CheerioSelection;
+	/** Index into the matched set (used by card parsers over table rows). */
+	eq(index: number): CheerioSelection;
 	each(fn: (index: number, element: unknown) => void): CheerioSelection;
 }
 
