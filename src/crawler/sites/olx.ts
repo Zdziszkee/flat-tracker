@@ -113,10 +113,6 @@ export const olxAdapter: CheerioAdapter = {
 		const listing = state.listing?.listing;
 		const ads = listing?.ads ?? [];
 
-		console.log(
-			`olx page: pageNumber=${listing?.pageNumber ?? "?"} totalPages=${listing?.totalPages ?? "?"} ads=${ads.length}`,
-		);
-
 		const since = this.since ? new Date(this.since) : null;
 		const recent = ads.filter((ad) => {
 			if (!since) return true;
@@ -129,6 +125,15 @@ export const olxAdapter: CheerioAdapter = {
 		// the next page; the since filter above drops older postings.
 		const pageNumber = listing?.pageNumber ?? 0;
 		const totalPages = listing?.totalPages ?? 0;
+		if (
+			pageNumber === 0 ||
+			pageNumber % 10 === 0 ||
+			pageNumber + 1 === totalPages
+		) {
+			console.log(
+				`olx page: pageNumber=${pageNumber + 1}/${totalPages} ads=${ads.length} recent=${recent.length}`,
+			);
+		}
 		if (pageNumber + 1 < totalPages) {
 			await enqueue([`${KRAKOW_LIST_URL}?page=${pageNumber + 2}`]);
 		}

@@ -1,11 +1,17 @@
 import {
 	CheerioCrawler,
 	Configuration,
+	log,
 	MemoryStorage,
 	PlaywrightCrawler,
 } from "crawlee";
 
 import type { Listing, SiteAdapter } from "./types.ts";
+
+// Keep crawler logs compact: warnings/errors only. The per-page progress
+// lines come from the adapters themselves via console.log, and failures are
+// surfaced through failedRequestHandler / console.warn.
+log.setLevel(log.LEVELS.WARNING);
 
 export interface CrawlResult {
 	listings: Listing[];

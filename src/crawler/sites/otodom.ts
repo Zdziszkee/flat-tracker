@@ -256,12 +256,13 @@ export const otodomAdapter: CheerioAdapter = {
 			const d = itemDate(item);
 			return d && (!max || d > max) ? d : max;
 		}, null);
-		console.log(
-			`otodom list: items=${items.length} recent=${recentItems.length} page=${pagination?.currentPage ?? page}/${pagination?.totalPages ?? "?"} newest=${newest?.toISOString().slice(0, 10) ?? "?"}`,
-		);
-
 		const current = pagination?.currentPage ?? page;
 		const totalPages = pagination?.totalPages ?? 0;
+		if (current === 1 || current % 10 === 0 || current === totalPages) {
+			console.log(
+				`otodom list: items=${items.length} recent=${recentItems.length} page=${current}/${totalPages} newest=${newest?.toISOString().slice(0, 10) ?? "?"}`,
+			);
+		}
 		if (current < totalPages && items.length > 0) {
 			await enqueue([listPageUrl(this.since, current + 1)]);
 		}
