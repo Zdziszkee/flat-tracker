@@ -1,7 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { max, sql } from "drizzle-orm";
 import { Effect } from "effect";
 
+import { db } from "#/db/index";
+import { listings } from "#/db/schema";
 import { pruneOldListings } from "./db-sink.ts";
 import { geocodeUnlocatedListings } from "./geocode-listings.ts";
 import { importRcn } from "./import-rcn.ts";
@@ -79,37 +82,54 @@ export async function refreshAll(
 	const started = now;
 	const state = await readState();
 
-	const sites: SiteRefresh[] = [];
-	for (const base of adapters) {
-		if (DEMO_SITES.has(base.id)) continue;
-		// Dev-start diff: since = max(now - sinceDays, last successful crawl)
-		// per site, so only offers added since the previous load are fetched.
+	// The newest "added" date already stored per source. Dev-start diffs use
+	// this as the per-site anchor, so a boot fetches only what the DB is
+	// missing instead of re-downloading the whole window.
+	const latestRows = await db
+		.select({
+			source: listings.source,
+			latest: max(
+				sql<number>`coalesce(${listings.listedAt}, ${listings.firstSeenAt})`,
+			),
+		})
+		.from(listings)
+		.groupBy(listings.source);
+	const latestBySource = new Map(
+		latestRows
+			.filter((r) => r.latest != null)
+			.map((r) => [r.source, Number(r.latest) * 1000] as const),
+	);
+
+	// Scrape all sites in parallel; portal failures stay isolated per site.
+	const siteAdapters = adapters.filter((base) => !DEMO_SITES.has(base.id));
+	const tasks = siteAdapters.map(async (base): Promise<SiteRefresh> => {
 		const last = state[base.id] ? Date.parse(state[base.id]) : NaN;
+		const dbLatest = latestBySource.get(base.id) ?? 0;
 		const sinceMs = opts.diffOnly
 			? Math.max(
 					now - sinceDays * 24 * 60 * 60 * 1000,
+					dbLatest,
 					Number.isNaN(last) ? 0 : last,
 				)
 			: now - sinceDays * 24 * 60 * 60 * 1000;
-		const since = new Date(sinceMs);
+		// Clamp at "now" so a stray future-dated row never freezes the diff.
+		const since = new Date(Math.min(now, sinceMs));
 		// A per-run clone carries the date window; only list-paginating
 		// sites (otodom, olx, licytacje-komornik) use it, the rest ignore it.
 		const adapter: SiteAdapter = { ...base, since: since.toISOString() };
 		try {
 			const report = await Effect.runPromise(runCrawlWithRetry(adapter, true));
-			sites.push({
+			return {
 				site: adapter.id,
 				ok: true,
 				newListings: report.newListings,
 				updatedListings: report.updatedListings,
 				pages: report.pages,
 				elapsedSeconds: report.elapsedSeconds,
-			});
-			state[adapter.id] = new Date().toISOString();
-			await writeState(state);
+			};
 		} catch (err) {
 			console.error(`[refresh] crawl of "${adapter.id}" failed:`, err);
-			sites.push({
+			return {
 				site: adapter.id,
 				ok: false,
 				newListings: 0,
@@ -117,9 +137,28 @@ export async function refreshAll(
 				pages: 0,
 				elapsedSeconds: 0,
 				error: String(err),
-			});
+			};
 		}
+	});
+
+	const settled = await Promise.allSettled(tasks);
+	const sites: SiteRefresh[] = settled.map((r, i) =>
+		r.status === "fulfilled"
+			? r.value
+			: {
+					site: siteAdapters[i]?.id ?? "unknown",
+					ok: false,
+					newListings: 0,
+					updatedListings: 0,
+					pages: 0,
+					elapsedSeconds: 0,
+					error: String(r.reason),
+				},
+	);
+	for (const s of sites) {
+		if (s.ok) state[s.site] = new Date().toISOString();
 	}
+	await writeState(state);
 
 	const pruned = await pruneOldListings(
 		new Date(now - sinceDays * 24 * 60 * 60 * 1000),
