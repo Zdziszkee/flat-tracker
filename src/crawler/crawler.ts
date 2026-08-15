@@ -58,6 +58,9 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 			maxRequestsPerCrawl,
 			maxConcurrency: 3,
 			maxRequestRetries: 5,
+			// Some portals (nieruchomosci-online) mislabel their HTML as
+			// text/plain; accept it so the Cheerio parser still runs.
+			additionalMimeTypes: ["text/plain"],
 			// Otodom/OLX return 403 when we burst; retry those with backoff
 			// instead of giving up immediately.
 			retryOnBlocked: true,

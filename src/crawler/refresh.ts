@@ -159,20 +159,36 @@ export async function refreshAll(
 		}
 	});
 
-	const settled = await Promise.allSettled(tasks);
-	const sites: SiteRefresh[] = settled.map((r, i) =>
-		r.status === "fulfilled"
-			? r.value
-			: {
+	// Run the site tasks with bounded concurrency: enough to be parallel
+	// across portals, but not so many crawlers at once that MemoryStorage /
+	// Playwright blow the process memory budget.
+	const SITE_CONCURRENCY = 3;
+	const sites: SiteRefresh[] = new Array(tasks.length);
+	let nextTask = 0;
+	async function worker() {
+		while (nextTask < tasks.length) {
+			const i = nextTask++;
+			try {
+				sites[i] = await tasks[i];
+			} catch (err) {
+				sites[i] = {
 					site: siteAdapters[i]?.id ?? "unknown",
 					ok: false,
 					newListings: 0,
 					updatedListings: 0,
 					pages: 0,
 					elapsedSeconds: 0,
-					error: String(r.reason),
-				},
+					error: String(err),
+				};
+			}
+		}
+	}
+	await Promise.all(
+		Array.from({ length: Math.min(SITE_CONCURRENCY, tasks.length) }, () =>
+			worker(),
+		),
 	);
+
 	for (const s of sites) {
 		if (s.ok) state[s.site] = new Date().toISOString();
 	}
