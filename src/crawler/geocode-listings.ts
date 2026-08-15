@@ -208,7 +208,10 @@ export async function geocodeUnlocatedListings(
 		let parsed = parseAddressFromText(streetPart);
 		let extractedAddress: string | null = null;
 
-		if (!parsed && !plausibleAddress(streetPart)) {
+		// Only mine free text when there is no stored address. A stored
+		// street without a housenumber ("Doktora Jana Piltza") must still be
+		// geocoded via its street centroid, not overwritten by title-speak.
+		if (!hasStoredAddress && !parsed && !plausibleAddress(streetPart)) {
 			// No usable address: mine the title, then the description, for
 			// "Street 12" patterns. The plausibleAddress gate only applies to
 			// free-text mining — ad speak like "Przytulne 27" would otherwise
