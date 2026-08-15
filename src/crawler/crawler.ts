@@ -65,8 +65,8 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 			// instead of giving up immediately.
 			retryOnBlocked: true,
 			async requestHandler({ $, request, enqueueLinks, addRequests, body }) {
-				// Polite pacing: portals throttle bursty crawlers.
-				await new Promise((r) => setTimeout(r, 350));
+				// Polite pacing: portals throttle bursty crawlers (403s).
+				await new Promise((r) => setTimeout(r, 800));
 				// Strategy B: whole-page extraction (embedded JSON or raw API).
 				if (adapter.extractHtml) {
 					// Use the request manager directly instead of `enqueueLinks`:

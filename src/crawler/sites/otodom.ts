@@ -244,12 +244,22 @@ export const otodomAdapter: CheerioAdapter = {
 			return d === null || d >= since; // cannot judge, keep it
 		};
 
-		// Save and enqueue detail pages only for postings within the window.
-		// (The server filter is a whole-day superset of `since`.)
+		// Save list records for the whole window, but only crawl detail pages
+		// for offers from the last 7 days. Older offers were already refined on
+		// the run that first saw them, and re-crawling every detail every hour
+		// is what trips otodom's CloudFront rate limit.
 		const recentItems = items.filter(isRecent);
 		const listings = recentItems.map(listItemToListing);
+		const detailSinceMs = Math.max(
+			since?.getTime() ?? 0,
+			Date.now() - 7 * 24 * 60 * 60 * 1000,
+		);
+		const detailItems = items.filter((item) => {
+			const d = itemDate(item);
+			return d !== null && d.getTime() >= detailSinceMs;
+		});
 		await enqueue(
-			recentItems.map((item) => `https://www.otodom.pl/pl/oferta/${item.slug}`),
+			detailItems.map((item) => `https://www.otodom.pl/pl/oferta/${item.slug}`),
 		);
 
 		const newest = items.reduce<Date | null>((max, item) => {
