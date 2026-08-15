@@ -147,3 +147,44 @@ export function matchAddressString(
 	const lng = buildings.reduce((s, b) => s + b.lng, 0) / buildings.length;
 	return { lat, lng, building: null };
 }
+
+/** cityNorm -> centroid of that city's buildings (offline fallback). */
+export async function buildCityCentroids(): Promise<
+	Map<string, { lat: number; lng: number }>
+> {
+	const rows = await db
+		.select({
+			tags: osmBuildings.tags,
+			centroidLat: osmBuildings.centroidLat,
+			centroidLng: osmBuildings.centroidLng,
+		})
+		.from(osmBuildings)
+		.where(isNotNull(osmBuildings.tags));
+
+	const sums = new Map<string, { lat: number; lng: number; n: number }>();
+	for (const r of rows) {
+		let city: string | undefined;
+		if (r.tags) {
+			try {
+				const tags = JSON.parse(r.tags) as Record<string, string>;
+				city = tags["addr:city"] ?? tags["addr:place"];
+			} catch {
+				city = undefined;
+			}
+		}
+		if (!city) continue;
+		const key = normStreet(city);
+		if (!key) continue;
+		const s = sums.get(key) ?? { lat: 0, lng: 0, n: 0 };
+		s.lat += r.centroidLat;
+		s.lng += r.centroidLng;
+		s.n += 1;
+		sums.set(key, s);
+	}
+	return new Map(
+		[...sums.entries()].map(([k, s]) => [
+			k,
+			{ lat: s.lat / s.n, lng: s.lng / s.n },
+		]),
+	);
+}

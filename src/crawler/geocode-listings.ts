@@ -5,6 +5,7 @@ import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import { db } from "#/db/index";
 import { buildings, listings } from "#/db/schema";
 import {
+	buildCityCentroids,
 	buildStreetIndex,
 	matchAddressString,
 	matchByAddress,
@@ -196,6 +197,7 @@ export async function geocodeUnlocatedListings(
 	if (rows.length === 0) return report;
 
 	const streetIndex = await buildStreetIndex();
+	const cityCentroids = await buildCityCentroids();
 	// Persistent Nominatim cache, keyed by normalized street — survives
 	// the chunked drain processes and dedupes morizon/gratka duplicates.
 	const nomCache = await loadNomCache();
@@ -301,6 +303,18 @@ export async function geocodeUnlocatedListings(
 				.where(eq(listings.id, row.id));
 			report.localHits++;
 			if (extractedAddress) report.titleExtracted++;
+			continue;
+		}
+
+		// City-level offline fallback: no matching street/building, but the
+		// address names a city — place it at the city centroid.
+		const cityCentroid = cityCentroids.get(normStreet(cityHint ?? ""));
+		if (cityCentroid) {
+			await db
+				.update(listings)
+				.set({ lat: cityCentroid.lat, lng: cityCentroid.lng })
+				.where(eq(listings.id, row.id));
+			report.localHits++;
 			continue;
 		}
 
