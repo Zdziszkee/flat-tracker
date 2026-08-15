@@ -11,11 +11,6 @@ import { runTask } from "nitro/task";
  */
 export default definePlugin(() => {
 	if (!import.meta.dev) return;
-	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
-		console.warn(
-			"[refresh] Bun detected — better-sqlite3 is unsupported under Bun (geocoding/local index will break). Use `npm run dev` instead.",
-		);
-	}
 	console.log(
 		"[refresh] dev server started; running incremental crawl in the background...",
 	);

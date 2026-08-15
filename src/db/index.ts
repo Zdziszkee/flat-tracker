@@ -1,9 +1,12 @@
+import { Database } from "bun:sqlite";
 import { config } from "dotenv";
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 
 import * as schema from "./schema.ts";
 
-// drizzle-kit and the crawler CLI both rely on DATABASE_URL from .env.local
+// drizzle-kit (db:generate/migrate) reads only the schema and runs under
+// Node, but the app and crawler run under Bun, so use bun:sqlite here.
 config({ path: [".env.local", ".env"] });
 
-export const db = drizzle(process.env.DATABASE_URL!, { schema });
+const sqlite = new Database(process.env.DATABASE_URL ?? "dev.db");
+export const db = drizzle(sqlite, { schema });
