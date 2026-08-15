@@ -61,6 +61,16 @@ export const listings = sqliteTable(
 		/** Raw ad description, used as an address-mining fallback when the
 		 * portal exposes no structured address. */
 		description: text(),
+		/** When this offer was first seen by the crawler (insert-only). Used
+		 * as the "added" date when the portal exposes no posting date. */
+		firstSeenAt: integer("first_seen_at", { mode: "timestamp" }),
+		/** Heating type (ogrzewanie), e.g. "miejskie", "gazowe". */
+		heatingType: text("heating_type"),
+		/** Property type (typ), e.g. "mieszkanie", "kawalerka". */
+		propertyType: text("property_type"),
+		/** Extra portal attributes (ogrzewanie, typ, parking, winda, ...) as
+		 * a JSON object string, captured without schema churn. */
+		features: text(),
 		/** Nullable because some portals (otodom list view) hide coordinates. */
 		lat: real(),
 		lng: real(),

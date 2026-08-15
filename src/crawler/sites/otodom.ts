@@ -87,6 +87,9 @@ function listItemToListing(item: OtodomListItem): Listing {
 		district: districtOf(item.location?.reverseGeocoding?.locations),
 		address: null,
 		description: null,
+		heatingType: null,
+		propertyType: null,
+		features: null,
 		lat: null,
 		lng: null,
 		listedAt: item.dateCreated
@@ -94,6 +97,18 @@ function listItemToListing(item: OtodomListItem): Listing {
 			: null,
 		scrapedAt: new Date().toISOString(),
 	};
+}
+
+function attrStr(
+	attrs: Record<string, string | number | string[] | undefined>,
+	keys: string[],
+): string | null {
+	for (const key of keys) {
+		const value = attrs[key];
+		if (typeof value === "string" && value.trim()) return value;
+		if (typeof value === "number") return String(value);
+	}
+	return null;
 }
 
 function detailToListing(detail: OtodomDetail, url: string): Listing {
@@ -113,6 +128,9 @@ function detailToListing(detail: OtodomDetail, url: string): Listing {
 		district: districtOf(detail.location?.reverseGeocoding?.locations),
 		address: null,
 		description: detail.description ?? null,
+		heatingType: attrStr(attrs, ["heating", "heating_type", "ogrzewanie"]),
+		propertyType: attrStr(attrs, ["type", "property_type", "building_type"]),
+		features: Object.keys(attrs).length ? JSON.stringify(attrs) : null,
 		lat: detail.location?.coordinates?.latitude ?? null,
 		lng: detail.location?.coordinates?.longitude ?? null,
 		// The list page's `dateCreated` is the authoritative "added" date:

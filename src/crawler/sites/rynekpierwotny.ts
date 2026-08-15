@@ -162,6 +162,9 @@ function offerToListing(offer: RpOffer): Listing | null {
 		district,
 		address,
 		description: null,
+		heatingType: null,
+		propertyType: null,
+		features: null,
 		// GeoJSON Point coordinates are [lng, lat].
 		lat: coords.length >= 2 ? coords[1] : null,
 		lng: coords.length >= 2 ? coords[0] : null,

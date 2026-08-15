@@ -21,6 +21,10 @@ export interface ApiListing {
 	lat: number | null;
 	lng: number | null;
 	listedAt: string | null;
+	firstSeenAt: string | null;
+	heatingType: string | null;
+	propertyType: string | null;
+	features: string | null;
 	buildingId: number | null;
 	buildingAddress: string | null;
 	mapLat: number | null;
@@ -262,7 +266,7 @@ export default function MapView({
 	const listings = (data?.listings ?? []).filter(
 		(l) =>
 			(source === "all" || l.source === source) &&
-			addedWithin(l.listedAt, days),
+			addedWithin(l.listedAt ?? l.firstSeenAt, days),
 	);
 
 	if (!TOKEN) {

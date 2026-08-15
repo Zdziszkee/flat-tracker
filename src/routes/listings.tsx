@@ -13,6 +13,10 @@ interface Row {
 	district: string | null;
 	url: string;
 	listedAt: string | null;
+	firstSeenAt: string | null;
+	heatingType: string | null;
+	propertyType: string | null;
+	features: string | null;
 }
 
 interface ListingsResponse {
@@ -72,7 +76,7 @@ function ListingsPage() {
 	const rows = (data?.listings ?? []).filter(
 		(r) =>
 			(source === "all" || r.source === source) &&
-			addedWithin(r.listedAt, days),
+			addedWithin(r.listedAt ?? r.firstSeenAt, days),
 	);
 
 	return (

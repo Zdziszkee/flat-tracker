@@ -34,6 +34,12 @@ export interface Listing {
 	/** Raw ad description, used as an address-mining fallback when the
 	 * portal exposes no structured address. */
 	description: string | null;
+	/** Heating type (ogrzewanie), e.g. "miejskie", "gazowe". */
+	heatingType: string | null;
+	/** Property type (typ), e.g. "mieszkanie", "kawalerka". */
+	propertyType: string | null;
+	/** Extra portal attributes as a JSON object string. */
+	features: string | null;
 	lat: number | null;
 	lng: number | null;
 	/** When the ad was created on the portal, ISO string or null. */
