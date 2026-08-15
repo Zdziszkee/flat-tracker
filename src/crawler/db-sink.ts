@@ -86,7 +86,9 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					lat: sql`coalesce(excluded.lat, ${listings.lat})`,
 					lng: sql`coalesce(excluded.lng, ${listings.lng})`,
 					buildingId: sql`coalesce(excluded.building_id, ${listings.buildingId})`,
-					listedAt: sql.raw(`excluded.listed_at`),
+					// Detail-page records carry no listedAt (the list page owns the
+					// "added" date), so keep the existing value instead of wiping it.
+					listedAt: sql`coalesce(excluded.listed_at, ${listings.listedAt})`,
 					scrapedAt: sql.raw(`excluded.scraped_at`),
 				},
 			})

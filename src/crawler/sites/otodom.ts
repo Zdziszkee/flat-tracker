@@ -112,7 +112,11 @@ function detailToListing(detail: OtodomDetail, url: string): Listing {
 		address: null,
 		lat: detail.location?.coordinates?.latitude ?? null,
 		lng: detail.location?.coordinates?.longitude ?? null,
-		listedAt: detail.lifecycle?.createdAt ?? null,
+		// The list page's `dateCreated` is the authoritative "added" date:
+		// it is what otodom's `daysSinceCreated` filter uses. The detail's
+		// `lifecycle.createdAt` is the original creation date and can be much
+		// older for re-pushed ads, so never let it overwrite the list value.
+		listedAt: null,
 		scrapedAt: new Date().toISOString(),
 	};
 }
@@ -121,8 +125,52 @@ export function isOtodomDetailUrl(url: string): boolean {
 	return url.includes("/oferta/");
 }
 
-const KRAKOW_LIST_URL =
-	"https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/malopolskie/krakow/krakow/krakow?limit=36&by=LATEST&direction=DESC";
+const KRAKOW_LIST_BASE =
+	"https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/malopolskie/krakow/krakow/krakow?limit=36&by=DEFAULT&direction=DESC";
+
+/** Default fetch window when no `since` is provided (cron runs use 90). */
+const DEFAULT_DAYS = 90;
+
+/**
+ * otodom's `by=LATEST` sort is ordered by "last bumped/pushed", NOT by
+ * creation date, so list pages interleave old promoted ads with new ones and
+ * a date-based pagination stop misses fresh offers. Instead we let otodom
+ * filter server-side with `daysSinceCreated` and sort by `by=DEFAULT`
+ * (creation date, newest first), which makes pagination stable and complete.
+ */
+function daysSinceCreated(since: string | undefined): number {
+	if (!since) return DEFAULT_DAYS;
+	const ms = Date.now() - Date.parse(since);
+	if (!Number.isFinite(ms) || ms <= 0) return 1;
+	// Subtract a minute so a window that is exactly N days (plus the few
+	// seconds it takes the crawler to start) resolves to N, not N+1.
+	return Math.max(1, Math.ceil((ms - 60_000) / (24 * 60 * 60 * 1000)));
+}
+
+function listPageUrl(since: string | undefined, page: number): string {
+	return `${KRAKOW_LIST_BASE}&daysSinceCreated=${daysSinceCreated(since)}&page=${page}`;
+}
+
+function parseListPage(url: string): { page: number; days: number | null } {
+	const u = new URL(url);
+	return {
+		page: Number(u.searchParams.get("page") ?? 1),
+		days: u.searchParams.has("daysSinceCreated")
+			? Number(u.searchParams.get("daysSinceCreated"))
+			: null,
+	};
+}
+
+/**
+ * Every list page carries a sponsored placeholder ad dated "1999-02-29
+ * 00:00:01". Drop it: it is not a real offer and its bogus date would
+ * otherwise be saved (then pruned) on every run.
+ */
+function isRealListing(item: OtodomListItem): boolean {
+	if (!item.dateCreated) return true;
+	const d = new Date(item.dateCreated.replace(" ", "T"));
+	return !Number.isNaN(d.getTime()) && d.getFullYear() >= 2000;
+}
 
 /**
  * Adapter for otodom.pl flat listings in Krakow.
@@ -137,7 +185,7 @@ export const otodomAdapter: CheerioAdapter = {
 	id: "otodom",
 	name: "Otodom - Krakow flats for sale",
 	kind: "cheerio",
-	startUrls: [KRAKOW_LIST_URL],
+	startUrls: [listPageUrl(undefined, 1)],
 	maxRequestsPerCrawl: 6000,
 
 	async extractHtml(html, url, enqueue) {
@@ -152,8 +200,18 @@ export const otodomAdapter: CheerioAdapter = {
 
 		// List pages: items without coordinates; enqueue details + next pages.
 		const searchAds = pageProps?.data?.searchAds;
-		const items = searchAds?.items ?? [];
+		const items = (searchAds?.items ?? []).filter(isRealListing);
 		const pagination = searchAds?.pagination;
+
+		// The static start URL carries the default window. Re-seed page 1 with
+		// this run's exact window so every page uses the same daysSinceCreated
+		// and pagination metadata stays consistent.
+		const { page, days } = parseListPage(url);
+		const wantDays = daysSinceCreated(this.since);
+		if (days !== wantDays) {
+			await enqueue([listPageUrl(this.since, page)]);
+			return [];
+		}
 
 		// dateCreated looks like "2026-08-04 21:39:19" (Europe/Warsaw local).
 		const since = this.since ? new Date(this.since) : null;
@@ -165,30 +223,26 @@ export const otodomAdapter: CheerioAdapter = {
 			return d === null || d >= since; // cannot judge, keep it
 		};
 
-		const listings = items.map(listItemToListing);
-
-		// Only enqueue detail pages for postings within the since window.
+		// Save and enqueue detail pages only for postings within the window.
+		// (The server filter is a whole-day superset of `since`.)
 		const recentItems = items.filter(isRecent);
+		const listings = recentItems.map(listItemToListing);
 		await enqueue(
 			recentItems.map((item) => `https://www.otodom.pl/pl/oferta/${item.slug}`),
 		);
 
-		// The list is sorted newest-first (by push date, so a single pushed-up
-		// old ad can sit on page 1). Continue pagination while the newest
-		// creation date on the page is still inside the window; once an entire
-		// page predates `since`, later pages do too.
 		const newest = items.reduce<Date | null>((max, item) => {
 			const d = itemDate(item);
 			return d && (!max || d > max) ? d : max;
 		}, null);
 		console.log(
-			`otodom list: items=${items.length} recent=${recentItems.length} currentPage=${pagination?.currentPage ?? "?"} newest=${newest?.toISOString().slice(0, 10) ?? "?"}`,
+			`otodom list: items=${items.length} recent=${recentItems.length} page=${pagination?.currentPage ?? page}/${pagination?.totalPages ?? "?"} newest=${newest?.toISOString().slice(0, 10) ?? "?"}`,
 		);
-		const pageStillFresh = !since || newest === null || newest >= since;
-		if (pagination?.currentPage && pageStillFresh && items.length > 0) {
-			const current = pagination.currentPage;
-			const nextUrl = `${KRAKOW_LIST_URL}&page=${current + 1}`;
-			await enqueue([nextUrl]);
+
+		const current = pagination?.currentPage ?? page;
+		const totalPages = pagination?.totalPages ?? 0;
+		if (current < totalPages && items.length > 0) {
+			await enqueue([listPageUrl(this.since, current + 1)]);
 		}
 
 		return listings;
