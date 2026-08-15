@@ -222,10 +222,12 @@ export async function geocodeUnlocatedListings(
 				.filter((s) => s && !/^\d{2}-\d{3}$/.test(s))
 				.pop() ?? null;
 
-		// Only mine free text when there is no stored address. A stored
-		// street without a housenumber ("Doktora Jana Piltza") must still be
-		// geocoded via its street centroid, not overwritten by title-speak.
-		if (!hasStoredAddress && !parsed && !plausibleAddress(streetPart)) {
+		// Mine free text when the stored address has no usable street: either
+		// no address at all, or only a postal code ("33-100, Tarnów"). The
+		// title/description of court notices often carries the real street.
+		const noUsableStreet =
+			!parsed && (!streetPart || /^\d{2}-\d{3}$/.test(streetPart.trim()));
+		if (noUsableStreet) {
 			// No usable address: mine the title, then the description, for
 			// "Street 12" patterns. The plausibleAddress gate only applies to
 			// free-text mining — ad speak like "Przytulne 27" would otherwise
