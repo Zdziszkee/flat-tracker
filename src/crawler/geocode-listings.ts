@@ -167,6 +167,8 @@ export async function geocodeUnlocatedListings(
 	opts: {
 		/** Max Nominatim requests this run (undefined = unlimited). */
 		nominatimLimit?: number;
+		/** Restrict to these source ids (undefined = all). */
+		sources?: string[];
 	} = {},
 ): Promise<GeocodeReport> {
 	const rows = db
@@ -181,7 +183,8 @@ export async function geocodeUnlocatedListings(
 		.from(listings)
 		.where(and(isNull(listings.lat), isNotNull(listings.title)))
 		.all()
-		.filter((row) => !DEMO_SOURCES.has(row.source));
+		.filter((row) => !DEMO_SOURCES.has(row.source))
+		.filter((row) => !opts.sources || opts.sources.includes(row.source));
 
 	const report: GeocodeReport = {
 		total: rows.length,

@@ -44,6 +44,7 @@ interface KomornikItem {
 	openingValue: number;
 	subCategory: string;
 	dateCreated: string;
+	startAuctionAt?: string;
 	address?: KomornikAddress | null;
 	location?: { lat: number; lon: number } | null;
 }
@@ -62,8 +63,6 @@ export const komornikAdapter: PlaywrightAdapter = {
 	listingSelector: "a.auction",
 
 	async extractListings(page: Page): Promise<Listing[]> {
-		const since = this.since ? new Date(this.since).getTime() : 0;
-
 		const items = await page.evaluate(
 			async ({ apiPath, pageSize }) => {
 				const body = {
@@ -98,14 +97,23 @@ export const komornikAdapter: PlaywrightAdapter = {
 		);
 
 		const listings: Listing[] = [];
+		const now = Date.now();
 		for (const item of items) {
 			if (!KEPT_SUBCATEGORIES.has(item.subCategory)) continue;
 
-			// Date window (diff-only dev runs): skip notices published
-			// before the crawl's `since` bound.
+			// Keep only active (upcoming) auctions. Notices without an
+			// auction date are kept as a fallback rather than dropped.
+			const start = item.startAuctionAt
+				? Date.parse(item.startAuctionAt)
+				: Number.NaN;
+			if (!Number.isNaN(start) && start < now) continue;
+
 			const created = Date.parse(item.dateCreated ?? "");
-			if (Number.isNaN(created)) continue;
-			if (since > 0 && created < since) continue;
+			const listedAt = Number.isNaN(created)
+				? !Number.isNaN(start)
+					? new Date(start).toISOString()
+					: null
+				: new Date(created).toISOString();
 
 			const addr: KomornikAddress = item.address ?? {
 				street: null,
@@ -146,7 +154,7 @@ export const komornikAdapter: PlaywrightAdapter = {
 				features: null,
 				lat: lat && lng ? lat : null,
 				lng: lat && lng ? lng : null,
-				listedAt: new Date(created).toISOString(),
+				listedAt,
 				scrapedAt: new Date().toISOString(),
 			});
 		}
