@@ -310,9 +310,10 @@ export async function geocodeUnlocatedListings(
 				continue;
 			}
 			nomBudget--;
-			const query = [streetPart, row.district, "Kraków"]
-				.filter(Boolean)
-				.join(", ");
+			const query =
+				hasStoredAddress && row.address
+					? row.address
+					: [streetPart, row.district, "Małopolska"].filter(Boolean).join(", ");
 			geo = await nominatimGeocode(query, streetPart);
 			if (streetKey) {
 				nomCache[streetKey] = geo;
