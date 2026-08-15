@@ -205,6 +205,15 @@ export async function geocodeUnlocatedListings(
 	for (let i = 0; i < rows.length; i++) {
 		const row = rows[i];
 		const hasStoredAddress = Boolean(row.address?.trim());
+		// The local street index is keyed by street name only (no city), so a
+		// street that exists in several towns ("Podwale" in Kraków and
+		// Trzebinia) can anchor to the wrong town. Court notices carry the
+		// real city in `district`, so skip the ambiguous local match there and
+		// let Nominatim resolve the full address.
+		const skipLocal =
+			row.source === "licytacje-komornik" &&
+			Boolean(row.district) &&
+			!row.district?.toLowerCase().includes("krak");
 		// The street part is always the first comma segment of a stored
 		// address; fall back to parsing it out of the title.
 		let streetPart = row.address?.split(",")[0]?.trim() ?? "";
@@ -243,24 +252,49 @@ export async function geocodeUnlocatedListings(
 			}
 		}
 
-		if (parsed) {
-			const local = matchByAddress(
-				streetIndex,
-				parsed.street,
-				parsed.number ?? null,
-			);
-			if (local) {
-				const buildingId = await ensureBuildingByOsmId(
-					local.osmId,
-					local.lat,
-					local.lng,
+		if (!skipLocal) {
+			if (parsed) {
+				const local = matchByAddress(
+					streetIndex,
+					parsed.street,
+					parsed.number ?? null,
 				);
+				if (local) {
+					const buildingId = await ensureBuildingByOsmId(
+						local.osmId,
+						local.lat,
+						local.lng,
+					);
+					await db
+						.update(listings)
+						.set({
+							lat: local.lat,
+							lng: local.lng,
+							buildingId,
+							...(extractedAddress ? { address: extractedAddress } : {}),
+						})
+						.where(eq(listings.id, row.id));
+					report.localHits++;
+					if (extractedAddress) report.titleExtracted++;
+					continue;
+				}
+			}
+
+			// Street-only fallback: exact building unknown, but the local index
+			// still has a street centroid — a good map anchor without claiming
+			// a specific building's history.
+			const centroid = matchAddressString(
+				streetIndex,
+				parsed
+					? `${parsed.street}${parsed.number ? ` ${parsed.number}` : ""}`
+					: streetPart,
+			);
+			if (centroid) {
 				await db
 					.update(listings)
 					.set({
-						lat: local.lat,
-						lng: local.lng,
-						buildingId,
+						lat: centroid.lat,
+						lng: centroid.lng,
 						...(extractedAddress ? { address: extractedAddress } : {}),
 					})
 					.where(eq(listings.id, row.id));
@@ -268,29 +302,6 @@ export async function geocodeUnlocatedListings(
 				if (extractedAddress) report.titleExtracted++;
 				continue;
 			}
-		}
-
-		// Street-only fallback: exact building unknown, but the local index
-		// still has a street centroid — a good map anchor without claiming
-		// a specific building's history.
-		const centroid = matchAddressString(
-			streetIndex,
-			parsed
-				? `${parsed.street}${parsed.number ? ` ${parsed.number}` : ""}`
-				: streetPart,
-		);
-		if (centroid) {
-			await db
-				.update(listings)
-				.set({
-					lat: centroid.lat,
-					lng: centroid.lng,
-					...(extractedAddress ? { address: extractedAddress } : {}),
-				})
-				.where(eq(listings.id, row.id));
-			report.localHits++;
-			if (extractedAddress) report.titleExtracted++;
-			continue;
 		}
 
 		// Nominatim street-level fallback (bounded for scheduled runs).
