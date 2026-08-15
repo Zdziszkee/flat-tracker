@@ -71,6 +71,26 @@ export const listings = sqliteTable(
 		/** Extra portal attributes (ogrzewanie, typ, parking, winda, ...) as
 		 * a JSON object string, captured without schema churn. */
 		features: text(),
+		/** Primary/secondary market ("primary"/"secondary"). */
+		market: text(),
+		/** Year the building was constructed. */
+		buildYear: integer("build_year", { mode: "number" }),
+		/** Building material (brick, concrete_plate, ...). */
+		buildingMaterial: text("building_material"),
+		/** Number of floors in the building. */
+		floorCount: integer("floor_count", { mode: "number" }),
+		/** Finish/construction state (to_renovation, finished, ...). */
+		condition: text(),
+		/** Ownership form (full_ownership, cooperative, ...). */
+		ownership: text(),
+		/** Last crawl that saw this offer still live. */
+		lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
+		/** When the offer disappeared from the portal (sold/withdrawn). */
+		deactivatedAt: integer("deactivated_at", { mode: "timestamp" }),
+		/** False once the offer is no longer present on the portal. */
+		isActive: integer("is_active", { mode: "boolean" })
+			.notNull()
+			.default(sql`1`),
 		/** Nullable because some portals (otodom list view) hide coordinates. */
 		lat: real(),
 		lng: real(),
@@ -83,6 +103,11 @@ export const listings = sqliteTable(
 	(t) => [
 		uniqueIndex("listings_source_external_idx").on(t.source, t.externalId),
 		index("listings_building_idx").on(t.buildingId),
+		index("listings_district_listed_idx").on(t.district, t.listedAt),
+		index("listings_source_listed_idx").on(t.source, t.listedAt),
+		index("listings_price_m2_idx").on(t.pricePerM2),
+		index("listings_area_idx").on(t.areaM2),
+		index("listings_active_idx").on(t.isActive),
 	],
 );
 
@@ -115,7 +140,12 @@ export const transactions = sqliteTable(
 			sql`(unixepoch())`,
 		),
 	},
-	(t) => [index("transactions_building_idx").on(t.buildingId)],
+	(t) => [
+		index("transactions_building_idx").on(t.buildingId),
+		index("transactions_district_date_idx").on(t.district, t.date),
+		index("transactions_price_m2_date_idx").on(t.pricePerM2, t.date),
+		index("transactions_building_date_idx").on(t.buildingId, t.date),
+	],
 );
 
 /**
@@ -147,4 +177,44 @@ export const osmBuildings = sqliteTable(
 			t.bboxMaxLng,
 		),
 	],
+);
+
+/**
+ * Price/attribute snapshots per listing, one row whenever a crawl observes
+ * a change. Enables price-drop and time-on-market analytics.
+ */
+export const listingHistory = sqliteTable(
+	"listing_history",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		listingId: integer("listing_id")
+			.notNull()
+			.references(() => listings.id),
+		capturedAt: integer("captured_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+		price: real(),
+		pricePerM2: real(),
+		areaM2: real(),
+		status: text(),
+	},
+	(t) => [index("listing_history_listing_idx").on(t.listingId, t.capturedAt)],
+);
+
+/**
+ * One row per site crawl run, for crawler-health and data-freshness metrics.
+ */
+export const crawlRuns = sqliteTable(
+	"crawl_runs",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		source: text().notNull(),
+		startedAt: integer("started_at", { mode: "timestamp" }).notNull(),
+		finishedAt: integer("finished_at", { mode: "timestamp" }),
+		pages: integer({ mode: "number" }),
+		newCount: integer("new_count", { mode: "number" }),
+		updatedCount: integer("updated_count", { mode: "number" }),
+		error: text(),
+	},
+	(t) => [index("crawl_runs_source_started_idx").on(t.source, t.startedAt)],
 );

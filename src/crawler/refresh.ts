@@ -5,7 +5,7 @@ import { Effect } from "effect";
 
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
-import { pruneOldListings } from "./db-sink.ts";
+import { pruneOldListings, recordCrawlRun } from "./db-sink.ts";
 import { geocodeUnlocatedListings } from "./geocode-listings.ts";
 import { importRcn } from "./import-rcn.ts";
 import { runCrawlWithRetry } from "./pipeline.ts";
@@ -117,8 +117,17 @@ export async function refreshAll(
 		// A per-run clone carries the date window; only list-paginating
 		// sites (otodom, olx, licytacje-komornik) use it, the rest ignore it.
 		const adapter: SiteAdapter = { ...base, since: since.toISOString() };
+		const taskStarted = Date.now();
 		try {
 			const report = await Effect.runPromise(runCrawlWithRetry(adapter, true));
+			await recordCrawlRun({
+				source: adapter.id,
+				startedAt: new Date(taskStarted),
+				finishedAt: new Date(),
+				pages: report.pages,
+				newCount: report.newListings,
+				updatedCount: report.updatedListings,
+			});
 			return {
 				site: adapter.id,
 				ok: true,
@@ -129,6 +138,15 @@ export async function refreshAll(
 			};
 		} catch (err) {
 			console.error(`[refresh] crawl of "${adapter.id}" failed:`, err);
+			await recordCrawlRun({
+				source: adapter.id,
+				startedAt: new Date(taskStarted),
+				finishedAt: new Date(),
+				pages: 0,
+				newCount: 0,
+				updatedCount: 0,
+				error: String(err),
+			});
 			return {
 				site: adapter.id,
 				ok: false,

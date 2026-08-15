@@ -36,6 +36,13 @@
       "when": 1786810032865,
       "tag": "0004_bouncy_lilith",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1786812636296,
+      "tag": "0005_clumsy_goliath",
+      "breakpoints": true
     }
   ]
 }

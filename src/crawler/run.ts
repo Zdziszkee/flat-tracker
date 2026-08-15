@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 
 import { Effect } from "effect";
 
-import { pruneOldListings } from "./db-sink.ts";
+import { pruneOldListings, recordCrawlRun } from "./db-sink.ts";
 import { runCrawl } from "./pipeline.ts";
 import { getAdapter } from "./sites/index.ts";
 import type { SiteAdapter } from "./types.ts";
@@ -57,6 +57,7 @@ async function main() {
 		`Crawling "${adapter.name}" (${adapter.kind})... postings since ${since.toISOString().slice(0, 10)}`,
 	);
 
+	const startedAt = Date.now();
 	const program = runCrawl(adapter, values["save-db"]);
 	const report = await Effect.runPromise(program);
 
@@ -64,6 +65,14 @@ async function main() {
 		`Done in ${report.elapsedSeconds.toFixed(1)}s: ${report.pages} pages, ${report.listings} listings`,
 	);
 	if (values["save-db"]) {
+		await recordCrawlRun({
+			source: adapter.id,
+			startedAt: new Date(startedAt),
+			finishedAt: new Date(),
+			pages: report.pages,
+			newCount: report.newListings,
+			updatedCount: report.updatedListings,
+		});
 		console.log(
 			`DB diff: ${report.newListings} new, ${report.updatedListings} updated`,
 		);
