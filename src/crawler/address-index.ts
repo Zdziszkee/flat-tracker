@@ -90,9 +90,9 @@ export async function buildStreetIndex(): Promise<
 }
 
 /**
- * Keep only buildings in the expected city (or buildings with no city),
- * falling back to all buildings when `cityHint` matches nothing (it may be
- * a district like "Krowodrza" rather than a city).
+ * Keep only buildings in the expected city (or buildings with no city).
+ * An empty result means "no local match" so the caller falls back to
+ * Nominatim rather than anchoring to the wrong town.
  */
 function filterByCity(
 	buildings: StreetBuilding[] | undefined,
@@ -101,10 +101,7 @@ function filterByCity(
 	if (!buildings || buildings.length === 0) return buildings;
 	if (!cityHint) return buildings;
 	const key = normStreet(cityHint);
-	const filtered = buildings.filter(
-		(b) => !b.city || normStreet(b.city) === key,
-	);
-	return filtered.length > 0 ? filtered : buildings;
+	return buildings.filter((b) => !b.city || normStreet(b.city) === key);
 }
 
 /**
