@@ -18,6 +18,7 @@ export interface ApiListing {
 	rooms: number | null;
 	floor: string | null;
 	district: string | null;
+	address: string | null;
 	lat: number | null;
 	lng: number | null;
 	listedAt: string | null;
@@ -120,19 +121,26 @@ function popupHtml(l: ApiListing): string {
 	const addedLabel = added
 		? new Date(added).toLocaleDateString("pl-PL")
 		: "n/d";
+	const location = l.address ?? l.district ?? l.buildingAddress ?? "";
+	const details = [
+		l.areaM2 ? `${l.areaM2} m²` : "",
+		l.rooms ? `${l.rooms} pok.` : "",
+		l.floor ? `piętro ${l.floor}` : "",
+		l.propertyType ? l.propertyType : "",
+	]
+		.filter(Boolean)
+		.join(" · ");
+	const heating = l.heatingType ? `Ogrzewanie: ${l.heatingType}` : "";
 	return `
     <div class="min-w-56 space-y-1 text-sm">
       <div class="font-semibold leading-tight">${escapeHtml(l.title)}</div>
-      <div class="text-gray-500">
-        ${escapeHtml(l.district ?? "")}${l.buildingAddress ? ` · ${escapeHtml(l.buildingAddress)}` : ""}
-      </div>
+      <div class="text-gray-500">${escapeHtml(location)}</div>
       <div class="flex justify-between gap-4 pt-1">
         <span class="font-medium">${formatPln(l.price)}</span>
         <span>${l.pricePerM2 ? `${l.pricePerM2.toFixed(0)} zł/m²` : ""}</span>
       </div>
-      <div class="text-gray-500">
-        ${l.areaM2 ? `${l.areaM2} m²` : ""}${l.rooms ? ` · ${l.rooms} pok.` : ""}${l.floor ? ` · ${escapeHtml(l.floor)}` : ""}
-      </div>
+      <div class="text-gray-500">${escapeHtml(details)}</div>
+      <div class="text-gray-500">${escapeHtml(heating)}</div>
       <div class="text-gray-400">Dodano: ${addedLabel}</div>
       ${
 				stats

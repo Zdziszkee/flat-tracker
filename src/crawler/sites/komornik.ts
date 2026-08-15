@@ -97,17 +97,14 @@ export const komornikAdapter: PlaywrightAdapter = {
 		);
 
 		const listings: Listing[] = [];
-		const now = Date.now();
 		for (const item of items) {
 			if (!KEPT_SUBCATEGORIES.has(item.subCategory)) continue;
 
-			// Keep only active (upcoming) auctions. Notices without an
-			// auction date are kept as a fallback rather than dropped.
+			// Scrape every in-scope notice (flats/houses/plots). Prefer the
+			// notice creation date; fall back to the auction start date.
 			const start = item.startAuctionAt
 				? Date.parse(item.startAuctionAt)
 				: Number.NaN;
-			if (!Number.isNaN(start) && start < now) continue;
-
 			const created = Date.parse(item.dateCreated ?? "");
 			const listedAt = Number.isNaN(created)
 				? !Number.isNaN(start)
