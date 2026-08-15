@@ -92,6 +92,10 @@ function popupHtml(l: ApiListing): string {
 	const minYear = yearOf(stats?.txMinDate);
 	const maxYear = yearOf(stats?.txMaxDate);
 	const range = minYear && maxYear ? ` (${minYear}-${maxYear})` : "";
+	const added = l.listedAt ?? l.firstSeenAt;
+	const addedLabel = added
+		? new Date(added).toLocaleDateString("pl-PL")
+		: "n/d";
 	return `
     <div class="min-w-56 space-y-1 text-sm">
       <div class="font-semibold leading-tight">${escapeHtml(l.title)}</div>
@@ -105,6 +109,7 @@ function popupHtml(l: ApiListing): string {
       <div class="text-gray-500">
         ${l.areaM2 ? `${l.areaM2} m²` : ""}${l.rooms ? ` · ${l.rooms} pok.` : ""}${l.floor ? ` · ${escapeHtml(l.floor)}` : ""}
       </div>
+      <div class="text-gray-400">Dodano: ${addedLabel}</div>
       ${
 				stats
 					? `<div class="border-t pt-1 text-xs">

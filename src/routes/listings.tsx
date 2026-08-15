@@ -56,6 +56,11 @@ function addedWithin(listedAt: string | null, days: DaysFilter): boolean {
 	return Date.now() - new Date(listedAt).getTime() <= days * 24 * 3600 * 1000;
 }
 
+function addedLabel(row: Row): string {
+	const added = row.listedAt ?? row.firstSeenAt;
+	return added ? new Date(added).toLocaleDateString("pl-PL") : "";
+}
+
 export const Route = createFileRoute("/listings")({
 	component: ListingsPage,
 });
@@ -173,11 +178,7 @@ function ListingsPage() {
 									<td className="px-3 py-1.5 text-right">{fmt(r.areaM2)}</td>
 									<td className="px-3 py-1.5 text-right">{r.rooms ?? ""}</td>
 									<td className="px-3 py-1.5">{r.district ?? ""}</td>
-									<td className="px-3 py-1.5 text-gray-500">
-										{r.listedAt
-											? new Date(r.listedAt).toLocaleDateString("pl-PL")
-											: ""}
-									</td>
+									<td className="px-3 py-1.5 text-gray-500">{addedLabel(r)}</td>
 								</tr>
 							))}
 					</tbody>
