@@ -30,6 +30,7 @@ interface OlxAd {
 	};
 	createdTime?: number;
 	description?: string;
+	category?: { id?: number };
 }
 
 /**
@@ -64,6 +65,33 @@ function findOlxAd(state: unknown): OlxAd | null {
 		for (const v of Object.values(obj)) stack.push(v);
 	}
 	return null;
+}
+
+/**
+ * The Małopolska landing page mixes sale/rent and unrelated categories
+ * (rooms, garages, tents...). Keep only the "sprzedaz" subcategories for
+ * flats, houses and plots, using the category map embedded in the page.
+ */
+function saleCategoryIds(state: Record<string, unknown>): Set<number> | null {
+	const cats = (
+		state.categories as
+			| {
+					list?: Record<string, { id?: number; label?: string; path?: string }>;
+			  }
+			| undefined
+	)?.list;
+	if (!cats) return null;
+	const ids = new Set<number>();
+	for (const c of Object.values(cats)) {
+		if (
+			c?.id != null &&
+			c.label === "sprzedaz" &&
+			/nieruchomosci\/(mieszkania|domy|dzialki)\//.test(c.path ?? "")
+		) {
+			ids.add(c.id);
+		}
+	}
+	return ids.size > 0 ? ids : null;
 }
 
 function paramValue(ad: OlxAd, key: string): string | undefined {
@@ -153,7 +181,10 @@ export const olxAdapter: CheerioAdapter = {
 		// List page: items with coordinates; enqueue detail pages for the
 		// recent ones so their descriptions are captured on the next pass.
 		if (listing?.ads) {
-			const ads = listing.ads ?? [];
+			const keep = saleCategoryIds(state);
+			const ads = (listing.ads ?? []).filter(
+				(ad) => !keep || (ad.category?.id != null && keep.has(ad.category.id)),
+			);
 			const since = this.since ? new Date(this.since) : null;
 			const recent = ads.filter((ad) => {
 				if (!since) return true;
