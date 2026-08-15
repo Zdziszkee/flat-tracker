@@ -1,22 +1,19 @@
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { parseAddressFromText } from "./address.ts";
 
-interface OlxState {
-	listing?: {
-		listing?: {
-			pageNumber?: number;
-			totalPages?: number;
-			ads?: OlxAd[];
-		};
-	};
+interface OlxListState {
+	pageNumber?: number;
+	totalPages?: number;
+	ads?: OlxAd[];
 }
 
 interface OlxAd {
 	id: number;
 	title: string;
-	url: string;
+	url?: string;
 	price?: {
 		regularPrice?: { value?: number };
+		value?: number;
 	};
 	params?: Array<{
 		key: string;
@@ -32,16 +29,41 @@ interface OlxAd {
 		lon?: number;
 	};
 	createdTime?: number;
+	description?: string;
 }
 
 /**
  * OLX embeds the full page state as a JSON string in
  * `window.__PRERENDERED_STATE__` inside the HTML source.
  */
-export function parseOlxHtml(html: string): OlxState {
+export function parseOlxHtml(html: string): Record<string, unknown> {
 	const match = html.match(/window\.__PRERENDERED_STATE__=\s*"(\{.*?\})";/s);
 	if (!match) throw new Error("__PRERENDERED_STATE__ not found on page");
-	return JSON.parse(JSON.parse(`"${match[1]}"`)) as OlxState;
+	return JSON.parse(JSON.parse(`"${match[1]}"`)) as Record<string, unknown>;
+}
+
+/** Detail-page state nests the ad; find the object that carries a description. */
+function findOlxAd(state: unknown): OlxAd | null {
+	const seen = new Set<unknown>();
+	const stack = [state];
+	while (stack.length > 0) {
+		const node = stack.pop();
+		if (!node || typeof node !== "object" || seen.has(node)) continue;
+		seen.add(node);
+		if (Array.isArray(node)) {
+			for (const v of node) stack.push(v);
+			continue;
+		}
+		const obj = node as Record<string, unknown>;
+		if (
+			(typeof obj.id === "number" || typeof obj.id === "string") &&
+			typeof obj.description === "string"
+		) {
+			return obj as unknown as OlxAd;
+		}
+		for (const v of Object.values(obj)) stack.push(v);
+	}
+	return null;
 }
 
 function paramValue(ad: OlxAd, key: string): string | undefined {
@@ -61,16 +83,18 @@ const ROOMS: Record<string, number> = {
 	ten: 10,
 };
 
-function adToListing(ad: OlxAd): Listing {
+function adToListing(ad: OlxAd, url: string): Listing {
 	const pricePerM2 = Number(paramValue(ad, "price_per_m")) || null;
 	const areaM2 = Number(paramValue(ad, "m")) || null;
 	const roomsRaw = paramValue(ad, "rooms");
 	const rooms = roomsRaw ? (ROOMS[roomsRaw.toLowerCase()] ?? null) : null;
 	const floor = paramValue(ad, "floor_select");
+	const price = ad.price?.regularPrice?.value ?? ad.price?.value ?? null;
 
-	// OLX list pages carry no description; mine the street/number from the
-	// title ("Kraków, ul. Karmelicka 12, 2 pokoje...").
-	const parsed = parseAddressFromText(ad.title);
+	// List pages carry no description; detail pages do. Mine the street from
+	// the description first, then the title ("Kraków, ul. Karmelicka 12...").
+	const parsed =
+		parseAddressFromText(ad.description) ?? parseAddressFromText(ad.title);
 	const city = ad.location?.cityName ?? null;
 	const address = parsed
 		? [
@@ -84,16 +108,16 @@ function adToListing(ad: OlxAd): Listing {
 	return {
 		source: "olx",
 		externalId: String(ad.id),
-		url: ad.url,
+		url,
 		title: ad.title ?? "OLX listing",
-		price: ad.price?.regularPrice?.value ?? null,
+		price,
 		pricePerM2,
 		areaM2,
 		rooms,
 		floor: floor ?? null,
 		district: ad.location?.districtName ?? city,
 		address,
-		description: null,
+		description: ad.description ?? null,
 		heatingType: null,
 		propertyType: null,
 		features: null,
@@ -121,36 +145,51 @@ export const olxAdapter: CheerioAdapter = {
 	startUrls: [MALOPOLSKA_LIST_URL],
 	maxRequestsPerCrawl: 1500,
 
-	async extractHtml(html, _url, enqueue) {
+	async extractHtml(html, url, enqueue) {
 		const state = parseOlxHtml(html);
-		const listing = state.listing?.listing;
-		const ads = listing?.ads ?? [];
+		const listing = (state.listing as { listing?: OlxListState } | undefined)
+			?.listing;
 
-		const since = this.since ? new Date(this.since) : null;
-		const recent = ads.filter((ad) => {
-			if (!since) return true;
-			if (!ad.createdTime) return true;
-			return new Date(ad.createdTime) >= since;
-		});
+		// List page: items with coordinates; enqueue detail pages for the
+		// recent ones so their descriptions are captured on the next pass.
+		if (listing?.ads) {
+			const ads = listing.ads ?? [];
+			const since = this.since ? new Date(this.since) : null;
+			const recent = ads.filter((ad) => {
+				if (!since) return true;
+				if (!ad.createdTime) return true;
+				return new Date(ad.createdTime) >= since;
+			});
 
-		// Pagination: state pageNumber is 0-based, but the ?page=N URL param
-		// is 1-based (?page=1 === page 0). Enqueue ?page=pageNumber+2 to get
-		// the next page; the since filter above drops older postings.
-		const pageNumber = listing?.pageNumber ?? 0;
-		const totalPages = listing?.totalPages ?? 0;
-		if (
-			pageNumber === 0 ||
-			pageNumber % 10 === 0 ||
-			pageNumber + 1 === totalPages
-		) {
-			console.log(
-				`olx page: pageNumber=${pageNumber + 1}/${totalPages} ads=${ads.length} recent=${recent.length}`,
+			await enqueue(
+				recent.filter((ad) => ad.url).map((ad) => ad.url as string),
 			);
-		}
-		if (pageNumber + 1 < totalPages) {
-			await enqueue([`${MALOPOLSKA_LIST_URL}?page=${pageNumber + 2}`]);
+
+			// Pagination: state pageNumber is 0-based, but the ?page=N URL param
+			// is 1-based (?page=1 === page 0). Enqueue ?page=pageNumber+2 to get
+			// the next page; the since filter above drops older postings.
+			const pageNumber = listing.pageNumber ?? 0;
+			const totalPages = listing.totalPages ?? 0;
+			if (
+				pageNumber === 0 ||
+				pageNumber % 10 === 0 ||
+				pageNumber + 1 === totalPages
+			) {
+				console.log(
+					`olx page: pageNumber=${pageNumber + 1}/${totalPages} ads=${ads.length} recent=${recent.length}`,
+				);
+			}
+			if (pageNumber + 1 < totalPages) {
+				await enqueue([`${MALOPOLSKA_LIST_URL}?page=${pageNumber + 2}`]);
+			}
+
+			return recent.map((ad) => adToListing(ad, ad.url ?? url));
 		}
 
-		return recent.map(adToListing);
+		// Detail page: refine the list record with the description (and any
+		// fields the detail state carries, e.g. heating/type params).
+		const ad = findOlxAd(state);
+		if (ad) return [adToListing(ad, url)];
+		return [];
 	},
 };
