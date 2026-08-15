@@ -80,6 +80,7 @@ async function main() {
 			}
 		}
 		if (!name) continue;
+		if (name.endsWith("-")) continue; // truncated multi-word name
 		seen.set(streetKey(name), canonicalName(name));
 	}
 

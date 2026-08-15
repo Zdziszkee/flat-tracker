@@ -205,10 +205,49 @@ function validStreet(street: string): boolean {
 	});
 }
 
+/** Polish adjectival/name declension suffixes, longest first (normalized). */
+const DECLENSION_SUFFIXES = [
+	"iego",
+	"iemu",
+	"ymi",
+	"imi",
+	"ych",
+	"ich",
+	"ego",
+	"emu",
+	"iej",
+	"ej",
+	"ym",
+	"im",
+	"ie",
+	"a",
+	"e",
+	"y",
+	"i",
+];
+
 /** Canonical Krakow street names, keyed by `streetKey`. */
 const STREET_KEYS = new Map<string, string>();
+/** Declension stem -> canonical names sharing that stem. */
+const STREET_STEMS = new Map<string, string[]>();
+
+/** Strip a known declension suffix, returning the stem, or null. */
+function adjectivalStem(key: string): string | null {
+	for (const suffix of DECLENSION_SUFFIXES) {
+		if (key.endsWith(suffix) && key.length - suffix.length >= 3) {
+			return key.slice(0, -suffix.length);
+		}
+	}
+	return null;
+}
+
 for (const name of KRAKOW_STREETS) {
-	STREET_KEYS.set(streetKey(name), name);
+	const key = streetKey(name);
+	STREET_KEYS.set(key, name);
+	const stem = adjectivalStem(key) ?? key;
+	const list = STREET_STEMS.get(stem) ?? [];
+	list.push(name);
+	STREET_STEMS.set(stem, list);
 }
 
 /** True if `street` is a canonical Krakow street name from the lexicon. */
@@ -218,24 +257,23 @@ export function isKnownKrakowStreet(street: string): boolean {
 }
 
 /**
- * Map a parsed street name to its canonical Krakow form. Handles the common
- * feminine-adjective declensions seen in ad descriptions:
- * "Karmelickiej"/"Długiej" -> "Karmelicka"/"Długa". Returns the input when
- * no canonical match is found, so the caller can still try Nominatim.
+ * Map a parsed street name to its canonical Krakow form by matching the
+ * declension stem against the lexicon, so any case form resolves to the
+ * official name: "Karmelickiej"/"Karmelicką"/"Karmelickiego" -> "Karmelicka",
+ * "Arciszewski" -> "Arciszewskiego". Falls back to the input when no
+ * canonical match is found, so the caller can still try Nominatim.
  */
 function resolveStreetName(street: string): string {
 	const key = streetKey(street);
 	if (!key) return street;
 	const exact = STREET_KEYS.get(key);
 	if (exact) return exact;
-	const tries: string[] = [];
-	if (key.endsWith("iej")) tries.push(`${key.slice(0, -3)}a`);
-	else if (key.endsWith("ej")) tries.push(`${key.slice(0, -2)}a`);
-	for (const candidate of tries) {
-		const hit = STREET_KEYS.get(candidate);
-		if (hit) return hit;
-	}
-	return street;
+	const stem = adjectivalStem(key) ?? key;
+	const candidates = STREET_STEMS.get(stem);
+	if (!candidates || candidates.length === 0) return street;
+	// Prefer the feminine nominative form (canonical for most adjective
+	// streets); otherwise take the first lexicon match.
+	return candidates.find((c) => streetKey(c).endsWith("a")) ?? candidates[0];
 }
 
 /** Extract "Street 12" from free text like "ul. Jakuba Bojki 12/5, Kraków". */
