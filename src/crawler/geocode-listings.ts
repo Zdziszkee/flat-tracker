@@ -171,6 +171,7 @@ export async function geocodeUnlocatedListings(
 			source: listings.source,
 			title: listings.title,
 			address: listings.address,
+			description: listings.description,
 			district: listings.district,
 		})
 		.from(listings)
@@ -204,17 +205,24 @@ export async function geocodeUnlocatedListings(
 		let extractedAddress: string | null = null;
 
 		if (!parsed && !plausibleAddress(streetPart)) {
-			// No usable address: mine the title for "Street 12" patterns.
-			// The plausibleAddress gate only applies to title mining — ad
-			// speak like "Przytulne 27" would otherwise geocode to a random
-			// street. Stored addresses come from structured portal data and
-			// are trusted.
+			// No usable address: mine the title, then the description, for
+			// "Street 12" patterns. The plausibleAddress gate only applies to
+			// free-text mining — ad speak like "Przytulne 27" would otherwise
+			// geocode to a random street. Stored addresses come from
+			// structured portal data and are trusted.
 			const titlePart = parseAddressFromText(row.title);
-			if (titlePart && plausibleAddress(row.title)) {
-				parsed = titlePart;
-				streetPart = titlePart.number
-					? `${titlePart.street} ${titlePart.number}`
-					: titlePart.street;
+			const descPart = parseAddressFromText(row.description);
+			const mined =
+				titlePart && plausibleAddress(row.title)
+					? { part: titlePart, text: row.title }
+					: descPart && plausibleAddress(row.description)
+						? { part: descPart, text: row.description }
+						: null;
+			if (mined) {
+				parsed = mined.part;
+				streetPart = mined.part.number
+					? `${mined.part.street} ${mined.part.number}`
+					: mined.part.street;
 				extractedAddress = [streetPart, row.district, "Kraków"]
 					.filter(Boolean)
 					.join(", ");

@@ -33,7 +33,8 @@
     "import-rcn": "tsx src/crawler/import-rcn.ts",
     "import-rcn:force": "tsx src/crawler/import-rcn.ts --force",
     "assign-buildings": "tsx src/crawler/assign-buildings.ts",
-    "geocode-addresses": "tsx src/crawler/geocode-addresses.ts"
+    "geocode-addresses": "tsx src/crawler/geocode-addresses.ts",
+    "build-street-lexicon": "tsx scripts/build-street-lexicon.ts"
   },
   "dependencies": {
     "@faker-js/faker": "^10.3.0",

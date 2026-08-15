@@ -142,6 +142,7 @@ export const komornikAdapter: PlaywrightAdapter = {
 				floor: null,
 				district: addr.city ?? null,
 				address: address || null,
+				description: null,
 				lat: lat && lng ? lat : null,
 				lng: lat && lng ? lng : null,
 				listedAt: new Date(created).toISOString(),

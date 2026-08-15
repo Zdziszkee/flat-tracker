@@ -55,6 +55,7 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 		floor: l.floor,
 		district: l.district,
 		address: l.address,
+		description: l.description,
 		lat: l.lat,
 		lng: l.lng,
 		listedAt: l.listedAt ? new Date(l.listedAt) : null,
@@ -80,6 +81,7 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					floor: sql.raw(`excluded.floor`),
 					district: sql.raw(`excluded.district`),
 					address: sql.raw(`excluded.address`),
+					description: sql.raw(`excluded.description`),
 					// Address-only sources (morizon, domiporta, skaleczna,
 					// komornik...) carry no coordinates: keep the geocoded
 					// position instead of wiping it with NULL on re-crawl.

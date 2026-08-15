@@ -69,6 +69,7 @@ function itemToListing(item: Record<string, unknown>): Listing | null {
 		floor: null,
 		district,
 		address,
+		description: desc,
 		lat: null,
 		lng: null,
 		listedAt: str(item.datePosted),

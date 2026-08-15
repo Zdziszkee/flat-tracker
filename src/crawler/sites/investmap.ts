@@ -95,6 +95,7 @@ export const investmapAdapter: CheerioAdapter = {
 					floor: typeof estate.floor === "number" ? String(estate.floor) : null,
 					district,
 					address,
+					description: null,
 					lat: lat && lng ? lat : null,
 					lng: lat && lng ? lng : null,
 					listedAt: null,

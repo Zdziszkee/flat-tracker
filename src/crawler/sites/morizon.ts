@@ -42,6 +42,7 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 		floor: floor !== null ? String(floor) : null,
 		district,
 		address: geocodeAddress,
+		description: desc,
 		lat: null,
 		lng: null,
 		listedAt: null,

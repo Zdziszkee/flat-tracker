@@ -36,6 +36,7 @@ interface OtodomDetail {
 	title?: string;
 	price?: { salePrice?: { value?: number } };
 	attributes?: Record<string, string | number | string[] | undefined>;
+	description?: string;
 	location?: {
 		coordinates?: { latitude?: number; longitude?: number };
 		reverseGeocoding?: {
@@ -85,6 +86,7 @@ function listItemToListing(item: OtodomListItem): Listing {
 		floor: item.floorNumber ?? null,
 		district: districtOf(item.location?.reverseGeocoding?.locations),
 		address: null,
+		description: null,
 		lat: null,
 		lng: null,
 		listedAt: item.dateCreated
@@ -110,6 +112,7 @@ function detailToListing(detail: OtodomDetail, url: string): Listing {
 		floor: typeof attrs.floor_no === "string" ? attrs.floor_no : null,
 		district: districtOf(detail.location?.reverseGeocoding?.locations),
 		address: null,
+		description: detail.description ?? null,
 		lat: detail.location?.coordinates?.latitude ?? null,
 		lng: detail.location?.coordinates?.longitude ?? null,
 		// The list page's `dateCreated` is the authoritative "added" date:

@@ -58,6 +58,9 @@ export const listings = sqliteTable(
 		/** Street address parsed from the feed (e.g. "Jakuba Bojki 12"), used
 		 * to geocode portals that hide coordinates. */
 		address: text(),
+		/** Raw ad description, used as an address-mining fallback when the
+		 * portal exposes no structured address. */
+		description: text(),
 		/** Nullable because some portals (otodom list view) hide coordinates. */
 		lat: real(),
 		lng: real(),

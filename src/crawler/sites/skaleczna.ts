@@ -71,6 +71,7 @@ export const skalecznaAdapter: CheerioAdapter = {
 			floor,
 			district: "Kazimierz",
 			address: `${building}, 31-065 Kraków`,
+			description: null,
 			lat: null,
 			lng: null,
 			listedAt: null,

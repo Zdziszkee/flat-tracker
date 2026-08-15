@@ -79,6 +79,7 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 		floor: null,
 		district: null,
 		address,
+		description: description || null,
 		lat: null,
 		lng: null,
 		listedAt: null,

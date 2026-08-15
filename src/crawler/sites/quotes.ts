@@ -34,6 +34,7 @@ export const quotesAdapter: PlaywrightAdapter = {
 			floor: null,
 			district: quote.author,
 			address: null,
+			description: null,
 			lat: null,
 			lng: null,
 			listedAt: null,

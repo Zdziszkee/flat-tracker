@@ -79,6 +79,7 @@ function adToListing(ad: OlxAd): Listing {
 		floor: floor ?? null,
 		district: ad.location?.districtName ?? null,
 		address: null,
+		description: null,
 		lat: ad.map?.lat ?? null,
 		lng: ad.map?.lon ?? null,
 		listedAt: ad.createdTime ? new Date(ad.createdTime).toISOString() : null,

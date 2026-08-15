@@ -10,10 +10,13 @@
  * words must not be ad-speak.
  */
 
+import { KRAKOW_STREETS } from "../krakow-streets.ts";
+import { streetKey } from "../street-key.ts";
+
 const WORD = "[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]";
 const REST = "[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż .'-]";
 const PREFIX_SRC =
-	"(?:ul\\.?|al\\.?|aleja|os\\.?|osiedle|pl\\.?|plac|rynek|bulwar|rondo)";
+	"(?:ul\\.?|ulica|ulicy|al\\.?|aleja|os\\.?|osiedle|pl\\.?|plac|rynek|bulwar|rondo)";
 
 /** "ul. Jakuba Bojki 12/5" — explicit prefix, number optional. */
 const PREFIXED_RE = new RegExp(
@@ -143,6 +146,7 @@ const STOPWORDS = new Set([
 	"os",
 	"pl",
 	"ulica",
+	"ulicy",
 	"aleja",
 	"osiedle",
 	"plac",
@@ -185,7 +189,7 @@ const FUNCTION_WORDS = new Set([
 function stripPrefix(street: string): string {
 	return street
 		.replace(
-			/^(?:ul\.?|al\.?|aleja|os\.?|osiedle|pl\.?|plac|rynek|bulwar|rondo)\s+/iu,
+			/^(?:ul\.?|ulica|ulicy|al\.?|aleja|os\.?|osiedle|pl\.?|plac|rynek|bulwar|rondo)\s+/iu,
 			"",
 		)
 		.trim();
@@ -199,6 +203,33 @@ function validStreet(street: string): boolean {
 		if (FUNCTION_WORDS.has(clean)) return true;
 		return !STOPWORDS.has(clean);
 	});
+}
+
+/** Canonical Krakow street names, keyed by `streetKey`. */
+const STREET_KEYS = new Map<string, string>();
+for (const name of KRAKOW_STREETS) {
+	STREET_KEYS.set(streetKey(name), name);
+}
+
+/**
+ * Map a parsed street name to its canonical Krakow form. Handles the common
+ * feminine-adjective declensions seen in ad descriptions:
+ * "Karmelickiej"/"Długiej" -> "Karmelicka"/"Długa". Returns the input when
+ * no canonical match is found, so the caller can still try Nominatim.
+ */
+function resolveStreetName(street: string): string {
+	const key = streetKey(street);
+	if (!key) return street;
+	const exact = STREET_KEYS.get(key);
+	if (exact) return exact;
+	const tries: string[] = [];
+	if (key.endsWith("iej")) tries.push(`${key.slice(0, -3)}a`);
+	else if (key.endsWith("ej")) tries.push(`${key.slice(0, -2)}a`);
+	for (const candidate of tries) {
+		const hit = STREET_KEYS.get(candidate);
+		if (hit) return hit;
+	}
+	return street;
 }
 
 /** Extract "Street 12" from free text like "ul. Jakuba Bojki 12/5, Kraków". */
@@ -221,7 +252,7 @@ export function parseAddressFromText(
 	for (const c of candidates) {
 		const street = stripPrefix(c.street).replace(/\s+/g, " ").trim();
 		if (!validStreet(street)) continue;
-		return { street, number: c.number ?? undefined };
+		return { street: resolveStreetName(street), number: c.number ?? undefined };
 	}
 	return null;
 }
