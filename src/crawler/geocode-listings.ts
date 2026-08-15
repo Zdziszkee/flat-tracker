@@ -10,7 +10,11 @@ import {
 	matchByAddress,
 	normStreet,
 } from "./address-index.ts";
-import { parseAddressFromText, plausibleAddress } from "./sites/address.ts";
+import {
+	isKnownKrakowStreet,
+	parseAddressFromText,
+	plausibleAddress,
+} from "./sites/address.ts";
 
 /**
  * Geocode listings that have no coordinates yet, so they land on the map:
@@ -212,10 +216,14 @@ export async function geocodeUnlocatedListings(
 			// structured portal data and are trusted.
 			const titlePart = parseAddressFromText(row.title);
 			const descPart = parseAddressFromText(row.description);
+			// Descriptions are full of numbers ("45 m²", "rok 2014"), so the
+			// digit-based plausibleAddress gate is meaningless for them. Only
+			// trust a description-mined street when it maps to the Krakow
+			// lexicon; otherwise the title result (or nothing) wins.
 			const mined =
 				titlePart && plausibleAddress(row.title)
 					? { part: titlePart, text: row.title }
-					: descPart && plausibleAddress(row.description)
+					: descPart && isKnownKrakowStreet(descPart.street)
 						? { part: descPart, text: row.description }
 						: null;
 			if (mined) {

@@ -211,6 +211,12 @@ for (const name of KRAKOW_STREETS) {
 	STREET_KEYS.set(streetKey(name), name);
 }
 
+/** True if `street` is a canonical Krakow street name from the lexicon. */
+export function isKnownKrakowStreet(street: string): boolean {
+	const key = streetKey(street);
+	return key ? STREET_KEYS.has(key) : false;
+}
+
 /**
  * Map a parsed street name to its canonical Krakow form. Handles the common
  * feminine-adjective declensions seen in ad descriptions:
@@ -249,12 +255,20 @@ export function parseAddressFromText(
 	}
 	candidates.sort((a, b) => a.index - b.index);
 
+	let fallback: { street: string; number?: string } | null = null;
 	for (const c of candidates) {
 		const street = stripPrefix(c.street).replace(/\s+/g, " ").trim();
 		if (!validStreet(street)) continue;
-		return { street: resolveStreetName(street), number: c.number ?? undefined };
+		const out = {
+			street: resolveStreetName(street),
+			number: c.number ?? undefined,
+		};
+		// Prefer a street we can map to the Krakow lexicon over ad-speak that
+		// merely looks address-like ("... w budynku z 2014 ...").
+		if (isKnownKrakowStreet(out.street)) return out;
+		fallback ??= out;
 	}
-	return null;
+	return fallback;
 }
 
 /** True if the string plausibly names a street (housenumber or prefix). */
