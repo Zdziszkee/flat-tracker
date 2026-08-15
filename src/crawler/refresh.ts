@@ -198,9 +198,9 @@ export async function refreshAll(
 		new Date(now - sinceDays * 24 * 60 * 60 * 1000),
 	);
 	// Anchor new offers on the map: local OSM-index matches are instant,
-	// Nominatim is budgeted (20/run) so the hourly cron drains the backlog
+	// Nominatim is budgeted (100/run) so the hourly cron drains the backlog
 	// politely. Run `npm run geocode-addresses` for a full drain.
-	const geo = await geocodeUnlocatedListings({ nominatimLimit: 20 });
+	const geo = await geocodeUnlocatedListings({ nominatimLimit: 100 });
 	const rcnNew = opts.includeRcn === false ? 0 : await importRcn();
 
 	return {
