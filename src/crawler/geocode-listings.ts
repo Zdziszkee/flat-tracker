@@ -219,6 +219,15 @@ export async function geocodeUnlocatedListings(
 		let streetPart = row.address?.split(",")[0]?.trim() ?? "";
 		let parsed = parseAddressFromText(streetPart);
 		let extractedAddress: string | null = null;
+		// The last non-postal-code segment of the address is usually the city;
+		// it disambiguates streets that exist in several towns ("Śląska" in
+		// Kraków and Zabierzów).
+		const cityHint =
+			row.address
+				?.split(",")
+				.map((s) => s.trim())
+				.filter((s) => s && !/^\d{2}-\d{3}$/.test(s))
+				.pop() ?? null;
 
 		// Only mine free text when there is no stored address. A stored
 		// street without a housenumber ("Doktora Jana Piltza") must still be
@@ -258,6 +267,7 @@ export async function geocodeUnlocatedListings(
 					streetIndex,
 					parsed.street,
 					parsed.number ?? null,
+					cityHint,
 				);
 				if (local) {
 					const buildingId = await ensureBuildingByOsmId(
@@ -288,6 +298,7 @@ export async function geocodeUnlocatedListings(
 				parsed
 					? `${parsed.street}${parsed.number ? ` ${parsed.number}` : ""}`
 					: streetPart,
+				cityHint,
 			);
 			if (centroid) {
 				await db

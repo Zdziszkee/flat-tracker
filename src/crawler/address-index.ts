@@ -43,6 +43,7 @@ export interface StreetBuilding {
 	number?: string;
 	lat: number;
 	lng: number;
+	city?: string;
 }
 
 /** streetNorm -> buildings on that street. */
@@ -53,6 +54,7 @@ export async function buildStreetIndex(): Promise<
 		.select({
 			osmId: osmBuildings.osmId,
 			address: osmBuildings.address,
+			tags: osmBuildings.tags,
 			centroidLat: osmBuildings.centroidLat,
 			centroidLng: osmBuildings.centroidLng,
 		})
@@ -65,16 +67,44 @@ export async function buildStreetIndex(): Promise<
 		const { street, number } = parseAddress(r.address);
 		const key = normStreet(stripStreetPrefix(street));
 		if (!key) continue;
+		let city: string | undefined;
+		if (r.tags) {
+			try {
+				const tags = JSON.parse(r.tags) as Record<string, string>;
+				city = tags["addr:city"] ?? tags["addr:place"];
+			} catch {
+				// Ignore malformed tags; city stays undefined.
+			}
+		}
 		const list = index.get(key) ?? [];
 		list.push({
 			osmId: r.osmId,
 			number,
 			lat: r.centroidLat,
 			lng: r.centroidLng,
+			city,
 		});
 		index.set(key, list);
 	}
 	return index;
+}
+
+/**
+ * Keep only buildings in the expected city (or buildings with no city),
+ * falling back to all buildings when `cityHint` matches nothing (it may be
+ * a district like "Krowodrza" rather than a city).
+ */
+function filterByCity(
+	buildings: StreetBuilding[] | undefined,
+	cityHint: string | null | undefined,
+): StreetBuilding[] | undefined {
+	if (!buildings || buildings.length === 0) return buildings;
+	if (!cityHint) return buildings;
+	const key = normStreet(cityHint);
+	const filtered = buildings.filter(
+		(b) => !b.city || normStreet(b.city) === key,
+	);
+	return filtered.length > 0 ? filtered : buildings;
 }
 
 /**
@@ -84,9 +114,10 @@ export function matchByAddress(
 	index: Map<string, StreetBuilding[]>,
 	street: string | null,
 	number: string | null,
+	cityHint?: string | null,
 ): StreetBuilding | null {
 	if (!street) return null;
-	const buildings = index.get(normStreet(street));
+	const buildings = filterByCity(index.get(normStreet(street)), cityHint);
 	if (!buildings || buildings.length === 0) return null;
 	if (number) {
 		const exact = buildings.find((b) => b.number === number);
@@ -104,9 +135,10 @@ export function matchByAddress(
 export function matchAddressString(
 	index: Map<string, StreetBuilding[]>,
 	address: string,
+	cityHint?: string | null,
 ): { lat: number; lng: number; building: StreetBuilding | null } | null {
 	const { street, number } = parseAddress(address);
-	const buildings = index.get(normStreet(street));
+	const buildings = filterByCity(index.get(normStreet(street)), cityHint);
 	if (!buildings || buildings.length === 0) return null;
 
 	if (number) {
