@@ -124,7 +124,7 @@ function popupHtml(l: ApiListing): string {
     <div class="min-w-56 space-y-1 text-sm">
       <div class="font-semibold leading-tight">${escapeHtml(l.title)}</div>
       <div class="text-gray-500">
-        ${escapeHtml(l.district ?? "Kraków")}${l.buildingAddress ? ` · ${escapeHtml(l.buildingAddress)}` : ""}
+        ${escapeHtml(l.district ?? "")}${l.buildingAddress ? ` · ${escapeHtml(l.buildingAddress)}` : ""}
       </div>
       <div class="flex justify-between gap-4 pt-1">
         <span class="font-medium">${formatPln(l.price)}</span>

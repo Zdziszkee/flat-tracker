@@ -237,7 +237,7 @@ export async function geocodeUnlocatedListings(
 				streetPart = mined.part.number
 					? `${mined.part.street} ${mined.part.number}`
 					: mined.part.street;
-				extractedAddress = [streetPart, row.district, "Kraków"]
+				extractedAddress = [streetPart, row.district, "Małopolska"]
 					.filter(Boolean)
 					.join(", ");
 			}
