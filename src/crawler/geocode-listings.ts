@@ -25,14 +25,14 @@ import {
  * 2. Address missing -> extract "Street 12" from the TITLE (otodom/olx ad
  *    speak, komornik notices, ...). The extracted address is persisted so
  *    later runs skip straight to the local index.
- * 3. Street found but not in the local index -> Nominatim (1 req/s,
- *    validated to Krakow, per-address result cache).
+ * 3. Street found but not in the local index -> Photon geocoder (1 req/s,
+ *    validated to Małopolska, per-address result cache).
  *
  * `nominatimLimit` bounds external calls for the hourly refresh; the CLI
  * (`npm run geocode-addresses`) passes no limit to drain the backlog.
  */
 
-const NOMINATIM = "https://nominatim.openstreetmap.org/search";
+const PHOTON = "https://photon.komoot.io/api/";
 
 /** Małopolska voivodeship bounding box. */
 const MALOPOLSKA_BOUNDS = {
@@ -41,9 +41,6 @@ const MALOPOLSKA_BOUNDS = {
 	maxLng: 21.6,
 	maxLat: 50.6,
 };
-
-/** Nominatim result classes we trust as a geocoded point. */
-const ACCEPTED_CLASSES = new Set(["place", "highway", "building", "landuse"]);
 
 /** Demo adapters whose fixtures must never be geocoded. */
 const DEMO_SOURCES = new Set(["books", "quotes"]);
@@ -58,57 +55,57 @@ function normalizeWord(s: string): string {
 		.trim();
 }
 
-function validateNominatimHit(
-	hit: { lat?: string; lon?: string; display_name?: string; class?: string },
-	streetPart: string,
-): { lat: number; lng: number } | null {
-	if (!hit || !hit.lat || !hit.lon) return null;
-	const lat = Number(hit.lat);
-	const lng = Number(hit.lon);
-	if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-	if (
-		lat < MALOPOLSKA_BOUNDS.minLat ||
-		lat > MALOPOLSKA_BOUNDS.maxLat ||
-		lng < MALOPOLSKA_BOUNDS.minLng ||
-		lng > MALOPOLSKA_BOUNDS.maxLng
-	)
-		return null;
-	if (hit.class && !ACCEPTED_CLASSES.has(hit.class)) return null;
-
-	// The result must share a significant word with the query, e.g.
-	// "Sarego 8" -> display "... Józefa Sarego ..." contains "sarego".
-	if (hit.display_name) {
-		const wanted = normalizeWord(streetPart)
-			.split(" ")
-			.filter((w) => w.length >= 3);
-		const shown = normalizeWord(hit.display_name);
-		if (wanted.length > 0 && !wanted.some((w) => shown.includes(w)))
-			return null;
-	}
-	return { lat, lng };
-}
-
-async function nominatimGeocode(
+/**
+ * Photon (komoot) forward geocoder — free, keyless, OSM-based, and far less
+ * rate-limited than Nominatim. Returns a point only when it shares a word
+ * with the query and lies inside Małopolska.
+ */
+async function photonGeocode(
 	address: string,
 	streetPart: string,
 ): Promise<{ lat: number; lng: number } | null> {
-	const url = `${NOMINATIM}?q=${encodeURIComponent(address)}&format=json&limit=1`;
+	const url = `${PHOTON}?q=${encodeURIComponent(address)}&limit=1`;
 	try {
 		const res = await fetch(url, {
-			headers: {
-				"user-agent": "flat-tracker/0.1 (personal project)",
-				accept: "application/json",
-			},
+			headers: { accept: "application/json" },
 			signal: AbortSignal.timeout(15_000),
 		});
 		if (!res.ok) return null;
-		const j = (await res.json()) as Array<{
-			lat?: string;
-			lon?: string;
-			display_name?: string;
-			class?: string;
-		}>;
-		return validateNominatimHit(j[0], streetPart);
+		const j = (await res.json()) as {
+			features?: Array<{
+				geometry?: { coordinates?: number[] };
+				properties?: Record<string, string>;
+			}>;
+		};
+		const feature = j.features?.[0];
+		const coords = feature?.geometry?.coordinates;
+		const lat = coords?.[1];
+		const lng = coords?.[0];
+		if (
+			typeof lat !== "number" ||
+			typeof lng !== "number" ||
+			!Number.isFinite(lat) ||
+			!Number.isFinite(lng)
+		)
+			return null;
+		if (
+			lat < MALOPOLSKA_BOUNDS.minLat ||
+			lat > MALOPOLSKA_BOUNDS.maxLat ||
+			lng < MALOPOLSKA_BOUNDS.minLng ||
+			lng > MALOPOLSKA_BOUNDS.maxLng
+		)
+			return null;
+
+		const props = feature?.properties ?? {};
+		const shown = normalizeWord(
+			[props.name, props.street, props.city].filter(Boolean).join(" "),
+		);
+		const wanted = normalizeWord(streetPart)
+			.split(" ")
+			.filter((w) => w.length >= 3);
+		if (wanted.length > 0 && !wanted.some((w) => shown.includes(w)))
+			return null;
+		return { lat, lng };
 	} catch {
 		return null;
 	}
@@ -341,7 +338,7 @@ export async function geocodeUnlocatedListings(
 				hasStoredAddress && row.address
 					? row.address
 					: [streetPart, row.district, "Małopolska"].filter(Boolean).join(", ");
-			geo = await nominatimGeocode(query, streetPart);
+			geo = await photonGeocode(query, streetPart);
 			if (streetKey) {
 				nomCache[streetKey] = geo;
 				nomWrites++;
