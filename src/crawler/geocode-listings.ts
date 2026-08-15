@@ -33,12 +33,12 @@ import {
 
 const NOMINATIM = "https://nominatim.openstreetmap.org/search";
 
-/** Krakow bounding box — the tracker only covers Krakow. */
-const KRAKOW_BOUNDS = {
-	minLng: 19.75,
-	minLat: 49.95,
-	maxLng: 20.25,
-	maxLat: 50.15,
+/** Małopolska voivodeship bounding box. */
+const MALOPOLSKA_BOUNDS = {
+	minLng: 19.0,
+	minLat: 49.1,
+	maxLng: 21.6,
+	maxLat: 50.6,
 };
 
 /** Nominatim result classes we trust as a geocoded point. */
@@ -66,10 +66,10 @@ function validateNominatimHit(
 	const lng = Number(hit.lon);
 	if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 	if (
-		lat < KRAKOW_BOUNDS.minLat ||
-		lat > KRAKOW_BOUNDS.maxLat ||
-		lng < KRAKOW_BOUNDS.minLng ||
-		lng > KRAKOW_BOUNDS.maxLng
+		lat < MALOPOLSKA_BOUNDS.minLat ||
+		lat > MALOPOLSKA_BOUNDS.maxLat ||
+		lng < MALOPOLSKA_BOUNDS.minLng ||
+		lng > MALOPOLSKA_BOUNDS.maxLng
 	)
 		return null;
 	if (hit.class && !ACCEPTED_CLASSES.has(hit.class)) return null;

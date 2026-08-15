@@ -4,7 +4,7 @@ import type { Listing, PlaywrightAdapter } from "../types.ts";
 
 /**
  * Licytacje komornicze (Krajowa Rada Komornicza) — court auction notices
- * for real estate in Kraków.
+ * for real estate in Małopolska (flats, houses and plots).
  *
  * The site WAF-rejects non-browser TLS fingerprints (curl/node fetch get
  * "Strona zablokowana"), so a real browser is required. The public API is
@@ -18,18 +18,17 @@ import type { Listing, PlaywrightAdapter } from "../types.ts";
  * creation date and address. Coordinates are usually (0,0) — leave null
  * and let `npm run geocode-addresses` anchor them via the OSM index.
  *
- * Only flats (APARTMENTS) and plots (LAND) are kept, per the tracker's
- * scope; the rest of the REAL_ESTATE feed (houses, garages, commercial)
- * is skipped.
+ * Only flats (APARTMENTS), houses (HOUSE/HOUSES) and plots (LAND) are kept;
+ * the rest of the REAL_ESTATE feed (garages, commercial) is skipped.
  */
 
 const SEARCH_URL =
-	"https://licytacje.komornik.pl/wyszukiwarka-licytacji?province=ma%C5%82opolskie&mainCategory=REAL_ESTATE&city=Krak%C3%B3w";
+	"https://licytacje.komornik.pl/wyszukiwarka-licytacji?province=ma%C5%82opolskie&mainCategory=REAL_ESTATE";
 const API_PATH = "/services/item-back/rest/item/search";
 const PAGE_SIZE = 20;
 
-/** Flat + plot subcategories only. */
-const KEPT_SUBCATEGORIES = new Set(["APARTMENTS", "LAND"]);
+/** Flats, houses and plots (parcels). */
+const KEPT_SUBCATEGORIES = new Set(["APARTMENTS", "HOUSE", "HOUSES", "LAND"]);
 
 interface KomornikAddress {
 	street: string | null;
@@ -56,7 +55,7 @@ interface KomornikPage {
 
 export const komornikAdapter: PlaywrightAdapter = {
 	id: "licytacje-komornik",
-	name: "Licytacje komornicze · Kraków (mieszkania i działki)",
+	name: "Licytacje komornicze · Małopolska (mieszkania, domy i działki)",
 	kind: "playwright",
 	startUrls: [SEARCH_URL],
 	maxRequestsPerCrawl: 3,
@@ -76,7 +75,6 @@ export const komornikAdapter: PlaywrightAdapter = {
 						{ field: "province", value: ["małopolskie"] },
 						{ field: "mainCategory", value: ["REAL_ESTATE"] },
 					],
-					fullTextFilters: [{ field: "city", value: "Kraków" }],
 					offset: 0,
 				};
 				const all: KomornikItem[] = [];

@@ -45,14 +45,19 @@ interface ListingsResponse {
 	generatedAt: string;
 }
 
-/** Krakow bounding box — the tracker only covers Krakow. */
-const KRAKOW_BOUNDS: [[number, number], [number, number]] = [
-	[19.75, 49.95],
-	[20.25, 50.15],
+/** Małopolska voivodeship bounding box. */
+const MALOPOLSKA_BOUNDS: [[number, number], [number, number]] = [
+	[19.0, 49.1],
+	[21.6, 50.6],
 ];
-const KRAKOW_CENTER: [number, number] = [19.94, 50.06];
+const MALOPOLSKA_CENTER: [number, number] = [20.25, 49.85];
 
 const TOKEN = env.VITE_MAPBOX_TOKEN;
+
+/** Distinct marker for court-auction (licytacje komornicze) offers. */
+const KOMORNIK_ICON = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+	`<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><path d="M14 2 L26 14 L14 26 L2 14 Z" fill="#7c3aed" stroke="#fff" stroke-width="2"/></svg>`,
+)}`;
 
 function formatPln(n: number | null): string {
 	if (n === null) return "n/d";
@@ -343,11 +348,11 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 		const map = new mapboxgl.Map({
 			container: containerRef.current,
 			style: "mapbox://styles/mapbox/light-v11",
-			center: KRAKOW_CENTER,
-			zoom: 12.5,
+			center: MALOPOLSKA_CENTER,
+			zoom: 9,
 			pitch: 45,
 			bearing: -20,
-			maxBounds: KRAKOW_BOUNDS,
+			maxBounds: MALOPOLSKA_BOUNDS,
 			accessToken: TOKEN,
 		});
 		mapRef.current = map;
@@ -445,6 +450,8 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				id: "listings-circle",
 				type: "circle",
 				source: "listings",
+				// Komornik offers get their own symbol layer below.
+				filter: ["!=", ["get", "source"], "licytacje-komornik"],
 				paint: {
 					"circle-color": [
 						"step",
@@ -463,12 +470,32 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				},
 			});
 
+			// Court-auction offers render as a distinct diamond symbol.
+			map.loadImage(KOMORNIK_ICON, (error, image) => {
+				if (error || !image) return;
+				if (!map.hasImage("komornik-icon"))
+					map.addImage("komornik-icon", image);
+				if (!map.getLayer("komornik-listings")) {
+					map.addLayer({
+						id: "komornik-listings",
+						type: "symbol",
+						source: "listings",
+						filter: ["==", ["get", "source"], "licytacje-komornik"],
+						layout: {
+							"icon-image": "komornik-icon",
+							"icon-size": 0.65,
+							"icon-allow-overlap": true,
+						},
+					});
+				}
+			});
+
 			// Click a 3D building to see its RCN price history.
 			const showBuildingHistory = (e: mapboxgl.MapLayerMouseEvent) => {
-				// If a listing dot is under the cursor, the listing popup wins.
+				// If a listing marker is under the cursor, the listing popup wins.
 				if (
 					map.queryRenderedFeatures(e.point, {
-						layers: ["listings-circle"],
+						layers: ["listings-circle", "komornik-listings"],
 					}).length > 0
 				) {
 					return;
@@ -532,13 +559,7 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			});
 			map.on("click", "3d-buildings", showBuildingHistory);
 
-			map.on("mouseenter", "listings-circle", () => {
-				map.getCanvas().style.cursor = "pointer";
-			});
-			map.on("mouseleave", "listings-circle", () => {
-				map.getCanvas().style.cursor = "";
-			});
-			map.on("click", "listings-circle", (e) => {
+			const showListingPopup = (e: mapboxgl.MapLayerMouseEvent) => {
 				const feature = e.features?.[0] as { properties?: unknown } | undefined;
 				const props = feature?.properties;
 				if (!props) return;
@@ -552,7 +573,17 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 					.setHTML(popupHtml(listing))
 					.addTo(map);
 				popupRef.current = popup;
-			});
+			};
+
+			for (const layer of ["listings-circle", "komornik-listings"]) {
+				map.on("mouseenter", layer, () => {
+					map.getCanvas().style.cursor = "pointer";
+				});
+				map.on("mouseleave", layer, () => {
+					map.getCanvas().style.cursor = "";
+				});
+				map.on("click", layer, showListingPopup);
+			}
 		});
 
 		return () => {

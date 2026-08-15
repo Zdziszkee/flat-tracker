@@ -49,7 +49,7 @@ function MapPage() {
 	return (
 		<div className="flex h-[calc(100vh-4rem)] flex-col">
 			<header className="flex items-center justify-between border-b px-4 py-2">
-				<h1 className="text-lg font-semibold">Mapa ofert · Kraków</h1>
+				<h1 className="text-lg font-semibold">Mapa ofert · Małopolska</h1>
 				<select
 					value={source}
 					onChange={(e) => setSource(e.target.value)}

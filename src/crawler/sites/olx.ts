@@ -1,4 +1,5 @@
 import type { CheerioAdapter, Listing } from "../types.ts";
+import { parseAddressFromText } from "./address.ts";
 
 interface OlxState {
 	listing?: {
@@ -67,6 +68,19 @@ function adToListing(ad: OlxAd): Listing {
 	const rooms = roomsRaw ? (ROOMS[roomsRaw.toLowerCase()] ?? null) : null;
 	const floor = paramValue(ad, "floor_select");
 
+	// OLX list pages carry no description; mine the street/number from the
+	// title ("Kraków, ul. Karmelicka 12, 2 pokoje...").
+	const parsed = parseAddressFromText(ad.title);
+	const city = ad.location?.cityName ?? null;
+	const address = parsed
+		? [
+				parsed.number ? `${parsed.street} ${parsed.number}` : parsed.street,
+				city,
+			]
+				.filter(Boolean)
+				.join(", ")
+		: null;
+
 	return {
 		source: "olx",
 		externalId: String(ad.id),
@@ -77,8 +91,8 @@ function adToListing(ad: OlxAd): Listing {
 		areaM2,
 		rooms,
 		floor: floor ?? null,
-		district: ad.location?.districtName ?? null,
-		address: null,
+		district: ad.location?.districtName ?? city,
+		address,
 		description: null,
 		heatingType: null,
 		propertyType: null,
@@ -90,11 +104,10 @@ function adToListing(ad: OlxAd): Listing {
 	};
 }
 
-const KRAKOW_LIST_URL =
-	"https://www.olx.pl/nieruchomosci/mieszkania/sprzedaz/krakow/";
+const MALOPOLSKA_LIST_URL = "https://www.olx.pl/nieruchomosci/malopolskie/";
 
 /**
- * Adapter for olx.pl flat listings in Krakow.
+ * Adapter for olx.pl real-estate listings across Małopolska.
  *
  * OLX renders server-side and embeds the full ad list (including map
  * coordinates) as JSON in the HTML, so no browser is needed. OLX has ~25
@@ -103,9 +116,9 @@ const KRAKOW_LIST_URL =
  */
 export const olxAdapter: CheerioAdapter = {
 	id: "olx",
-	name: "OLX - Krakow flats for sale",
+	name: "OLX - Małopolska real estate",
 	kind: "cheerio",
-	startUrls: [KRAKOW_LIST_URL],
+	startUrls: [MALOPOLSKA_LIST_URL],
 	maxRequestsPerCrawl: 1500,
 
 	async extractHtml(html, _url, enqueue) {
@@ -135,7 +148,7 @@ export const olxAdapter: CheerioAdapter = {
 			);
 		}
 		if (pageNumber + 1 < totalPages) {
-			await enqueue([`${KRAKOW_LIST_URL}?page=${pageNumber + 2}`]);
+			await enqueue([`${MALOPOLSKA_LIST_URL}?page=${pageNumber + 2}`]);
 		}
 
 		return recent.map(adToListing);
