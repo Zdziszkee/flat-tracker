@@ -324,7 +324,9 @@ export async function geocodeUnlocatedListings(
 			report.misses++;
 			continue;
 		}
-		const streetKey = normStreet(streetPart);
+		const isZipOnly = /^\d{2}-\d{3}$/.test(streetPart.trim());
+		const namePart = isZipOnly && cityHint ? cityHint : streetPart;
+		const streetKey = normStreet(`${streetPart} ${cityHint ?? ""}`);
 		// `in` check: a cached null is a known miss and must not re-query.
 		let geo =
 			streetKey && streetKey in nomCache ? nomCache[streetKey] : undefined;
@@ -338,12 +340,12 @@ export async function geocodeUnlocatedListings(
 				hasStoredAddress && row.address
 					? row.address
 					: [streetPart, row.district, "Małopolska"].filter(Boolean).join(", ");
-			geo = await photonGeocode(query, streetPart);
+			geo = await photonGeocode(query, namePart);
 			if (streetKey) {
 				nomCache[streetKey] = geo;
 				nomWrites++;
 			}
-			// Nominatim requires ~1 req/s.
+			// Be polite to the free geocoder: ~1 req/s.
 			await new Promise((r) => setTimeout(r, 1050));
 		}
 		if (geo) {
