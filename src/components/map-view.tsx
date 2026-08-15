@@ -54,10 +54,29 @@ const MALOPOLSKA_CENTER: [number, number] = [20.25, 49.85];
 
 const TOKEN = env.VITE_MAPBOX_TOKEN;
 
-/** Distinct marker for court-auction (licytacje komornicze) offers. */
-const KOMORNIK_ICON = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-	`<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><path d="M14 2 L26 14 L14 26 L2 14 Z" fill="#7c3aed" stroke="#fff" stroke-width="2"/></svg>`,
-)}`;
+/** Draw the court-auction diamond marker as raw pixels (SVG loadImage is flaky). */
+function makeKomornikIcon(): ImageData {
+	const size = 28;
+	const canvas = document.createElement("canvas");
+	canvas.width = size;
+	canvas.height = size;
+	const ctx = canvas.getContext("2d");
+	if (ctx) {
+		ctx.fillStyle = "#7c3aed";
+		ctx.strokeStyle = "#ffffff";
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(size / 2, 2);
+		ctx.lineTo(size - 2, size / 2);
+		ctx.lineTo(size / 2, size - 2);
+		ctx.lineTo(2, size / 2);
+		ctx.closePath();
+		ctx.fill();
+		ctx.stroke();
+		return ctx.getImageData(0, 0, size, size);
+	}
+	return new ImageData(size, size);
+}
 
 function formatPln(n: number | null): string {
 	if (n === null) return "n/d";
@@ -471,24 +490,22 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			});
 
 			// Court-auction offers render as a distinct diamond symbol.
-			map.loadImage(KOMORNIK_ICON, (error, image) => {
-				if (error || !image) return;
-				if (!map.hasImage("komornik-icon"))
-					map.addImage("komornik-icon", image);
-				if (!map.getLayer("komornik-listings")) {
-					map.addLayer({
-						id: "komornik-listings",
-						type: "symbol",
-						source: "listings",
-						filter: ["==", ["get", "source"], "licytacje-komornik"],
-						layout: {
-							"icon-image": "komornik-icon",
-							"icon-size": 0.65,
-							"icon-allow-overlap": true,
-						},
-					});
-				}
-			});
+			if (!map.hasImage("komornik-icon")) {
+				map.addImage("komornik-icon", makeKomornikIcon());
+			}
+			if (!map.getLayer("komornik-listings")) {
+				map.addLayer({
+					id: "komornik-listings",
+					type: "symbol",
+					source: "listings",
+					filter: ["==", ["get", "source"], "licytacje-komornik"],
+					layout: {
+						"icon-image": "komornik-icon",
+						"icon-size": 0.65,
+						"icon-allow-overlap": true,
+					},
+				});
+			}
 
 			// Click a 3D building to see its RCN price history.
 			const showBuildingHistory = (e: mapboxgl.MapLayerMouseEvent) => {
