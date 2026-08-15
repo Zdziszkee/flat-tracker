@@ -156,7 +156,8 @@ function adToListing(ad: OlxAd, url: string): Listing {
 	};
 }
 
-const MALOPOLSKA_LIST_URL = "https://www.olx.pl/nieruchomosci/malopolskie/";
+const MALOPOLSKA_LIST_URL =
+	"https://www.olx.pl/nieruchomosci/malopolskie/?search%5Border%5D=created_at%3Adesc";
 
 /**
  * Adapter for olx.pl real-estate listings across Małopolska.
@@ -211,7 +212,7 @@ export const olxAdapter: CheerioAdapter = {
 				);
 			}
 			if (pageNumber + 1 < totalPages) {
-				await enqueue([`${MALOPOLSKA_LIST_URL}?page=${pageNumber + 2}`]);
+				await enqueue([`${MALOPOLSKA_LIST_URL}&page=${pageNumber + 2}`]);
 			}
 
 			return recent.map((ad) => adToListing(ad, ad.url ?? url));
