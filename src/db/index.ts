@@ -1,12 +1,11 @@
-import { Database } from "bun:sqlite";
 import { config } from "dotenv";
-import { drizzle } from "drizzle-orm/bun-sqlite";
+import { drizzle } from "drizzle-orm/better-sqlite3";
 
 import * as schema from "./schema.ts";
 
-// drizzle-kit (db:generate/migrate) reads only the schema and runs under
-// Node, but the app and crawler run under Bun, so use bun:sqlite here.
+// drizzle-kit and the crawler CLI both rely on DATABASE_URL from .env.local.
+// The vite/Nitro dev server runs this under Node (even when launched via
+// `bun run dev`), so better-sqlite3 is the correct driver here.
 config({ path: [".env.local", ".env"] });
 
-const sqlite = new Database(process.env.DATABASE_URL ?? "dev.db");
-export const db = drizzle(sqlite, { schema });
+export const db = drizzle(process.env.DATABASE_URL!, { schema });
