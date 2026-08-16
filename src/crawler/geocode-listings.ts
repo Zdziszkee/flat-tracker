@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { and, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { buildings, listings } from "#/db/schema";
@@ -144,7 +144,7 @@ export interface GeocodeReport {
  * in-memory cache dies with each chunk and the same streets get
  * re-queried. Keyed by normalized street name; null = known miss.
  */
-const NOM_CACHE_PATH = "data/crawler/nominatim-cache.json";
+export const NOM_CACHE_PATH = "data/crawler/nominatim-cache.json";
 
 type NomCache = Record<string, { lat: number; lng: number } | null>;
 
@@ -167,8 +167,21 @@ export async function geocodeUnlocatedListings(
 		nominatimLimit?: number;
 		/** Restrict to these source ids (undefined = all). */
 		sources?: string[];
+		/**
+		 * Drop stored coordinates first for these source ids so the whole
+		 * address-only feed is re-anchored with the current matcher. Used by
+		 * `npm run geocode-addresses -- --reset` to repair stale/wrong pins.
+		 */
+		resetSources?: string[];
 	} = {},
 ): Promise<GeocodeReport> {
+	if (opts.resetSources?.length) {
+		await db
+			.update(listings)
+			.set({ lat: null, lng: null, buildingId: null })
+			.where(inArray(listings.source, opts.resetSources));
+	}
+
 	const rows = db
 		.select({
 			id: listings.id,
