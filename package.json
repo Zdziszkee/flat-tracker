@@ -23,6 +23,7 @@
     "crawl:olx": "tsx src/crawler/run.ts --site olx --save-db",
     "crawl:olx-rent": "tsx src/crawler/run.ts --site olx-rent --save-db",
     "crawl:airbnb": "tsx src/crawler/run.ts --site airbnb --save-db",
+    "crawl:airbnb-calendar": "tsx src/crawler/airbnb-calendar.ts",
     "crawl:morizon": "tsx src/crawler/run.ts --site morizon --save-db",
     "crawl:gratka": "tsx src/crawler/run.ts --site gratka --save-db",
     "crawl:domiporta": "tsx src/crawler/run.ts --site domiporta --save-db",

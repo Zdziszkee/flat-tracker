@@ -1,7 +1,7 @@
 import type { CheerioAdapter, Listing } from "../types.ts";
 
 /**
- * Airbnb short-term rental search results for Kraków.
+ * Airbnb short-term rental search results for Małopolska (bounding box).
  *
  * Airbnb's search HTML embeds the full result payload in
  * `<script id="data-deferred-state-0" type="application/json">` (no browser
@@ -14,7 +14,7 @@ import type { CheerioAdapter, Listing } from "../types.ts";
  */
 
 const SEARCH_URL =
-	"https://www.airbnb.pl/s/Krak%C3%B3w--Poland/homes?adults=2&refinement_paths%5B%5D=%2Fhomes&place_id=ChIJ0RhONcBEFkcRul2gceD7E48&location=Krak%C3%B3w%2C+Poland";
+	"https://www.airbnb.pl/s/homes?adults=2&ne_lat=50.6&ne_lng=21.6&sw_lat=49.1&sw_lng=19.0&zoom=8&search_type=unknown&location_search=NEARBY";
 
 interface Coordinate {
 	latitude?: number;
@@ -110,9 +110,7 @@ function resultToListing(r: StaySearchResult): Listing {
 	return {
 		source: "airbnb",
 		externalId: listingId ?? r.demandStayListing?.id ?? "",
-		url: listingId
-			? `https://www.airbnb.pl/rooms/${listingId}`
-			: "https://www.airbnb.pl/s/Krak%C3%B3w--Poland/homes",
+		url: listingId ? `https://www.airbnb.pl/rooms/${listingId}` : SEARCH_URL,
 		title: r.subtitle ?? r.title ?? "Airbnb listing",
 		price,
 		pricePerM2: null,
@@ -141,7 +139,7 @@ function resultToListing(r: StaySearchResult): Listing {
 
 export const airbnbAdapter: CheerioAdapter = {
 	id: "airbnb",
-	name: "Airbnb - Kraków short-term rentals",
+	name: "Airbnb - Małopolska short-term rentals",
 	kind: "cheerio",
 	startUrls: [SEARCH_URL],
 	maxRequestsPerCrawl: 30,
