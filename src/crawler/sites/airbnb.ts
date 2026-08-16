@@ -148,7 +148,7 @@ export const airbnbAdapter: CheerioAdapter = {
 
 	async extractHtml(html, url, enqueue) {
 		const match = html.match(
-			/<script id="data-deferred-state-0" type="application\/json">([\s\S]*?)<\/script>/,
+			/<script id="data-deferred-state-0"[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/,
 		);
 		if (!match) return [];
 		let data: unknown;
@@ -183,10 +183,14 @@ export const airbnbAdapter: CheerioAdapter = {
 		})();
 
 		if (pageCursors.length > 1) {
-			const next = pageCursors[1];
-			const base = new URL(url);
-			base.searchParams.set("cursor", next);
-			await enqueue([base.toString()]);
+			const current = new URL(url).searchParams.get("cursor") ?? null;
+			const currentIndex = current ? pageCursors.indexOf(current) : 0;
+			const next = pageCursors[currentIndex + 1];
+			if (next) {
+				const base = new URL(url);
+				base.searchParams.set("cursor", next);
+				await enqueue([base.toString()]);
+			}
 		}
 
 		return results.map(resultToListing);
