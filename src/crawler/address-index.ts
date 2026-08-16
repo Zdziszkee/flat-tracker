@@ -152,7 +152,13 @@ function filterByCity(
 	if (!buildings || buildings.length === 0) return buildings;
 	if (!cityHint) return buildings;
 	const key = normStreet(cityHint);
-	return buildings.filter((b) => !b.city || normStreet(b.city) === key);
+	const withCity = buildings.filter((b) => b.city);
+	const matches = withCity.filter((b) => normStreet(b.city) === key);
+	if (matches.length > 0) return matches;
+	// No building carries the expected city tag. Only fall back to city-less
+	// buildings when the street has no city-tagged buildings at all; otherwise
+	// a city-less OSM building must not anchor a query for another town.
+	return withCity.length === 0 ? buildings : [];
 }
 
 /**
