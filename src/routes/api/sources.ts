@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-
+import { HIDDEN_SOURCES } from "#/crawler/hidden-sources";
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
 
@@ -13,7 +13,11 @@ export const Route = createFileRoute("/api/sources")({
 					.selectDistinct({ source: listings.source })
 					.from(listings)
 					.orderBy(listings.source);
-				return json({ sources: rows.map((r) => r.source) });
+				return json({
+					sources: rows
+						.map((r) => r.source)
+						.filter((s) => !HIDDEN_SOURCES.has(s)),
+				});
 			},
 		},
 	},

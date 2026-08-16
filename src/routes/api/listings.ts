@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
 
 import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { HIDDEN_SOURCES } from "#/crawler/hidden-sources";
 import { db } from "#/db/index";
 import { buildings, listings, transactions } from "#/db/schema";
 
@@ -109,6 +110,8 @@ export const Route = createFileRoute("/api/listings")({
 					// client-side, the listings table shows them regardless.
 					.orderBy(sql`${listings.scrapedAt} desc`);
 
+				const visibleRows = rows.filter((r) => !HIDDEN_SOURCES.has(r.source));
+
 				const summary = await transactionSummary();
 
 				const summaryByBuilding = new Map(
@@ -120,7 +123,9 @@ export const Route = createFileRoute("/api/listings")({
 				// same investment is present on investmap (exact street +
 				// housenumber, or the same investment name, or a street-only
 				// match when the project has no housenumber).
-				const investmapRows = rows.filter((r) => r.source === "investmap");
+				const investmapRows = visibleRows.filter(
+					(r) => r.source === "investmap",
+				);
 				const rpStreetsWithNumber = new Set<string>();
 				const rpStreetsOnly = new Set<string>();
 				const rpTitles = new Set<string>();
@@ -135,7 +140,9 @@ export const Route = createFileRoute("/api/listings")({
 					const title = normKey(r.title.split("—")[0] ?? "");
 					if (title) rpTitles.add(title);
 				}
-				const coveredByInvestmap = (r: (typeof rows)[number]): boolean => {
+				const coveredByInvestmap = (
+					r: (typeof visibleRows)[number],
+				): boolean => {
 					if (r.source !== "rynekpierwotny") return false;
 					const addr = parseStreetNumber(r.address);
 					if (addr?.street && addr.number) {
@@ -152,7 +159,7 @@ export const Route = createFileRoute("/api/listings")({
 				// (price + area + rooms + district), keeping morizon as the
 				// canonical source (it is sorted first by scrapedAt desc).
 				const seen = new Set<string>();
-				const unique = rows.filter((r) => {
+				const unique = visibleRows.filter((r) => {
 					if (coveredByInvestmap(r)) return false;
 					const key = [r.price, r.areaM2, r.rooms, r.district].join("|");
 					if (r.source === "morizon") {
