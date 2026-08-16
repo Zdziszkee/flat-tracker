@@ -45,6 +45,18 @@ export interface Listing {
 	/** When the ad was created on the portal, ISO string or null. */
 	listedAt: string | null;
 	scrapedAt: string;
+	/** Offer type: sale | long_term_rental | short_term_rental. */
+	offerType?: "sale" | "long_term_rental" | "short_term_rental";
+	/** Price period for rentals: monthly | night (null for sale). */
+	pricePeriod?: "monthly" | "night" | null;
+	/** Minimum stay length in nights (short-term rentals). */
+	minimumStayNights?: number | null;
+	/** Review score (Airbnb/Booking). */
+	rating?: number | null;
+	/** Number of reviews (Airbnb/Booking). */
+	reviewsCount?: number | null;
+	/** Availability count over the next year (Airbnb availability_365). */
+	availabilityCount?: number | null;
 }
 
 /** Common configuration shared by every adapter. */

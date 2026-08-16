@@ -99,6 +99,18 @@ export const listings = sqliteTable(
 		/** When the ad was created on the portal, if exposed. */
 		listedAt: integer("listed_at", { mode: "timestamp" }),
 		scrapedAt: integer("scraped_at", { mode: "timestamp" }).notNull(),
+		/** Offer type: sale | long_term_rental | short_term_rental. */
+		offerType: text("offer_type").notNull().default(sql`'sale'`),
+		/** Price period for rentals: monthly | night (null for sale). */
+		pricePeriod: text("price_period"),
+		/** Minimum stay length in nights (short-term rentals). */
+		minimumStayNights: integer("minimum_stay_nights", { mode: "number" }),
+		/** Review score (Airbnb/Booking). */
+		rating: real(),
+		/** Number of reviews (Airbnb/Booking). */
+		reviewsCount: integer("reviews_count", { mode: "number" }),
+		/** Availability count over the next year (Airbnb availability_365). */
+		availabilityCount: integer("availability_count", { mode: "number" }),
 	},
 	(t) => [
 		uniqueIndex("listings_source_external_idx").on(t.source, t.externalId),
@@ -217,4 +229,115 @@ export const crawlRuns = sqliteTable(
 		error: text(),
 	},
 	(t) => [index("crawl_runs_source_started_idx").on(t.source, t.startedAt)],
+);
+
+/**
+ * Latest availability/price snapshot per rental listing and night. Raw
+ * observations live in `availabilityHistory`; this table is the upserted
+ * "current calendar" used by the UI and occupancy queries.
+ */
+export const availability = sqliteTable(
+	"availability",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		listingId: integer("listing_id")
+			.notNull()
+			.references(() => listings.id),
+		source: text().notNull(),
+		/** Night date as YYYY-MM-DD. */
+		date: text().notNull(),
+		/** Canonical booking configuration, e.g. "7_nights_2_adults". */
+		priceConfig: text("price_config")
+			.notNull()
+			.default(sql`'7_nights_2_adults'`),
+		/** Raw nightly asking price from the calendar. */
+		listedPrice: real("listed_price"),
+		/** Total payable price for the canonical stay (fees/taxes included). */
+		totalPrice: real("total_price"),
+		/** Canonical stay length in nights. */
+		stayNights: integer("stay_nights", { mode: "number" }),
+		/** Realized-price proxy: totalPrice / stayNights. */
+		effectiveNightlyPrice: real("effective_nightly_price"),
+		taxes: real(),
+		fees: real(),
+		available: integer({ mode: "boolean" }).notNull().default(sql`1`),
+		minimumNights: integer("minimum_nights", { mode: "number" }),
+		capturedAt: integer("captured_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+	},
+	(t) => [
+		uniqueIndex("availability_listing_date_config_idx").on(
+			t.listingId,
+			t.date,
+			t.priceConfig,
+		),
+		index("availability_listing_date_idx").on(t.listingId, t.date),
+		index("availability_date_idx").on(t.date),
+	],
+);
+
+/**
+ * Append-only price/availability observations per rental listing and night.
+ * Kept so lead-time and realized-price analytics can reconstruct how a
+ * night's price changed as the check-in date approached.
+ */
+export const availabilityHistory = sqliteTable(
+	"availability_history",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		listingId: integer("listing_id")
+			.notNull()
+			.references(() => listings.id),
+		source: text().notNull(),
+		date: text().notNull(),
+		priceConfig: text("price_config").notNull(),
+		listedPrice: real("listed_price"),
+		totalPrice: real("total_price"),
+		stayNights: integer("stay_nights", { mode: "number" }),
+		effectiveNightlyPrice: real("effective_nightly_price"),
+		taxes: real(),
+		fees: real(),
+		available: integer({ mode: "boolean" }).notNull(),
+		minimumNights: integer("minimum_nights", { mode: "number" }),
+		observedAt: integer("observed_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+	},
+	(t) => [
+		index("availability_history_listing_date_idx").on(t.listingId, t.date),
+		index("availability_history_date_observed_idx").on(t.date, t.observedAt),
+	],
+);
+
+/**
+ * Monthly price aggregation per rental listing, folded from availability
+ * after each calendar crawl. Used directly by the analytics UI.
+ */
+export const listingMonthlyPrice = sqliteTable(
+	"listing_monthly_price",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		listingId: integer("listing_id")
+			.notNull()
+			.references(() => listings.id),
+		/** Month as YYYY-MM. */
+		month: text().notNull(),
+		avgListedPrice: real("avg_listed_price"),
+		avgEffectiveNightlyPrice: real("avg_effective_nightly_price"),
+		minPrice: real("min_price"),
+		maxPrice: real("max_price"),
+		sampleDays: integer("sample_days", { mode: "number" }),
+		bookedNights: integer("booked_nights", { mode: "number" }),
+		capturedAt: integer("captured_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+	},
+	(t) => [
+		uniqueIndex("listing_monthly_price_listing_month_idx").on(
+			t.listingId,
+			t.month,
+		),
+		index("listing_monthly_price_month_idx").on(t.month),
+	],
 );

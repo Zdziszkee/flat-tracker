@@ -38,6 +38,20 @@ export const ListingSchema = Schema.Struct({
 	lng: Schema.Union(Schema.Number, Schema.Null),
 	listedAt: Schema.Union(Schema.String, Schema.Null),
 	scrapedAt: Schema.String,
+	offerType: Schema.optional(
+		Schema.Literal("sale", "long_term_rental", "short_term_rental"),
+	),
+	pricePeriod: Schema.optional(
+		Schema.Union(
+			Schema.Literal("monthly"),
+			Schema.Literal("night"),
+			Schema.Null,
+		),
+	),
+	minimumStayNights: Schema.optional(Schema.Union(Schema.Number, Schema.Null)),
+	rating: Schema.optional(Schema.Union(Schema.Number, Schema.Null)),
+	reviewsCount: Schema.optional(Schema.Union(Schema.Number, Schema.Null)),
+	availabilityCount: Schema.optional(Schema.Union(Schema.Number, Schema.Null)),
 });
 
 export const ListingArraySchema = Schema.Array(ListingSchema);

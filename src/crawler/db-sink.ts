@@ -153,6 +153,12 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 			lng: l.lng,
 			listedAt: l.listedAt ? new Date(l.listedAt) : null,
 			scrapedAt: new Date(l.scrapedAt),
+			offerType: l.offerType ?? "sale",
+			pricePeriod: l.pricePeriod ?? null,
+			minimumStayNights: l.minimumStayNights ?? null,
+			rating: l.rating ?? null,
+			reviewsCount: l.reviewsCount ?? null,
+			availabilityCount: l.availabilityCount ?? null,
 		};
 	});
 
@@ -199,6 +205,12 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					deactivatedAt: null,
 					isActive: sql.raw(`1`),
 					scrapedAt: sql.raw(`excluded.scraped_at`),
+					offerType: sql.raw(`excluded.offer_type`),
+					pricePeriod: sql.raw(`excluded.price_period`),
+					minimumStayNights: sql.raw(`excluded.minimum_stay_nights`),
+					rating: sql.raw(`excluded.rating`),
+					reviewsCount: sql.raw(`excluded.reviews_count`),
+					availabilityCount: sql.raw(`excluded.availability_count`),
 				},
 			})
 			.returning({

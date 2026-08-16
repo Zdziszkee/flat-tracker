@@ -43,6 +43,13 @@
       "when": 1786812636296,
       "tag": "0005_clumsy_goliath",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1786919280938,
+      "tag": "0006_talented_leper_queen",
+      "breakpoints": true
     }
   ]
 }

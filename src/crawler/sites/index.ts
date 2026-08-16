@@ -1,12 +1,13 @@
 import type { SiteAdapter } from "../types.ts";
+import { airbnbAdapter } from "./airbnb.ts";
 import { booksAdapter } from "./books.ts";
 import { domiportaAdapter } from "./domiporta.ts";
 import { gratkaAdapter } from "./gratka.ts";
-import { komornikAdapter } from "./komornik.ts";
 import { investmapAdapter } from "./investmap.ts";
+import { komornikAdapter } from "./komornik.ts";
 import { morizonAdapter } from "./morizon.ts";
 import { nieruchomosciOnlineAdapter } from "./nieruchomosci-online.ts";
-import { olxAdapter } from "./olx.ts";
+import { olxAdapter, olxRentAdapter } from "./olx.ts";
 import { otodomAdapter } from "./otodom.ts";
 import { quotesAdapter } from "./quotes.ts";
 import { rynekpierwotnyAdapter } from "./rynekpierwotny.ts";
@@ -16,6 +17,8 @@ import { skalecznaAdapter } from "./skaleczna.ts";
 export const adapters: SiteAdapter[] = [
 	otodomAdapter,
 	olxAdapter,
+	olxRentAdapter,
+	airbnbAdapter,
 	morizonAdapter,
 	gratkaAdapter,
 	domiportaAdapter,
