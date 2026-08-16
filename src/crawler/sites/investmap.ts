@@ -57,6 +57,9 @@ export const investmapAdapter: CheerioAdapter = {
 	kind: "cheerio",
 	startUrls: [`${API_BASE}&offset=0&limit=${PAGE_SIZE}`],
 	maxRequestsPerCrawl: MAX_PAGES,
+	// Small private investments sit past pages that have no flats; a
+	// newest-first first-page skip would hide them forever. Always walk.
+	alwaysFullCrawl: true,
 
 	async extractHtml(html, url, enqueue) {
 		let data: ImResponse;

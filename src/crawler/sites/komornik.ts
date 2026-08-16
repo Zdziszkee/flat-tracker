@@ -60,12 +60,16 @@ export const komornikAdapter: PlaywrightAdapter = {
 	listingSelector: "a.auction",
 
 	async extractListings(page: Page): Promise<Listing[]> {
+		const firstPageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
 		const items = await page.evaluate(
-			async ({ apiPath, pageSize }) => {
+			async ({ apiPath, pageSize, firstPageOnly }) => {
 				const body = {
 					limit: pageSize,
-					orderBy: "ASC",
-					orderByField: "startAuctionAt",
+					// Newest notices first, so the first page is the incremental
+					// window the hourly refresh needs. Matches the search URL's
+					// sort=dateCreated DESC.
+					orderBy: "DESC",
+					orderByField: "dateCreated",
 					aggregations: [],
 					termFilters: [
 						{ field: "province", value: ["małopolskie"] },
@@ -86,11 +90,12 @@ export const komornikAdapter: PlaywrightAdapter = {
 					}
 					const data = (await res.json()) as KomornikPage;
 					all.push(...(data.items ?? []));
+					if (firstPageOnly) break;
 					if (!data.count || all.length >= data.count) break;
 				}
 				return all;
 			},
-			{ apiPath: API_PATH, pageSize: PAGE_SIZE },
+			{ apiPath: API_PATH, pageSize: PAGE_SIZE, firstPageOnly },
 		);
 
 		const listings: Listing[] = [];

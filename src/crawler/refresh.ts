@@ -22,6 +22,12 @@ import type { SiteAdapter } from "./types.ts";
  * without spawning CLI processes. Portal failures are isolated per site:
  * one blocked portal does not abort the rest of the run.
  *
+ * Server runs are first-page-only by default (`firstPageOnly: true`): each
+ * site fetches only its first, newest-sorted page and skips pagination and
+ * detail follow-ups. Manual `crawl:*` runs leave `firstPageOnly` unset and
+ * do full backfills; `alwaysFullCrawl` opts a source back into full
+ * pagination when its newest page is not sufficient for discovery.
+ *
  * Dev-start runs use `diffOnly`: each site's since window is bounded to
  * `sinceDays` (7) AND rolled forward to the last successful crawl of that
  * site, so a boot only fetches what the portals added since the previous
@@ -75,9 +81,20 @@ async function writeState(state: CrawlState): Promise<void> {
 }
 
 export async function refreshAll(
-	opts: { sinceDays?: number; diffOnly?: boolean; includeRcn?: boolean } = {},
+	opts: {
+		sinceDays?: number;
+		diffOnly?: boolean;
+		includeRcn?: boolean;
+		/**
+		 * Fetch only the first (newest) page per site. Defaults to true: the
+		 * hourly/server refresh is an incremental catch-up, while manual
+		 * `crawl:*` runs do full backfills.
+		 */
+		firstPageOnly?: boolean;
+	} = {},
 ): Promise<RefreshSummary> {
 	const sinceDays = opts.sinceDays ?? DEFAULT_SINCE_DAYS;
+	const firstPageOnly = opts.firstPageOnly ?? true;
 	const now = Date.now();
 	const started = now;
 	const state = await readState();
@@ -116,7 +133,11 @@ export async function refreshAll(
 		const since = new Date(Math.min(now, sinceMs));
 		// A per-run clone carries the date window; only list-paginating
 		// sites (otodom, olx, licytacje-komornik) use it, the rest ignore it.
-		const adapter: SiteAdapter = { ...base, since: since.toISOString() };
+		const adapter: SiteAdapter = {
+			...base,
+			since: since.toISOString(),
+			firstPageOnly,
+		};
 		const taskStarted = Date.now();
 		try {
 			const report = await Effect.runPromise(runCrawlWithRetry(adapter, true));

@@ -89,12 +89,19 @@ the rest of the run). The task and plugin are registered explicitly in
 `src/routes`); the handler path must be an absolute file URL, relative
 paths fail to resolve from the virtual tasks module.
 
+**Server refreshes fetch only the first, newest-sorted page per site**
+(`firstPageOnly: true`, the default in `refreshAll`): each hourly run
+captures just the offers that appeared on page 1 and skips pagination and
+detail-page follow-ups. Manual `crawl:*` runs leave `firstPageOnly` unset
+and do full backfills. `alwaysFullCrawl` opts a source back into full
+pagination (investmap: small private investments sit past pages that have
+no flats, so skipping page 1 would hide them).
+
 **Dev-start runs are diff-only** (`payload: { mode: "dev" }`): each site's
 `since` window is `max(now - 7 days, last successful crawl)` — per-site
 last-run timestamps live in `data/crawler/state.json` — so a boot only
 loads what the portals added since the previous load, and otodom/olx
-history is pruned to the 7-day cap. The hourly cron keeps the full
-90-day window.
+history is pruned to the 7-day cap. Dev-start runs are also first-page-only.
 
 - Upserts by `(source, externalId)`: re-running is safe and self-refining
   (detail pages add coordinates to list-page records). Each run reports

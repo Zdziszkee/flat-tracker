@@ -30,7 +30,11 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 		storageClient: new MemoryStorage({ persistStorage: false }),
 	});
 
-	const maxRequestsPerCrawl = adapter.maxRequestsPerCrawl ?? 100;
+	const firstPageOnly =
+		adapter.firstPageOnly === true && !adapter.alwaysFullCrawl;
+	const maxRequestsPerCrawl = firstPageOnly
+		? 1
+		: (adapter.maxRequestsPerCrawl ?? 100);
 
 	if (adapter.kind === "playwright") {
 		const crawler = new PlaywrightCrawler(

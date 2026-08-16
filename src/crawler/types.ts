@@ -61,6 +61,19 @@ interface AdapterBase {
 	 * older than `since`.
 	 */
 	since?: string;
+	/**
+	 * Fetch only the first page of each source (the newest postings) and skip
+	 * all pagination/detail follow-ups. Used by the hourly refresh, which only
+	 * needs to capture offers that just appeared; manual crawls leave it unset
+	 * to backfill the full window.
+	 */
+	firstPageOnly?: boolean;
+	/**
+	 * Ignore `firstPageOnly` and walk every page. Directories without a
+	 * newest-first listing (e.g. investmap) must keep full pagination so new
+	 * entries past the first page are still discovered.
+	 */
+	alwaysFullCrawl?: boolean;
 }
 
 /**
