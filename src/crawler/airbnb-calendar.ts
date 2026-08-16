@@ -37,17 +37,27 @@ interface CalendarResponse {
 	};
 }
 
-async function scrapeCalendarDays(
+interface ScrapedCalendar {
+	days: CalendarDay[];
+	totalPrice: number | null;
+	stayNights: number;
+	startDate: string;
+	endDate: string;
+}
+
+async function scrapeCalendar(
 	page: import("playwright").Page,
 	listingId: string,
-): Promise<CalendarDay[] | null> {
+): Promise<ScrapedCalendar | null> {
 	const now = new Date();
-	// Open with a date range so the page requests the calendar on load.
-	const url = `https://www.airbnb.pl/rooms/${listingId}?check_in=${now.getFullYear()}-${String(
-		now.getMonth() + 1,
-	).padStart(2, "0")}-01&check_out=${now.getFullYear()}-${String(
-		now.getMonth() + 1,
-	).padStart(2, "0")}-08&adults=2`;
+	const year =
+		now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear();
+	const month = now.getMonth() === 11 ? 1 : now.getMonth() + 2;
+	const startDate = `${year}-${String(month).padStart(2, "0")}-01`;
+	const endDate = `${year}-${String(month).padStart(2, "0")}-08`;
+	const stayNights = 7;
+	// Open with a selected 7-night range so the page shows the payable total.
+	const url = `https://www.airbnb.pl/rooms/${listingId}?check_in=${startDate}&check_out=${endDate}&adults=2`;
 
 	let resolveCalendar: (days: CalendarDay[] | null) => void;
 	const calendarPromise = new Promise<CalendarDay[] | null>((resolve) => {
@@ -72,10 +82,21 @@ async function scrapeCalendarDays(
 	try {
 		await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
 		await page.waitForSelector('[aria-label="Kalendarz"]', { timeout: 20_000 });
-		return await Promise.race([
+		const days = await Promise.race([
 			calendarPromise,
 			new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
 		]);
+		const totalPrice = await page.evaluate(() => {
+			const text =
+				document.querySelector<HTMLElement>('[data-testid="book-it-default"]')
+					?.innerText ?? "";
+			const amounts = [...text.matchAll(/([\d\s.,]+)\s*zł/g)]
+				.map((m) => Number(m[1].replace(/\s/g, "").replace(",", ".")))
+				.filter((n) => Number.isFinite(n) && n > 0);
+			return amounts.length > 0 ? (amounts[1] ?? amounts[0]) : null;
+		});
+		if (!days) return null;
+		return { days, totalPrice, stayNights, startDate, endDate };
 	} finally {
 		page.off("response", onResponse);
 	}
@@ -107,28 +128,36 @@ export async function runAirbnbCalendarImport(): Promise<{
 	try {
 		for (let i = 0; i < rows.length; i++) {
 			const row = rows[i];
-			const days = await scrapeCalendarDays(page, row.externalId);
-			if (!days) {
+			const scraped = await scrapeCalendar(page, row.externalId);
+			if (!scraped) {
 				failures++;
 			} else {
 				const nightly = row.price ?? null;
+				const effective =
+					scraped.totalPrice != null
+						? scraped.totalPrice / scraped.stayNights
+						: nightly;
 				await saveAvailabilityObservations(
-					days.map((d) => ({
-						listingId: row.id,
-						source: "airbnb",
-						date: d.calendarDate ?? "",
-						priceConfig: "calendar",
-						listedPrice: nightly,
-						totalPrice: null,
-						stayNights: null,
-						effectiveNightlyPrice: nightly,
-						taxes: null,
-						fees: null,
-						available: d.available === true,
-						minimumNights: d.minNights ?? null,
-					})),
+					scraped.days.map((d) => {
+						const date = d.calendarDate ?? "";
+						const inRange = date >= scraped.startDate && date < scraped.endDate;
+						return {
+							listingId: row.id,
+							source: "airbnb",
+							date,
+							priceConfig: "calendar",
+							listedPrice: nightly,
+							totalPrice: inRange ? scraped.totalPrice : null,
+							stayNights: inRange ? scraped.stayNights : null,
+							effectiveNightlyPrice: inRange ? effective : nightly,
+							taxes: null,
+							fees: null,
+							available: d.available === true,
+							minimumNights: d.minNights ?? null,
+						};
+					}),
 				);
-				observations += days.length;
+				observations += scraped.days.length;
 			}
 			if ((i + 1) % 10 === 0 || i === rows.length - 1) {
 				console.log(
