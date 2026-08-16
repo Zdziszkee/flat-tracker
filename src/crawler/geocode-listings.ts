@@ -305,16 +305,22 @@ export async function geocodeUnlocatedListings(
 			continue;
 		}
 
-		// City-level offline fallback: no matching street/building, but the
-		// address names a city — place it at the city centroid.
-		const cityCentroid = cityCentroids.get(normStreet(cityHint ?? ""));
-		if (cityCentroid) {
-			await db
-				.update(listings)
-				.set({ lat: cityCentroid.lat, lng: cityCentroid.lng })
-				.where(eq(listings.id, row.id));
-			report.localHits++;
-			continue;
+		// City-level offline fallback: only for addresses with no street at all
+		// (e.g. "33-100, Tarnów"). An address that names a specific street but
+		// failed to match locally must never collapse to the city centroid —
+		// that is how whole districts pile up on one wrong point.
+		const isZipOnly = /^\d{2}-\d{3}$/.test(streetPart.trim());
+		const hasNoStreet = !parsed && (!streetPart || isZipOnly);
+		if (hasNoStreet) {
+			const cityCentroid = cityCentroids.get(normStreet(cityHint ?? ""));
+			if (cityCentroid) {
+				await db
+					.update(listings)
+					.set({ lat: cityCentroid.lat, lng: cityCentroid.lng })
+					.where(eq(listings.id, row.id));
+				report.localHits++;
+				continue;
+			}
 		}
 
 		// Nominatim street-level fallback (bounded for scheduled runs).
@@ -324,7 +330,6 @@ export async function geocodeUnlocatedListings(
 			report.misses++;
 			continue;
 		}
-		const isZipOnly = /^\d{2}-\d{3}$/.test(streetPart.trim());
 		const namePart = isZipOnly && cityHint ? cityHint : streetPart;
 		const streetKey = normStreet(`${streetPart} ${cityHint ?? ""}`);
 		// `in` check: a cached null is a known miss and must not re-query.

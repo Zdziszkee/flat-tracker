@@ -46,10 +46,15 @@ export interface StreetBuilding {
 	city?: string;
 }
 
+export interface StreetIndex {
+	/** Full normalized street key -> buildings on that street. */
+	byStreet: Map<string, StreetBuilding[]>;
+	/** Individual significant word -> full street keys containing it. */
+	byWord: Map<string, string[]>;
+}
+
 /** streetNorm -> buildings on that street. */
-export async function buildStreetIndex(): Promise<
-	Map<string, StreetBuilding[]>
-> {
+export async function buildStreetIndex(): Promise<StreetIndex> {
 	const rows = await db
 		.select({
 			osmId: osmBuildings.osmId,
@@ -61,7 +66,8 @@ export async function buildStreetIndex(): Promise<
 		.from(osmBuildings)
 		.where(isNotNull(osmBuildings.address));
 
-	const index = new Map<string, StreetBuilding[]>();
+	const byStreet = new Map<string, StreetBuilding[]>();
+	const byWord = new Map<string, string[]>();
 	for (const r of rows) {
 		if (!r.address) continue;
 		const { street, number } = parseAddress(r.address);
@@ -76,7 +82,7 @@ export async function buildStreetIndex(): Promise<
 				// Ignore malformed tags; city stays undefined.
 			}
 		}
-		const list = index.get(key) ?? [];
+		const list = byStreet.get(key) ?? [];
 		list.push({
 			osmId: r.osmId,
 			number,
@@ -84,9 +90,54 @@ export async function buildStreetIndex(): Promise<
 			lng: r.centroidLng,
 			city,
 		});
-		index.set(key, list);
+		byStreet.set(key, list);
+
+		// Register every significant word so a portal's single-word form
+		// ("Meiera", "Kurozwęckiego", or even the first name "Dobiesława")
+		// resolves to the full OSM name ("Księdza Józefa Meiera",
+		// "Dobiesława Kurozwęckiego").
+		for (const word of key.split(" ")) {
+			if (word.length < 4) continue;
+			const aliases = byWord.get(word) ?? [];
+			if (!aliases.includes(key)) aliases.push(key);
+			byWord.set(word, aliases);
+		}
 	}
-	return index;
+	return { byStreet, byWord };
+}
+
+/**
+ * Resolve a query street key to the full street keys it can mean. The exact
+ * key (when present) is combined with any alias streets that share the
+ * query's significant words, so a housenumber can still land on the full
+ * name ("Józefa 70" -> "Księdza Józefa Meiera 70") without losing the
+ * literal street.
+ */
+function streetKeys(index: StreetIndex, street: string | null): string[] {
+	if (!street) return [];
+	const key = normStreet(stripStreetPrefix(street));
+	if (!key) return [];
+
+	const candidates = new Set<string>();
+	if (index.byStreet.has(key)) candidates.add(key);
+	const queryWords = key.split(" ").filter((w) => w.length >= 4);
+	for (const word of queryWords) {
+		for (const full of index.byWord.get(word) ?? []) candidates.add(full);
+	}
+	if (queryWords.length === 0) return [...candidates];
+	return [...candidates].filter((full) => {
+		const fullWords = new Set(full.split(" "));
+		return queryWords.every((w) => fullWords.has(w));
+	});
+}
+
+function buildingsFor(
+	index: StreetIndex,
+	street: string | null,
+): StreetBuilding[] {
+	return streetKeys(index, street).flatMap(
+		(key) => index.byStreet.get(key) ?? [],
+	);
 }
 
 /**
@@ -108,13 +159,13 @@ function filterByCity(
  * Exact street + housenumber match. Returns the building, or null.
  */
 export function matchByAddress(
-	index: Map<string, StreetBuilding[]>,
+	index: StreetIndex,
 	street: string | null,
 	number: string | null,
 	cityHint?: string | null,
 ): StreetBuilding | null {
 	if (!street) return null;
-	const buildings = filterByCity(index.get(normStreet(street)), cityHint);
+	const buildings = filterByCity(buildingsFor(index, street), cityHint);
 	if (!buildings || buildings.length === 0) return null;
 	if (number) {
 		const exact = buildings.find((b) => b.number === number);
@@ -130,12 +181,12 @@ export function matchByAddress(
  * exact building, or a street centroid with no building (for geocoding).
  */
 export function matchAddressString(
-	index: Map<string, StreetBuilding[]>,
+	index: StreetIndex,
 	address: string,
 	cityHint?: string | null,
 ): { lat: number; lng: number; building: StreetBuilding | null } | null {
 	const { street, number } = parseAddress(address);
-	const buildings = filterByCity(index.get(normStreet(street)), cityHint);
+	const buildings = filterByCity(buildingsFor(index, street), cityHint);
 	if (!buildings || buildings.length === 0) return null;
 
 	if (number) {
