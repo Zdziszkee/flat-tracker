@@ -18,17 +18,14 @@ import type { Listing, PlaywrightAdapter } from "../types.ts";
  * creation date and address. Coordinates are usually (0,0) — leave null
  * and let `npm run geocode-addresses` anchor them via the OSM index.
  *
- * Only flats (APARTMENTS), houses (HOUSE/HOUSES) and plots (LAND) are kept;
- * the rest of the REAL_ESTATE feed (garages, commercial) is skipped.
+ * Every REAL_ESTATE notice is kept (flats, houses, plots, garages and
+ * "inne"/other), so the crawler mirrors the whole Małopolska search feed.
  */
 
 const SEARCH_URL =
 	"https://licytacje.komornik.pl/wyszukiwarka-licytacji?province=ma%C5%82opolskie&mainCategory=REAL_ESTATE";
 const API_PATH = "/services/item-back/rest/item/search";
 const PAGE_SIZE = 20;
-
-/** Flats, houses and plots (parcels). */
-const KEPT_SUBCATEGORIES = new Set(["APARTMENTS", "HOUSE", "HOUSES", "LAND"]);
 
 interface KomornikAddress {
 	street: string | null;
@@ -56,7 +53,7 @@ interface KomornikPage {
 
 export const komornikAdapter: PlaywrightAdapter = {
 	id: "licytacje-komornik",
-	name: "Licytacje komornicze · Małopolska (mieszkania, domy i działki)",
+	name: "Licytacje komornicze · Małopolska (nieruchomości)",
 	kind: "playwright",
 	startUrls: [SEARCH_URL],
 	maxRequestsPerCrawl: 3,
@@ -98,10 +95,8 @@ export const komornikAdapter: PlaywrightAdapter = {
 
 		const listings: Listing[] = [];
 		for (const item of items) {
-			if (!KEPT_SUBCATEGORIES.has(item.subCategory)) continue;
-
-			// Scrape every in-scope notice (flats/houses/plots). Prefer the
-			// notice creation date; fall back to the auction start date.
+			// Scrape every in-scope notice (flats/houses/plots/garages/other).
+			// Prefer the notice creation date; fall back to the auction start date.
 			const start = item.startAuctionAt
 				? Date.parse(item.startAuctionAt)
 				: Number.NaN;
