@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as MapRouteImport } from './routes/map'
+import { Route as RentalsRouteImport } from './routes/rentals'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
+import { Route as ApiRentalStatsRouteImport } from './routes/api/rental-stats'
 import { Route as ApiSourcesRouteImport } from './routes/api/sources'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiBuildingsGeojsonRouteImport } from './routes/api/buildings/geojson'
@@ -35,9 +37,19 @@ const MapRoute = MapRouteImport.update({
   path: '/map',
   getParentRoute: () => rootRouteImport,
 } as any)
+const RentalsRoute = RentalsRouteImport.update({
+  id: '/rentals',
+  path: '/rentals',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiListingsRoute = ApiListingsRouteImport.update({
   id: '/api/listings',
   path: '/api/listings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiRentalStatsRoute = ApiRentalStatsRouteImport.update({
+  id: '/api/rental-stats',
+  path: '/api/rental-stats',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiSourcesRoute = ApiSourcesRouteImport.update({
@@ -75,7 +87,9 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/listings': typeof ListingsRoute
   '/map': typeof MapRoute
+  '/rentals': typeof RentalsRoute
   '/api/listings': typeof ApiListingsRoute
+  '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
@@ -87,7 +101,9 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/listings': typeof ListingsRoute
   '/map': typeof MapRoute
+  '/rentals': typeof RentalsRoute
   '/api/listings': typeof ApiListingsRoute
+  '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
@@ -100,7 +116,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/listings': typeof ListingsRoute
   '/map': typeof MapRoute
+  '/rentals': typeof RentalsRoute
   '/api/listings': typeof ApiListingsRoute
+  '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
@@ -114,7 +132,9 @@ export interface FileRouteTypes {
     | '/'
     | '/listings'
     | '/map'
+    | '/rentals'
     | '/api/listings'
+    | '/api/rental-stats'
     | '/api/sources'
     | '/api/auth/$'
     | '/api/buildings/geojson'
@@ -126,7 +146,9 @@ export interface FileRouteTypes {
     | '/'
     | '/listings'
     | '/map'
+    | '/rentals'
     | '/api/listings'
+    | '/api/rental-stats'
     | '/api/sources'
     | '/api/auth/$'
     | '/api/buildings/geojson'
@@ -138,7 +160,9 @@ export interface FileRouteTypes {
     | '/'
     | '/listings'
     | '/map'
+    | '/rentals'
     | '/api/listings'
+    | '/api/rental-stats'
     | '/api/sources'
     | '/api/auth/$'
     | '/api/buildings/geojson'
@@ -151,7 +175,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ListingsRoute: typeof ListingsRoute
   MapRoute: typeof MapRoute
+  RentalsRoute: typeof RentalsRoute
   ApiListingsRoute: typeof ApiListingsRoute
+  ApiRentalStatsRoute: typeof ApiRentalStatsRoute
   ApiSourcesRoute: typeof ApiSourcesRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiBuildingsGeojsonRoute: typeof ApiBuildingsGeojsonRoute
@@ -183,11 +209,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MapRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/rentals': {
+      id: '/rentals'
+      path: '/rentals'
+      fullPath: '/rentals'
+      preLoaderRoute: typeof RentalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/listings': {
       id: '/api/listings'
       path: '/api/listings'
       fullPath: '/api/listings'
       preLoaderRoute: typeof ApiListingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/rental-stats': {
+      id: '/api/rental-stats'
+      path: '/api/rental-stats'
+      fullPath: '/api/rental-stats'
+      preLoaderRoute: typeof ApiRentalStatsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/sources': {
@@ -239,7 +279,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ListingsRoute: ListingsRoute,
   MapRoute: MapRoute,
+  RentalsRoute: RentalsRoute,
   ApiListingsRoute: ApiListingsRoute,
+  ApiRentalStatsRoute: ApiRentalStatsRoute,
   ApiSourcesRoute: ApiSourcesRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiBuildingsGeojsonRoute: ApiBuildingsGeojsonRoute,
@@ -250,12 +292,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
