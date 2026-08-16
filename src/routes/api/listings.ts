@@ -103,6 +103,12 @@ export const Route = createFileRoute("/api/listings")({
 						buildingAddress: buildings.address,
 						buildingLat: buildings.lat,
 						buildingLng: buildings.lng,
+						offerType: listings.offerType,
+						pricePeriod: listings.pricePeriod,
+						minimumStayNights: listings.minimumStayNights,
+						rating: listings.rating,
+						reviewsCount: listings.reviewsCount,
+						availabilityCount: listings.availabilityCount,
 					})
 					.from(listings)
 					.leftJoin(buildings, eq(listings.buildingId, buildings.id))

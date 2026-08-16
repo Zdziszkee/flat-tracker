@@ -18,6 +18,9 @@ const SOURCE_LABELS: Record<string, string> = {
 	"nieruchomosci-online": "Nieruchomosci-online",
 	rynekpierwotny: "Rynekpierwotny",
 	"licytacje-komornik": "Licytacje komornicze",
+	"olx-rent": "OLX wynajem",
+	airbnb: "Airbnb",
+	booking: "Booking",
 };
 
 /** 0 = no time window (all offers). */
