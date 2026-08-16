@@ -80,7 +80,12 @@ async function fetchCalendar(listingId: string): Promise<CalendarDay[] | null> {
 	);
 }
 
-async function main(): Promise<void> {
+export async function runAirbnbCalendarImport(): Promise<{
+	listings: number;
+	days: number;
+	failures: number;
+	monthlyRows: number;
+}> {
 	const rows = await db
 		.select({
 			id: listings.id,
@@ -129,9 +134,20 @@ async function main(): Promise<void> {
 		await new Promise((r) => setTimeout(r, 250));
 	}
 
-	const months = await foldMonthlyPrices();
+	const monthlyRows = await foldMonthlyPrices();
+	return {
+		listings: rows.length,
+		days: observations,
+		failures,
+		monthlyRows,
+	};
+}
+
+async function main(): Promise<void> {
+	const summary = await runAirbnbCalendarImport();
 	console.log(
-		`done: listings=${rows.length} days=${observations} failures=${failures} monthlyRows=${months}`,
+		`done: listings=${summary.listings} days=${summary.days} ` +
+			`failures=${summary.failures} monthlyRows=${summary.monthlyRows}`,
 	);
 }
 

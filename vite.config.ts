@@ -10,6 +10,9 @@ import { defineConfig } from "vite";
 const refreshTask = fileURLToPath(
 	new URL("./server/tasks/refresh.ts", import.meta.url),
 );
+const airbnbCalendarTask = fileURLToPath(
+	new URL("./server/tasks/airbnb-calendar.ts", import.meta.url),
+);
 const refreshPlugin = fileURLToPath(
 	new URL("./server/plugins/refresh-on-start.ts", import.meta.url),
 );
@@ -31,10 +34,18 @@ const config = defineConfig({
 					handler: refreshTask,
 					description: "Crawl all sources, prune stale offers, import RCN diff",
 				},
+				"airbnb-calendar": {
+					handler: airbnbCalendarTask,
+					description:
+						"Import Airbnb availability calendars and fold monthly prices",
+				},
 			},
 			// Hourly data refresh (same program as `npm run crawl:all`, which
 			// does an incremental RCN diff check before any 2 GB download).
-			scheduledTasks: { "0 * * * *": "refresh" },
+			scheduledTasks: {
+				"0 * * * *": "refresh",
+				"0 3 * * *": "airbnb-calendar",
+			},
 		}),
 		tailwindcss(),
 		tanstackStart(),
