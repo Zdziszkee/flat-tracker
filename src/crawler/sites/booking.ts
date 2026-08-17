@@ -26,12 +26,6 @@ export const bookingAdapter: PlaywrightAdapter = {
 
 	async extractListings(page: Page): Promise<Listing[]> {
 		return page.evaluate(() => {
-			const parsePrice = (text: string): number | null => {
-				const m = text.match(/([\d\s.,]+)\s*zł/i);
-				if (!m) return null;
-				const n = Number(m[1].replace(/\s/g, "").replace(",", "."));
-				return Number.isFinite(n) && n > 0 ? n : null;
-			};
 			const cards = Array.from(
 				document.querySelectorAll<HTMLElement>('[data-testid="property-card"]'),
 			);
@@ -45,7 +39,16 @@ export const bookingAdapter: PlaywrightAdapter = {
 				const priceEl = card.querySelector<HTMLElement>(
 					'[data-testid="price-and-discounted-price"]',
 				);
-				const price = parsePrice(priceEl?.innerText ?? card.innerText);
+				const priceText = priceEl?.innerText ?? card.innerText;
+				const priceMatch = priceText.match(/([\d\s.,]+)\s*zł/i);
+				const price =
+					priceMatch &&
+					(() => {
+						const n = Number(
+							priceMatch[1].replace(/\s/g, "").replace(",", "."),
+						);
+						return Number.isFinite(n) && n > 0 ? n : null;
+					})();
 				const ratingEl = card.querySelector<HTMLElement>(
 					'[data-testid="review-score"]',
 				);

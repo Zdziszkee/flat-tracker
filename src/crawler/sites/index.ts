@@ -1,5 +1,6 @@
 import type { SiteAdapter } from "../types.ts";
 import { airbnbAdapter } from "./airbnb.ts";
+import { bookingAdapter } from "./booking.ts";
 import { booksAdapter } from "./books.ts";
 import { domiportaAdapter } from "./domiporta.ts";
 import { gratkaAdapter } from "./gratka.ts";
@@ -19,6 +20,7 @@ export const adapters: SiteAdapter[] = [
 	olxAdapter,
 	olxRentAdapter,
 	airbnbAdapter,
+	bookingAdapter,
 	morizonAdapter,
 	gratkaAdapter,
 	domiportaAdapter,
