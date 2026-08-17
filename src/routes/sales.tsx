@@ -1,5 +1,10 @@
+import { barY, defineChart } from "@tanstack/charts";
+import { Chart } from "@tanstack/charts/react";
+import { scaleBand } from "@tanstack/charts/scales/band";
+import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMemo } from "react";
 
 interface SalesAnalytics {
 	overall: {
@@ -32,6 +37,31 @@ function SalesPage() {
 		queryFn: () => fetch("/api/sales-analytics").then((r) => r.json()),
 	});
 
+	const priceChart = useMemo(() => {
+		const rows = (data?.byDistrict ?? [])
+			.filter((r) => r.district && r.avgPricePerM2 != null)
+			.slice(0, 12);
+		return defineChart({
+			marks: [
+				barY(rows, {
+					x: "district",
+					y: "avgPricePerM2",
+					fill: "#2563eb",
+				}),
+			],
+			x: {
+				scale: () => scaleBand<string>().padding(0.2),
+				axis: { label: "Dzielnica" },
+			},
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "zł/m²" },
+			},
+		});
+	}, [data]);
+
 	return (
 		<div className="p-6">
 			<div className="mb-4 flex items-center justify-between">
@@ -52,6 +82,13 @@ function SalesPage() {
 				<p className="text-sm text-gray-500">Ładowanie...</p>
 			) : (
 				<>
+					<div className="mb-4 h-80 rounded border p-2">
+						<Chart
+							definition={priceChart}
+							height={320}
+							ariaLabel="Średnia cena za m² według dzielnicy"
+						/>
+					</div>
 					<div className="mb-4 grid grid-cols-2 gap-4 md:grid-cols-4">
 						<div className="rounded border p-3">
 							<div className="text-xs text-gray-500">Ofert</div>

@@ -1,6 +1,10 @@
+import { barY, defineChart } from "@tanstack/charts";
+import { Chart } from "@tanstack/charts/react";
+import { scaleBand } from "@tanstack/charts/scales/band";
+import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 interface RentalStatRow {
 	listingId: number;
@@ -79,6 +83,34 @@ function RentalsPage() {
 		(r) => source === "all" || r.source === source,
 	);
 
+	const sourceChart = useMemo(() => {
+		const grouped = new Map<string, { total: number; count: number }>();
+		for (const r of analytics?.rows ?? []) {
+			if (r.avgEffective == null) continue;
+			const g = grouped.get(r.source) ?? { total: 0, count: 0 };
+			g.total += r.avgEffective;
+			g.count += 1;
+			grouped.set(r.source, g);
+		}
+		const rows = [...grouped.entries()].map(([name, g]) => ({
+			source: name,
+			avgEffective: g.total / g.count,
+		}));
+		return defineChart({
+			marks: [barY(rows, { x: "source", y: "avgEffective", fill: "#10b981" })],
+			x: {
+				scale: () => scaleBand<string>().padding(0.2),
+				axis: { label: "Źródło" },
+			},
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "śr. zł/noc" },
+			},
+		});
+	}, [analytics]);
+
 	return (
 		<div className="p-6">
 			<div className="mb-4 flex items-center justify-between">
@@ -101,6 +133,14 @@ function RentalsPage() {
 						Mapa
 					</Link>
 				</div>
+			</div>
+
+			<div className="mb-4 h-72 rounded border p-2">
+				<Chart
+					definition={sourceChart}
+					height={280}
+					ariaLabel="Średnia cena noclegu według źródła"
+				/>
 			</div>
 
 			<div className="mb-4 overflow-x-auto rounded border">
