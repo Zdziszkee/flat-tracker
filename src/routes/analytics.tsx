@@ -28,6 +28,21 @@ interface InvestmentAnalytics {
 	bySource: Array<{ source: string; avgNightly: number | null; count: number }>;
 }
 
+interface ValuationRow {
+	district: string;
+	saleAvgM2: number;
+	rentAvgM2: number;
+	grossYieldPct: number;
+	fairPriceM2: number;
+	overUnderPct: number;
+	paybackYears: number;
+	priceToRent: number;
+	tenYearReturnPct: number;
+	valueScore: number;
+	saleCount: number;
+	rentCount: number;
+}
+
 function fmt(n: number | null | undefined, digits = 0): string {
 	if (n == null) return "";
 	return new Intl.NumberFormat("pl-PL", {
@@ -43,6 +58,10 @@ function AnalyticsPage() {
 	const { data, isLoading } = useQuery<InvestmentAnalytics>({
 		queryKey: ["investment-analytics"],
 		queryFn: () => fetch("/api/investment-analytics").then((r) => r.json()),
+	});
+	const { data: valuation } = useQuery<{ rows: ValuationRow[] }>({
+		queryKey: ["valuation"],
+		queryFn: () => fetch("/api/valuation").then((r) => r.json()),
 	});
 
 	const yieldChart = useMemo(() => {
@@ -191,6 +210,54 @@ function AnalyticsPage() {
 						/>
 					</div>
 				</div>
+			</div>
+
+			<div className="mt-4 overflow-x-auto rounded border">
+				<h2 className="px-3 py-2 text-sm font-semibold text-gray-600">
+					Top 15 okazje — przewartościowane vs niedowartościowane
+				</h2>
+				<table className="w-full text-sm">
+					<thead className="bg-gray-50 text-left">
+						<tr>
+							<th className="px-3 py-2">Dzielnica</th>
+							<th className="px-3 py-2 text-right">Wynik</th>
+							<th className="px-3 py-2 text-right">Cena zł/m²</th>
+							<th className="px-3 py-2 text-right">Czynsz zł/m²</th>
+							<th className="px-3 py-2 text-right">Rentowność</th>
+							<th className="px-3 py-2 text-right">Wartość godziwa</th>
+							<th className="px-3 py-2 text-right">Przewart.</th>
+							<th className="px-3 py-2 text-right">Zwrot (lata)</th>
+							<th className="px-3 py-2 text-right">Zwrot 10 lat</th>
+						</tr>
+					</thead>
+					<tbody>
+						{(valuation?.rows ?? []).map((r) => (
+							<tr key={r.district} className="border-t hover:bg-gray-50">
+								<td className="px-3 py-1.5">{r.district}</td>
+								<td className="px-3 py-1.5 text-right font-medium">
+									{fmt(r.valueScore, 1)}
+								</td>
+								<td className="px-3 py-1.5 text-right">{fmt(r.saleAvgM2)}</td>
+								<td className="px-3 py-1.5 text-right">
+									{fmt(r.rentAvgM2, 1)}
+								</td>
+								<td className="px-3 py-1.5 text-right">
+									{fmt(r.grossYieldPct, 1)}%
+								</td>
+								<td className="px-3 py-1.5 text-right">{fmt(r.fairPriceM2)}</td>
+								<td className="px-3 py-1.5 text-right">
+									{fmt(r.overUnderPct, 1)}%
+								</td>
+								<td className="px-3 py-1.5 text-right">
+									{fmt(r.paybackYears, 1)}
+								</td>
+								<td className="px-3 py-1.5 text-right">
+									{fmt(r.tenYearReturnPct, 1)}%
+								</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
 			</div>
 
 			<div className="mt-4 overflow-x-auto rounded border">

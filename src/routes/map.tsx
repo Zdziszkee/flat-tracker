@@ -88,11 +88,8 @@ function MapPage() {
 						</option>
 					))}
 				</select>
-				<Link to="/sales" className="text-sm text-blue-600 underline">
-					Analityka sprzedaży
-				</Link>
-				<Link to="/rentals" className="text-sm text-blue-600 underline">
-					Analityka najmu
+				<Link to="/analytics" className="text-sm text-blue-600 underline">
+					Analityka inwestycyjna
 				</Link>
 			</header>
 
