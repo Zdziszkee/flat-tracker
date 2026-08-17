@@ -10,10 +10,12 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as MapRouteImport } from './routes/map'
 import { Route as RentalsRouteImport } from './routes/rentals'
 import { Route as SalesRouteImport } from './routes/sales'
+import { Route as ApiInvestmentAnalyticsRouteImport } from './routes/api/investment-analytics'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiRentalAnalyticsRouteImport } from './routes/api/rental-analytics'
 import { Route as ApiRentalGuestPricesRouteImport } from './routes/api/rental-guest-prices'
@@ -29,6 +31,11 @@ import { Route as ApiBuildingsLookupRouteImport } from './routes/api/buildings/l
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AnalyticsRoute = AnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ListingsRoute = ListingsRouteImport.update({
@@ -49,6 +56,11 @@ const RentalsRoute = RentalsRouteImport.update({
 const SalesRoute = SalesRouteImport.update({
   id: '/sales',
   path: '/sales',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiInvestmentAnalyticsRoute = ApiInvestmentAnalyticsRouteImport.update({
+  id: '/api/investment-analytics',
+  path: '/api/investment-analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiListingsRoute = ApiListingsRouteImport.update({
@@ -109,10 +121,12 @@ const ApiBuildingsLookupRoute = ApiBuildingsLookupRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
   '/listings': typeof ListingsRoute
   '/map': typeof MapRoute
   '/rentals': typeof RentalsRoute
   '/sales': typeof SalesRoute
+  '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -127,10 +141,12 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
   '/listings': typeof ListingsRoute
   '/map': typeof MapRoute
   '/rentals': typeof RentalsRoute
   '/sales': typeof SalesRoute
+  '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -146,10 +162,12 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
   '/listings': typeof ListingsRoute
   '/map': typeof MapRoute
   '/rentals': typeof RentalsRoute
   '/sales': typeof SalesRoute
+  '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -166,10 +184,12 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/analytics'
     | '/listings'
     | '/map'
     | '/rentals'
     | '/sales'
+    | '/api/investment-analytics'
     | '/api/listings'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -184,10 +204,12 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/analytics'
     | '/listings'
     | '/map'
     | '/rentals'
     | '/sales'
+    | '/api/investment-analytics'
     | '/api/listings'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -202,10 +224,12 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/analytics'
     | '/listings'
     | '/map'
     | '/rentals'
     | '/sales'
+    | '/api/investment-analytics'
     | '/api/listings'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -221,10 +245,12 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AnalyticsRoute: typeof AnalyticsRoute
   ListingsRoute: typeof ListingsRoute
   MapRoute: typeof MapRoute
   RentalsRoute: typeof RentalsRoute
   SalesRoute: typeof SalesRoute
+  ApiInvestmentAnalyticsRoute: typeof ApiInvestmentAnalyticsRoute
   ApiListingsRoute: typeof ApiListingsRoute
   ApiRentalAnalyticsRoute: typeof ApiRentalAnalyticsRoute
   ApiRentalGuestPricesRoute: typeof ApiRentalGuestPricesRoute
@@ -245,6 +271,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/analytics': {
+      id: '/analytics'
+      path: '/analytics'
+      fullPath: '/analytics'
+      preLoaderRoute: typeof AnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/listings': {
@@ -273,6 +306,13 @@ declare module '@tanstack/react-router' {
       path: '/sales'
       fullPath: '/sales'
       preLoaderRoute: typeof SalesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/investment-analytics': {
+      id: '/api/investment-analytics'
+      path: '/api/investment-analytics'
+      fullPath: '/api/investment-analytics'
+      preLoaderRoute: typeof ApiInvestmentAnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/listings': {
@@ -357,10 +397,12 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AnalyticsRoute: AnalyticsRoute,
   ListingsRoute: ListingsRoute,
   MapRoute: MapRoute,
   RentalsRoute: RentalsRoute,
   SalesRoute: SalesRoute,
+  ApiInvestmentAnalyticsRoute: ApiInvestmentAnalyticsRoute,
   ApiListingsRoute: ApiListingsRoute,
   ApiRentalAnalyticsRoute: ApiRentalAnalyticsRoute,
   ApiRentalGuestPricesRoute: ApiRentalGuestPricesRoute,
