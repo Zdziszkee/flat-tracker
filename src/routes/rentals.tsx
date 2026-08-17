@@ -111,6 +111,52 @@ function RentalsPage() {
 		});
 	}, [analytics]);
 
+	const heatmap = useMemo(() => {
+		const rows = data?.rows ?? [];
+		const byListing = new Map<
+			number,
+			{ title: string; months: Record<string, number> }
+		>();
+		for (const r of rows) {
+			const entry = byListing.get(r.listingId) ?? {
+				title: r.title,
+				months: {},
+			};
+			if (r.avgEffectiveNightlyPrice != null) {
+				entry.months[r.month] = r.avgEffectiveNightlyPrice;
+			}
+			byListing.set(r.listingId, entry);
+		}
+		const months = [...new Set(rows.map((r) => r.month))].sort().slice(-12);
+		const listings = [...byListing.values()]
+			.map((l) => {
+				const values = Object.values(l.months);
+				const avg =
+					values.length > 0
+						? values.reduce((s, v) => s + v, 0) / values.length
+						: 0;
+				return { ...l, avg };
+			})
+			.sort((a, b) => b.avg - a.avg)
+			.slice(0, 20);
+		const allValues = listings.flatMap((l) => Object.values(l.months));
+		const min = allValues.length > 0 ? Math.min(...allValues) : 0;
+		const max = allValues.length > 0 ? Math.max(...allValues) : 0;
+		return { months, listings, min, max };
+	}, [data]);
+
+	function heatColor(v: number | undefined): string {
+		if (v == null) return "transparent";
+		const t =
+			heatmap.max === heatmap.min
+				? 0.5
+				: (v - heatmap.min) / (heatmap.max - heatmap.min);
+		const r = Math.round(255);
+		const g = Math.round(255 - t * 180);
+		const b = Math.round(255 - t * 200);
+		return `rgb(${r}, ${g}, ${b})`;
+	}
+
 	return (
 		<div className="p-6">
 			<div className="mb-4 flex items-center justify-between">
@@ -141,6 +187,40 @@ function RentalsPage() {
 					height={280}
 					ariaLabel="Średnia cena noclegu według źródła"
 				/>
+			</div>
+
+			<div className="mb-4 overflow-x-auto rounded border">
+				<h2 className="px-3 py-2 text-sm font-semibold text-gray-600">
+					Heatmap cen (śr. zł/noc, wg miesiąca)
+				</h2>
+				<table className="w-full text-sm">
+					<thead className="bg-gray-50 text-left">
+						<tr>
+							<th className="px-3 py-2">Mieszkanie</th>
+							{heatmap.months.map((m) => (
+								<th key={m} className="px-2 py-2 text-right text-xs">
+									{m}
+								</th>
+							))}
+						</tr>
+					</thead>
+					<tbody>
+						{heatmap.listings.map((l) => (
+							<tr key={l.title} className="border-t">
+								<td className="max-w-56 truncate px-3 py-1.5">{l.title}</td>
+								{heatmap.months.map((m) => (
+									<td
+										key={m}
+										className="px-2 py-1.5 text-right text-xs"
+										style={{ backgroundColor: heatColor(l.months[m]) }}
+									>
+										{fmt(l.months[m])}
+									</td>
+								))}
+							</tr>
+						))}
+					</tbody>
+				</table>
 			</div>
 
 			<div className="mb-4 overflow-x-auto rounded border">

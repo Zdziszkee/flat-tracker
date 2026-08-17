@@ -16,12 +16,21 @@ import type { Listing, PlaywrightAdapter } from "../types.ts";
 const SEARCH_URL =
 	"https://www.booking.com/searchresults.pl.html?ss=Krak%C3%B3w&checkin=2026-08-20&checkout=2026-08-27&group_adults=2&no_rooms=1&group_children=0";
 
+const PAGES = 20;
+
+function pageUrls(): string[] {
+	return Array.from(
+		{ length: PAGES },
+		(_, i) => `${SEARCH_URL}&offset=${i * 25}`,
+	);
+}
+
 export const bookingAdapter: PlaywrightAdapter = {
 	id: "booking",
 	name: "Booking - Małopolska short-term rentals",
 	kind: "playwright",
-	startUrls: [SEARCH_URL],
-	maxRequestsPerCrawl: 5,
+	startUrls: pageUrls(),
+	maxRequestsPerCrawl: PAGES,
 	listingSelector: '[data-testid="property-card"]',
 
 	async extractListings(page: Page): Promise<Listing[]> {
