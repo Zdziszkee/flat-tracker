@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
 
 // mapbox-gl touches `window` at module load, so it must never be imported
@@ -36,6 +36,7 @@ const DAY_OPTIONS: Array<{ value: DaysFilter; label: string }> = [
 function MapPage() {
 	const [source, setSource] = useState("all");
 	const [days, setDays] = useState<DaysFilter>(0);
+	const [offerType, setOfferType] = useState<"all" | "sale" | "rental">("all");
 	const [sources, setSources] = useState<string[]>([]);
 	const [mounted, setMounted] = useState(false);
 
@@ -66,6 +67,17 @@ function MapPage() {
 					))}
 				</select>
 				<select
+					value={offerType}
+					onChange={(e) =>
+						setOfferType(e.target.value as "all" | "sale" | "rental")
+					}
+					className="rounded border px-2 py-1 text-sm"
+				>
+					<option value="all">Wszystkie typy</option>
+					<option value="sale">Sprzedaż</option>
+					<option value="rental">Najem</option>
+				</select>
+				<select
 					value={days}
 					onChange={(e) => setDays(Number(e.target.value) as DaysFilter)}
 					className="rounded border px-2 py-1 text-sm"
@@ -76,6 +88,12 @@ function MapPage() {
 						</option>
 					))}
 				</select>
+				<Link to="/sales" className="text-sm text-blue-600 underline">
+					Analityka sprzedaży
+				</Link>
+				<Link to="/rentals" className="text-sm text-blue-600 underline">
+					Analityka najmu
+				</Link>
 			</header>
 
 			<div className="relative flex-1">
@@ -91,7 +109,7 @@ function MapPage() {
 							</div>
 						}
 					>
-						<MapView source={source} days={days} />
+						<MapView source={source} days={days} offerType={offerType} />
 					</Suspense>
 				)}
 			</div>

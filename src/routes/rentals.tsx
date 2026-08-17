@@ -94,6 +94,9 @@ function RentalsPage() {
 						<option value="booking">Booking</option>
 						<option value="olx-rent">OLX wynajem</option>
 					</select>
+					<Link to="/sales" className="text-blue-600 underline">
+						Sprzedaż
+					</Link>
 					<Link to="/map" className="text-blue-600 underline">
 						Mapa
 					</Link>

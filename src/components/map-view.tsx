@@ -30,6 +30,9 @@ export interface ApiListing {
 	buildingAddress: string | null;
 	mapLat: number | null;
 	mapLng: number | null;
+	offerType?: string;
+	pricePeriod?: string | null;
+	maxGuests?: number | null;
 	transactionStats: {
 		buildingId: number;
 		address: string | null;
@@ -291,9 +294,11 @@ function toGeoJson(listings: ApiListing[]): GeoJsonFeatureCollection {
 export default function MapView({
 	source,
 	days,
+	offerType,
 }: {
 	source: string;
 	days: 0 | 1 | 7 | 30;
+	offerType: "all" | "sale" | "rental";
 }) {
 	const { data, isLoading, error } = useQuery<ListingsResponse>({
 		queryKey: ["listings"],
@@ -303,7 +308,11 @@ export default function MapView({
 	const listings = (data?.listings ?? []).filter(
 		(l) =>
 			(source === "all" || l.source === source) &&
-			addedWithin(l.listedAt ?? l.firstSeenAt, days),
+			addedWithin(l.listedAt ?? l.firstSeenAt, days) &&
+			(offerType === "all" ||
+				(offerType === "rental"
+					? l.offerType !== "sale"
+					: l.offerType === "sale")),
 	);
 
 	if (!TOKEN) {
