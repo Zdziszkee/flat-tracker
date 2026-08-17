@@ -20,6 +20,20 @@ interface RentalStatRow {
 	lng: number | null;
 }
 
+interface RentalAnalyticsRow {
+	listingId: number;
+	title: string;
+	source: string;
+	district: string | null;
+	sampleDays: number;
+	bookedNights: number;
+	avgListed: number | null;
+	avgEffective: number | null;
+	revenue: number | null;
+	occupancy: number;
+	priceGap: number | null;
+}
+
 function fmt(n: number | null | undefined): string {
 	if (n == null) return "";
 	return new Intl.NumberFormat("pl-PL", { maximumFractionDigits: 0 }).format(n);
@@ -41,8 +55,15 @@ function RentalsPage() {
 		queryKey: ["rental-stats"],
 		queryFn: () => fetch("/api/rental-stats").then((r) => r.json()),
 	});
+	const { data: analytics } = useQuery<{ rows: RentalAnalyticsRow[] }>({
+		queryKey: ["rental-analytics"],
+		queryFn: () => fetch("/api/rental-analytics").then((r) => r.json()),
+	});
 
 	const rows = (data?.rows ?? []).filter(
+		(r) => source === "all" || r.source === source,
+	);
+	const summaryRows = (analytics?.rows ?? []).filter(
 		(r) => source === "all" || r.source === source,
 	);
 
@@ -65,6 +86,38 @@ function RentalsPage() {
 						Mapa
 					</Link>
 				</div>
+			</div>
+
+			<div className="mb-4 overflow-x-auto rounded border">
+				<h2 className="px-3 py-2 text-sm font-semibold text-gray-600">
+					Podsumowanie obłożenia i przychodu
+				</h2>
+				<table className="w-full text-sm">
+					<thead className="bg-gray-50 text-left">
+						<tr>
+							<th className="px-3 py-2">Tytuł</th>
+							<th className="px-3 py-2 text-right">Obłożenie</th>
+							<th className="px-3 py-2 text-right">Śr. noc</th>
+							<th className="px-3 py-2 text-right">Różnica ceny</th>
+							<th className="px-3 py-2 text-right">Szac. przychód</th>
+						</tr>
+					</thead>
+					<tbody>
+						{summaryRows.map((r) => (
+							<tr key={r.listingId} className="border-t hover:bg-gray-50">
+								<td className="max-w-96 truncate px-3 py-1.5">{r.title}</td>
+								<td className="px-3 py-1.5 text-right">{r.occupancy}%</td>
+								<td className="px-3 py-1.5 text-right">
+									{fmt(r.avgEffective)} zł
+								</td>
+								<td className="px-3 py-1.5 text-right">
+									{r.priceGap == null ? "" : `${fmt(r.priceGap)} zł`}
+								</td>
+								<td className="px-3 py-1.5 text-right">{fmt(r.revenue)} zł</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
 			</div>
 
 			<div className="overflow-x-auto rounded border">

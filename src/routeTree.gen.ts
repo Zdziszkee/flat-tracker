@@ -14,6 +14,7 @@ import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as MapRouteImport } from './routes/map'
 import { Route as RentalsRouteImport } from './routes/rentals'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
+import { Route as ApiRentalAnalyticsRouteImport } from './routes/api/rental-analytics'
 import { Route as ApiRentalStatsRouteImport } from './routes/api/rental-stats'
 import { Route as ApiSourcesRouteImport } from './routes/api/sources'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -45,6 +46,11 @@ const RentalsRoute = RentalsRouteImport.update({
 const ApiListingsRoute = ApiListingsRouteImport.update({
   id: '/api/listings',
   path: '/api/listings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiRentalAnalyticsRoute = ApiRentalAnalyticsRouteImport.update({
+  id: '/api/rental-analytics',
+  path: '/api/rental-analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiRentalStatsRoute = ApiRentalStatsRouteImport.update({
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/map': typeof MapRoute
   '/rentals': typeof RentalsRoute
   '/api/listings': typeof ApiListingsRoute
+  '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -103,6 +110,7 @@ export interface FileRoutesByTo {
   '/map': typeof MapRoute
   '/rentals': typeof RentalsRoute
   '/api/listings': typeof ApiListingsRoute
+  '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -118,6 +126,7 @@ export interface FileRoutesById {
   '/map': typeof MapRoute
   '/rentals': typeof RentalsRoute
   '/api/listings': typeof ApiListingsRoute
+  '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/map'
     | '/rentals'
     | '/api/listings'
+    | '/api/rental-analytics'
     | '/api/rental-stats'
     | '/api/sources'
     | '/api/auth/$'
@@ -148,6 +158,7 @@ export interface FileRouteTypes {
     | '/map'
     | '/rentals'
     | '/api/listings'
+    | '/api/rental-analytics'
     | '/api/rental-stats'
     | '/api/sources'
     | '/api/auth/$'
@@ -162,6 +173,7 @@ export interface FileRouteTypes {
     | '/map'
     | '/rentals'
     | '/api/listings'
+    | '/api/rental-analytics'
     | '/api/rental-stats'
     | '/api/sources'
     | '/api/auth/$'
@@ -177,6 +189,7 @@ export interface RootRouteChildren {
   MapRoute: typeof MapRoute
   RentalsRoute: typeof RentalsRoute
   ApiListingsRoute: typeof ApiListingsRoute
+  ApiRentalAnalyticsRoute: typeof ApiRentalAnalyticsRoute
   ApiRentalStatsRoute: typeof ApiRentalStatsRoute
   ApiSourcesRoute: typeof ApiSourcesRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -221,6 +234,13 @@ declare module '@tanstack/react-router' {
       path: '/api/listings'
       fullPath: '/api/listings'
       preLoaderRoute: typeof ApiListingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/rental-analytics': {
+      id: '/api/rental-analytics'
+      path: '/api/rental-analytics'
+      fullPath: '/api/rental-analytics'
+      preLoaderRoute: typeof ApiRentalAnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/rental-stats': {
@@ -281,6 +301,7 @@ const rootRouteChildren: RootRouteChildren = {
   MapRoute: MapRoute,
   RentalsRoute: RentalsRoute,
   ApiListingsRoute: ApiListingsRoute,
+  ApiRentalAnalyticsRoute: ApiRentalAnalyticsRoute,
   ApiRentalStatsRoute: ApiRentalStatsRoute,
   ApiSourcesRoute: ApiSourcesRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
@@ -292,12 +313,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}
