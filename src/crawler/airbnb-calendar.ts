@@ -213,6 +213,34 @@ export async function runAirbnbCalendarImport(): Promise<{
 				guestTotals.push({ adults, total });
 			}
 
+			// Capture how the first month's price changes with stay length.
+			const lengthTotals: Array<{
+				nights: number;
+				start: string;
+				end: string;
+				total: number | null;
+			}> = [];
+			for (const nights of [1, 3, 30]) {
+				const start = monthStarts[0].start;
+				const startDate = new Date(
+					Number(start.slice(0, 4)),
+					Number(start.slice(5, 7)) - 1,
+					1,
+				);
+				startDate.setDate(startDate.getDate() + nights);
+				const end = `${startDate.getFullYear()}-${String(
+					startDate.getMonth() + 1,
+				).padStart(2, "0")}-${String(startDate.getDate()).padStart(2, "0")}`;
+				const total = await scrapeStayTotal(
+					page,
+					row.externalId,
+					start,
+					end,
+					2,
+				);
+				lengthTotals.push({ nights, start, end, total });
+			}
+
 			const baseObservations = days.map((d) => {
 				const date = d.calendarDate ?? "";
 				const match = monthlyTotals.find(
@@ -258,11 +286,36 @@ export async function runAirbnbCalendarImport(): Promise<{
 					})),
 				);
 
+			const lengthObservations = days.flatMap((d) => {
+				const date = d.calendarDate ?? "";
+				return lengthTotals
+					.filter((lt) => date >= lt.start && date < lt.end)
+					.map((lt) => ({
+						listingId: row.id,
+						source: "airbnb",
+						date,
+						priceConfig: `${lt.nights}_nights_2_adults`,
+						listedPrice: nightly,
+						totalPrice: lt.total,
+						stayNights: lt.nights,
+						effectiveNightlyPrice:
+							lt.total != null ? lt.total / lt.nights : nightly,
+						taxes: null,
+						fees: null,
+						available: d.available === true,
+						minimumNights: d.minNights ?? null,
+					}));
+			});
+
 			await saveAvailabilityObservations([
 				...baseObservations,
 				...guestObservations,
+				...lengthObservations,
 			]);
-			observations += baseObservations.length + guestObservations.length;
+			observations +=
+				baseObservations.length +
+				guestObservations.length +
+				lengthObservations.length;
 
 			if ((i + 1) % 5 === 0 || i === rows.length - 1) {
 				console.log(

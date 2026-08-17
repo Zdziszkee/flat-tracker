@@ -14,7 +14,7 @@ import type { Listing, PlaywrightAdapter } from "../types.ts";
  */
 
 const SEARCH_URL =
-	"https://www.booking.com/searchresults.pl.html?ss=Krak%C3%B3w&checkin=2026-08-20&checkout=2026-08-27&group_adults=2&no_rooms=1&group_children=0";
+	"https://www.booking.com/searchresults.pl.html?ss=Krak%C3%B3w&dest_id=-510625&dest_type=city&checkin=2026-08-20&checkout=2026-08-27&group_adults=2&no_rooms=1&group_children=0&sb=1";
 
 const PAGES = 20;
 
