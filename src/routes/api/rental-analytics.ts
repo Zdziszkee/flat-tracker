@@ -32,8 +32,11 @@ export const Route = createFileRoute("/api/rental-analytics")({
 					})
 					.from(availability)
 					.innerJoin(listings, eq(availability.listingId, listings.id))
+					.where(sql`${availability.date} >= date('now')`)
 					.groupBy(availability.listingId)
-					.orderBy(sql`bookedNights desc`)
+					.orderBy(
+						sql`sum(case when ${availability.available} = 0 then 1 else 0 end) desc`,
+					)
 					.all();
 
 				return json({
