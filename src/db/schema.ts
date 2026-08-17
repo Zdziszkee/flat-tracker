@@ -111,6 +111,8 @@ export const listings = sqliteTable(
 		reviewsCount: integer("reviews_count", { mode: "number" }),
 		/** Availability count over the next year (Airbnb availability_365). */
 		availabilityCount: integer("availability_count", { mode: "number" }),
+		/** Maximum guest capacity for short-term rentals. */
+		maxGuests: integer("max_guests", { mode: "number" }),
 	},
 	(t) => [
 		uniqueIndex("listings_source_external_idx").on(t.source, t.externalId),

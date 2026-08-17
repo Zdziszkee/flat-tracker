@@ -15,6 +15,7 @@ import { Route as MapRouteImport } from './routes/map'
 import { Route as RentalsRouteImport } from './routes/rentals'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiRentalAnalyticsRouteImport } from './routes/api/rental-analytics'
+import { Route as ApiRentalGuestPricesRouteImport } from './routes/api/rental-guest-prices'
 import { Route as ApiRentalStatsRouteImport } from './routes/api/rental-stats'
 import { Route as ApiSourcesRouteImport } from './routes/api/sources'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -51,6 +52,11 @@ const ApiListingsRoute = ApiListingsRouteImport.update({
 const ApiRentalAnalyticsRoute = ApiRentalAnalyticsRouteImport.update({
   id: '/api/rental-analytics',
   path: '/api/rental-analytics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiRentalGuestPricesRoute = ApiRentalGuestPricesRouteImport.update({
+  id: '/api/rental-guest-prices',
+  path: '/api/rental-guest-prices',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiRentalStatsRoute = ApiRentalStatsRouteImport.update({
@@ -96,6 +102,7 @@ export interface FileRoutesByFullPath {
   '/rentals': typeof RentalsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
+  '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
   '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -111,6 +118,7 @@ export interface FileRoutesByTo {
   '/rentals': typeof RentalsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
+  '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
   '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -127,6 +135,7 @@ export interface FileRoutesById {
   '/rentals': typeof RentalsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
+  '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
   '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -144,6 +153,7 @@ export interface FileRouteTypes {
     | '/rentals'
     | '/api/listings'
     | '/api/rental-analytics'
+    | '/api/rental-guest-prices'
     | '/api/rental-stats'
     | '/api/sources'
     | '/api/auth/$'
@@ -159,6 +169,7 @@ export interface FileRouteTypes {
     | '/rentals'
     | '/api/listings'
     | '/api/rental-analytics'
+    | '/api/rental-guest-prices'
     | '/api/rental-stats'
     | '/api/sources'
     | '/api/auth/$'
@@ -174,6 +185,7 @@ export interface FileRouteTypes {
     | '/rentals'
     | '/api/listings'
     | '/api/rental-analytics'
+    | '/api/rental-guest-prices'
     | '/api/rental-stats'
     | '/api/sources'
     | '/api/auth/$'
@@ -190,6 +202,7 @@ export interface RootRouteChildren {
   RentalsRoute: typeof RentalsRoute
   ApiListingsRoute: typeof ApiListingsRoute
   ApiRentalAnalyticsRoute: typeof ApiRentalAnalyticsRoute
+  ApiRentalGuestPricesRoute: typeof ApiRentalGuestPricesRoute
   ApiRentalStatsRoute: typeof ApiRentalStatsRoute
   ApiSourcesRoute: typeof ApiSourcesRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -241,6 +254,13 @@ declare module '@tanstack/react-router' {
       path: '/api/rental-analytics'
       fullPath: '/api/rental-analytics'
       preLoaderRoute: typeof ApiRentalAnalyticsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/rental-guest-prices': {
+      id: '/api/rental-guest-prices'
+      path: '/api/rental-guest-prices'
+      fullPath: '/api/rental-guest-prices'
+      preLoaderRoute: typeof ApiRentalGuestPricesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/rental-stats': {
@@ -302,6 +322,7 @@ const rootRouteChildren: RootRouteChildren = {
   RentalsRoute: RentalsRoute,
   ApiListingsRoute: ApiListingsRoute,
   ApiRentalAnalyticsRoute: ApiRentalAnalyticsRoute,
+  ApiRentalGuestPricesRoute: ApiRentalGuestPricesRoute,
   ApiRentalStatsRoute: ApiRentalStatsRoute,
   ApiSourcesRoute: ApiSourcesRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,

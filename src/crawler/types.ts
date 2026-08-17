@@ -57,6 +57,8 @@ export interface Listing {
 	reviewsCount?: number | null;
 	/** Availability count over the next year (Airbnb availability_365). */
 	availabilityCount?: number | null;
+	/** Maximum guest capacity for short-term rentals. */
+	maxGuests?: number | null;
 }
 
 /** Common configuration shared by every adapter. */

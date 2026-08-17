@@ -159,6 +159,7 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 			rating: l.rating ?? null,
 			reviewsCount: l.reviewsCount ?? null,
 			availabilityCount: l.availabilityCount ?? null,
+			maxGuests: l.maxGuests ?? null,
 		};
 	});
 
@@ -211,6 +212,7 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					rating: sql.raw(`excluded.rating`),
 					reviewsCount: sql.raw(`excluded.reviews_count`),
 					availabilityCount: sql.raw(`excluded.availability_count`),
+					maxGuests: sql.raw(`excluded.max_guests`),
 				},
 			})
 			.returning({

@@ -34,6 +34,14 @@ interface RentalAnalyticsRow {
 	priceGap: number | null;
 }
 
+interface GuestPriceRow {
+	listingId: number;
+	title: string;
+	source: string;
+	maxGuests: number | null;
+	guests: Record<number, { avgEffective: number | null }>;
+}
+
 function fmt(n: number | null | undefined): string {
 	if (n == null) return "";
 	return new Intl.NumberFormat("pl-PL", { maximumFractionDigits: 0 }).format(n);
@@ -58,6 +66,10 @@ function RentalsPage() {
 	const { data: analytics } = useQuery<{ rows: RentalAnalyticsRow[] }>({
 		queryKey: ["rental-analytics"],
 		queryFn: () => fetch("/api/rental-analytics").then((r) => r.json()),
+	});
+	const { data: guestPrices } = useQuery<{ rows: GuestPriceRow[] }>({
+		queryKey: ["rental-guest-prices"],
+		queryFn: () => fetch("/api/rental-guest-prices").then((r) => r.json()),
 	});
 
 	const rows = (data?.rows ?? []).filter(
@@ -114,6 +126,37 @@ function RentalsPage() {
 									{r.priceGap == null ? "" : `${fmt(r.priceGap)} zł`}
 								</td>
 								<td className="px-3 py-1.5 text-right">{fmt(r.revenue)} zł</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+			</div>
+
+			<div className="mb-4 overflow-x-auto rounded border">
+				<h2 className="px-3 py-2 text-sm font-semibold text-gray-600">
+					Cena wg liczby osób (śr./noc)
+				</h2>
+				<table className="w-full text-sm">
+					<thead className="bg-gray-50 text-left">
+						<tr>
+							<th className="px-3 py-2">Tytuł</th>
+							<th className="px-3 py-2 text-right">Max gości</th>
+							<th className="px-3 py-2 text-right">1 os.</th>
+							<th className="px-3 py-2 text-right">2 os.</th>
+							<th className="px-3 py-2 text-right">3 os.</th>
+							<th className="px-3 py-2 text-right">4 os.</th>
+						</tr>
+					</thead>
+					<tbody>
+						{(guestPrices?.rows ?? []).map((r) => (
+							<tr key={r.listingId} className="border-t hover:bg-gray-50">
+								<td className="max-w-96 truncate px-3 py-1.5">{r.title}</td>
+								<td className="px-3 py-1.5 text-right">{r.maxGuests ?? ""}</td>
+								{[1, 2, 3, 4].map((n) => (
+									<td key={n} className="px-3 py-1.5 text-right">
+										{fmt(r.guests[n]?.avgEffective)}
+									</td>
+								))}
 							</tr>
 						))}
 					</tbody>

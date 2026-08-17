@@ -1,0 +1,1 @@
+ALTER TABLE `listings` ADD `max_guests` integer;
