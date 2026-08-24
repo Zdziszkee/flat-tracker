@@ -1,6 +1,13 @@
 import { and, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { db } from "#/db/index";
-import { crawlRuns, listingHistory, listings } from "#/db/schema";
+import {
+	availability,
+	availabilityHistory,
+	crawlRuns,
+	listingHistory,
+	listingMonthlyPrice,
+	listings,
+} from "#/db/schema";
 
 import type { Listing } from "./types.ts";
 
@@ -287,15 +294,38 @@ export async function pruneOldListings(
 	since: Date,
 	sources: string[] = ["otodom", "olx"],
 ): Promise<number> {
-	const result = await db
-		.delete(listings)
+	const stale = await db
+		.select({ id: listings.id })
+		.from(listings)
 		.where(
 			and(
 				inArray(listings.source, sources),
 				isNotNull(listings.listedAt),
 				lt(listings.listedAt, since),
 			),
-		)
-		.returning({ id: listings.id });
-	return result.length;
+		);
+	const ids = stale.map((r) => r.id);
+	if (ids.length === 0) return 0;
+
+	// listing_history / availability* reference listings.id via FOREIGN KEY
+	// (SQLite enforces them under better-sqlite3), so clear the dependent rows
+	// first, or the delete trips SQLITE_CONSTRAINT_FOREIGNKEY. Chunk to stay
+	// under SQLite's bound-variable cap (~999) on big first-run prunes.
+	const BATCH = 400;
+	for (let i = 0; i < ids.length; i += BATCH) {
+		const chunk = ids.slice(i, i + BATCH);
+		await db
+			.delete(listingHistory)
+			.where(inArray(listingHistory.listingId, chunk));
+		await db.delete(availability).where(inArray(availability.listingId, chunk));
+		await db
+			.delete(availabilityHistory)
+			.where(inArray(availabilityHistory.listingId, chunk));
+		await db
+			.delete(listingMonthlyPrice)
+			.where(inArray(listingMonthlyPrice.listingId, chunk));
+		await db.delete(listings).where(inArray(listings.id, chunk));
+	}
+
+	return ids.length;
 }
