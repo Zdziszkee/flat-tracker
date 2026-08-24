@@ -15,10 +15,10 @@ import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as MapRouteImport } from './routes/map'
 import { Route as SourcesRouteImport } from './routes/sources'
 import { Route as ApiCrawlStatusRouteImport } from './routes/api/crawl-status'
-import { Route as ApiDistrictMapRouteImport } from './routes/api/district-map'
 import { Route as ApiInvestmentAnalyticsRouteImport } from './routes/api/investment-analytics'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiMarketInsightsRouteImport } from './routes/api/market-insights'
+import { Route as ApiPowiatMapRouteImport } from './routes/api/powiat-map'
 import { Route as ApiRefreshRouteImport } from './routes/api/refresh'
 import { Route as ApiRentalAnalyticsRouteImport } from './routes/api/rental-analytics'
 import { Route as ApiRentalGuestPricesRouteImport } from './routes/api/rental-guest-prices'
@@ -62,11 +62,6 @@ const ApiCrawlStatusRoute = ApiCrawlStatusRouteImport.update({
   path: '/api/crawl-status',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiDistrictMapRoute = ApiDistrictMapRouteImport.update({
-  id: '/api/district-map',
-  path: '/api/district-map',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiInvestmentAnalyticsRoute = ApiInvestmentAnalyticsRouteImport.update({
   id: '/api/investment-analytics',
   path: '/api/investment-analytics',
@@ -80,6 +75,11 @@ const ApiListingsRoute = ApiListingsRouteImport.update({
 const ApiMarketInsightsRoute = ApiMarketInsightsRouteImport.update({
   id: '/api/market-insights',
   path: '/api/market-insights',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPowiatMapRoute = ApiPowiatMapRouteImport.update({
+  id: '/api/powiat-map',
+  path: '/api/powiat-map',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiRefreshRoute = ApiRefreshRouteImport.update({
@@ -150,10 +150,10 @@ export interface FileRoutesByFullPath {
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
-  '/api/district-map': typeof ApiDistrictMapRoute
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
+  '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -174,10 +174,10 @@ export interface FileRoutesByTo {
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
-  '/api/district-map': typeof ApiDistrictMapRoute
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
+  '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -199,10 +199,10 @@ export interface FileRoutesById {
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
-  '/api/district-map': typeof ApiDistrictMapRoute
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
+  '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -225,10 +225,10 @@ export interface FileRouteTypes {
     | '/map'
     | '/sources'
     | '/api/crawl-status'
-    | '/api/district-map'
     | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-insights'
+    | '/api/powiat-map'
     | '/api/refresh'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -249,10 +249,10 @@ export interface FileRouteTypes {
     | '/map'
     | '/sources'
     | '/api/crawl-status'
-    | '/api/district-map'
     | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-insights'
+    | '/api/powiat-map'
     | '/api/refresh'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -273,10 +273,10 @@ export interface FileRouteTypes {
     | '/map'
     | '/sources'
     | '/api/crawl-status'
-    | '/api/district-map'
     | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-insights'
+    | '/api/powiat-map'
     | '/api/refresh'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -298,10 +298,10 @@ export interface RootRouteChildren {
   MapRoute: typeof MapRoute
   SourcesRoute: typeof SourcesRoute
   ApiCrawlStatusRoute: typeof ApiCrawlStatusRoute
-  ApiDistrictMapRoute: typeof ApiDistrictMapRoute
   ApiInvestmentAnalyticsRoute: typeof ApiInvestmentAnalyticsRoute
   ApiListingsRoute: typeof ApiListingsRoute
   ApiMarketInsightsRoute: typeof ApiMarketInsightsRoute
+  ApiPowiatMapRoute: typeof ApiPowiatMapRoute
   ApiRefreshRoute: typeof ApiRefreshRoute
   ApiRentalAnalyticsRoute: typeof ApiRentalAnalyticsRoute
   ApiRentalGuestPricesRoute: typeof ApiRentalGuestPricesRoute
@@ -360,13 +360,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCrawlStatusRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/district-map': {
-      id: '/api/district-map'
-      path: '/api/district-map'
-      fullPath: '/api/district-map'
-      preLoaderRoute: typeof ApiDistrictMapRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/investment-analytics': {
       id: '/api/investment-analytics'
       path: '/api/investment-analytics'
@@ -386,6 +379,13 @@ declare module '@tanstack/react-router' {
       path: '/api/market-insights'
       fullPath: '/api/market-insights'
       preLoaderRoute: typeof ApiMarketInsightsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/powiat-map': {
+      id: '/api/powiat-map'
+      path: '/api/powiat-map'
+      fullPath: '/api/powiat-map'
+      preLoaderRoute: typeof ApiPowiatMapRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/refresh': {
@@ -482,10 +482,10 @@ const rootRouteChildren: RootRouteChildren = {
   MapRoute: MapRoute,
   SourcesRoute: SourcesRoute,
   ApiCrawlStatusRoute: ApiCrawlStatusRoute,
-  ApiDistrictMapRoute: ApiDistrictMapRoute,
   ApiInvestmentAnalyticsRoute: ApiInvestmentAnalyticsRoute,
   ApiListingsRoute: ApiListingsRoute,
   ApiMarketInsightsRoute: ApiMarketInsightsRoute,
+  ApiPowiatMapRoute: ApiPowiatMapRoute,
   ApiRefreshRoute: ApiRefreshRoute,
   ApiRentalAnalyticsRoute: ApiRentalAnalyticsRoute,
   ApiRentalGuestPricesRoute: ApiRentalGuestPricesRoute,

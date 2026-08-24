@@ -8,7 +8,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { geoMercator } from "d3-geo";
 import { useMemo, useState } from "react";
 
-import { krakowDistricts } from "#/data/krakow-districts";
+import { malopolskaPowiats } from "#/data/malopolska-powiats";
 
 interface InvestmentAnalytics {
 	salesByDistrict: Array<{
@@ -134,8 +134,8 @@ function AnalyticsPage() {
 		queryFn: () => fetch("/api/market-insights").then((r) => r.json()),
 	});
 	const { data: districtMap } = useQuery<{ features: DistrictMetric[] }>({
-		queryKey: ["district-map"],
-		queryFn: () => fetch("/api/district-map").then((r) => r.json()),
+		queryKey: ["powiat-map"],
+		queryFn: () => fetch("/api/powiat-map").then((r) => r.json()),
 	});
 	const [metric, setMetric] = useState<DistrictMetricKey>("saleAvgM2");
 
@@ -143,7 +143,7 @@ function AnalyticsPage() {
 		const byName = new Map(
 			(districtMap?.features ?? []).map((f) => [f.name, f]),
 		);
-		const features = krakowDistricts.map((f) => {
+		const features = malopolskaPowiats.map((f) => {
 			const m = byName.get(f.properties.name);
 			return {
 				type: "Feature" as const,
@@ -388,7 +388,7 @@ function AnalyticsPage() {
 				<div className="rounded border p-2 lg:col-span-2">
 					<div className="flex flex-wrap items-center justify-between gap-2 px-2 py-1">
 						<h2 className="text-sm font-semibold text-gray-600">
-							Kraków — dzielnice (heatmapa)
+							Małopolska — powiaty (heatmapa)
 						</h2>
 						<div className="flex flex-wrap gap-1">
 							{DISTRICT_METRICS.map((m) => (
@@ -411,7 +411,7 @@ function AnalyticsPage() {
 						<Chart
 							definition={choropleth.definition}
 							height={380}
-							ariaLabel="Mapa dzielnic Krakowa"
+							ariaLabel="Mapa powiatów Małopolski"
 						/>
 					</div>
 					<div className="flex items-center gap-2 px-2 pt-1 text-xs text-gray-500">
@@ -434,8 +434,7 @@ function AnalyticsPage() {
 				</div>
 				<div className="overflow-x-auto rounded border">
 					<h2 className="px-3 py-2 text-sm font-semibold text-gray-600">
-						Dzielnice wg:{" "}
-						{DISTRICT_METRICS.find((m) => m.key === metric)?.label}
+						Powiaty wg: {DISTRICT_METRICS.find((m) => m.key === metric)?.label}
 					</h2>
 					<table className="w-full text-sm">
 						<thead className="bg-gray-50 text-left">
