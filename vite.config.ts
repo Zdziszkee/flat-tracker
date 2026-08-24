@@ -24,7 +24,22 @@ const config = defineConfig({
 		nitro({
 			// @aws-sdk/* is an optional dep of `unzipper` (S3 zip sources);
 			// we only extract local files, so never bundle it.
-			rollupConfig: { external: [/^@sentry\//, /^@aws-sdk\//] },
+			rollupConfig: {
+				external: [
+					/^@sentry\//,
+					/^@aws-sdk\//,
+					// Crawlee & browser drivers reference `__dirname` and CJS
+					// shims that break when inlined into a single ESM server
+					// bundle. Keep them external so they load from node_modules
+					// at runtime (the prod refresh task hits this too).
+					/^@crawlee\//,
+					/^playwright/,
+					/^puppeteer/,
+					/^linkedom$/,
+					/^jsdom$/,
+					/^got-scraping/,
+				],
+			},
 			experimental: { tasks: true },
 			// Register the refresh task and startup plugin explicitly (no
 			// directory scanning; TanStack Start manages its own routes).

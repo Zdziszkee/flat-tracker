@@ -143,7 +143,7 @@ export async function refreshAll(
 
 	// Scrape all sites in parallel; portal failures stay isolated per site.
 	try {
-		const tasks = siteAdapters.map(async (base): Promise<SiteRefresh> => {
+		const tasks = siteAdapters.map((base) => async (): Promise<SiteRefresh> => {
 			const last = state[base.id] ? Date.parse(state[base.id]) : NaN;
 			const dbLatest = latestBySource.get(base.id) ?? 0;
 			const sinceMs = opts.diffOnly
@@ -232,7 +232,7 @@ export async function refreshAll(
 			while (nextTask < tasks.length) {
 				const i = nextTask++;
 				try {
-					sites[i] = await tasks[i];
+					sites[i] = await tasks[i]();
 				} catch (err) {
 					sites[i] = {
 						site: siteAdapters[i]?.id ?? "unknown",
@@ -272,6 +272,10 @@ export async function refreshAll(
 		// politely.
 		setPhase("geocode");
 		const geoT0 = Date.now();
+		setSourceProgress("geocoding", {
+			state: "running",
+			startedAt: new Date(geoT0).toISOString(),
+		});
 		const geo = await geocodeUnlocatedListings({ nominatimLimit: 100 });
 		const geocoded = geo.localHits + geo.nomHits;
 		await recordCrawlRun({
@@ -291,6 +295,12 @@ export async function refreshAll(
 
 		setPhase("rcn");
 		const rcnT0 = Date.now();
+		if (opts.includeRcn !== false) {
+			setSourceProgress("rcn-import", {
+				state: "running",
+				startedAt: new Date(rcnT0).toISOString(),
+			});
+		}
 		const rcnNew = opts.includeRcn === false ? 0 : await importRcn();
 		if (opts.includeRcn !== false) {
 			await recordCrawlRun({

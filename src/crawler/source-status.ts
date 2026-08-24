@@ -1,8 +1,11 @@
-import { adapters } from "./sites/index.ts";
-
 /**
  * Canonical list of everything the data pipeline can report on, used by the
  * /sources status page and the /api/crawl-status endpoint.
+ *
+ * Deliberately a STATIC literal: these descriptors are read by SSR routes
+ * (/api/crawl-status), so they must not import `sites/index.ts`. That module
+ * pulls in the full adapter graph (crawlee/playwright), which crashes the
+ * production server bundle (`__dirname` in ESM scope) when eagerly loaded.
  *
  * Two groups:
  * - portal adapters (otodom, olx, airbnb, ...) — crawled by `refreshAll`
@@ -19,8 +22,57 @@ export interface SourceDescriptor {
 	kind: SourceKind;
 }
 
-/** Demo fixtures excluded from the live pipeline (see refresh.ts). */
-const DEMO_SOURCES = new Set(["quotes", "books"]);
+const PORTAL_SOURCES: SourceDescriptor[] = [
+	{ id: "otodom", name: "Otodom - Krakow flats for sale", kind: "portal" },
+	{ id: "olx", name: "OLX - Małopolska real estate (sale)", kind: "portal" },
+	{
+		id: "olx-rent",
+		name: "OLX - Małopolska long-term rentals",
+		kind: "portal",
+	},
+	{
+		id: "airbnb",
+		name: "Airbnb - Małopolska short-term rentals",
+		kind: "portal",
+	},
+	{
+		id: "booking",
+		name: "Booking - Małopolska short-term rentals",
+		kind: "portal",
+	},
+	{ id: "morizon", name: "Morizon - Krakow flats for sale", kind: "portal" },
+	{ id: "gratka", name: "Gratka - Krakow flats for sale", kind: "portal" },
+	{
+		id: "domiporta",
+		name: "Domiporta - Krakow flats for sale",
+		kind: "portal",
+	},
+	{
+		id: "nieruchomosci-online",
+		name: "Nieruchomosci-online - Krakow flats for sale",
+		kind: "portal",
+	},
+	{
+		id: "rynekpierwotny",
+		name: "Rynekpierwotny - Krakow new developments",
+		kind: "portal",
+	},
+	{
+		id: "licytacje-komornik",
+		name: "Licytacje komornicze · Małopolska (nieruchomości)",
+		kind: "portal",
+	},
+	{
+		id: "investmap",
+		name: "Investmap - Krakow investments with flats",
+		kind: "portal",
+	},
+	{
+		id: "skaleczna",
+		name: "Skałeczna (Koneser Group) - Kazimierz",
+		kind: "portal",
+	},
+];
 
 const PIPELINE_SOURCES: SourceDescriptor[] = [
 	{
@@ -41,9 +93,7 @@ const PIPELINE_SOURCES: SourceDescriptor[] = [
 ];
 
 export const sourceDescriptors: SourceDescriptor[] = [
-	...adapters
-		.filter((a) => !DEMO_SOURCES.has(a.id))
-		.map((a) => ({ id: a.id, name: a.name, kind: "portal" as const })),
+	...PORTAL_SOURCES,
 	...PIPELINE_SOURCES,
 ];
 

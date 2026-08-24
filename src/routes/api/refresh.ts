@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-
 import { getProgress, isRunning } from "#/crawler/progress";
-import { refreshAll } from "#/crawler/refresh";
 
 /**
  * Kick off a full data refresh from the UI. Runs in the background; the
@@ -19,6 +17,10 @@ export const Route = createFileRoute("/api/refresh")({
 						runId: getProgress()?.runId ?? null,
 					});
 				}
+				// Lazy-import so the crawler graph (crawlee/playwright) is not
+				// bundled into the SSR route chunk: it references `__dirname`,
+				// which crashes the production ESM bundle when eagerly loaded.
+				const { refreshAll } = await import("#/crawler/refresh");
 				void refreshAll()
 					.then((summary) => {
 						const ok = summary.sites.filter((s) => s.ok).length;
