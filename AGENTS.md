@@ -38,7 +38,7 @@ hourly task. The old `crawl:*` / `import-rcn` CLI scripts were removed.
 
 `geocode-addresses` fills the coordinate gap for portals that hide
 lat/lng (morizon, gratka, domiporta, nieruchomosci-online,
-licytacje-komornik, skaleczna): the adapters parse a street address
+licytacje-komornik): the adapters parse a street address
 into `listings.address`, this script matches it against the local
 `osm_buildings` index (exact street+housenumber → building centroid,
 street-only → street centroid) and falls back to Nominatim (1 req/s,
@@ -135,14 +135,14 @@ assigns all 84k transactions in minutes, not hours.
 
 | Source | What | Access |
 |---|---|---|
-| otodom.pl | Active sale listings, Krakow | HTML `__NEXT_DATA__` JSON; list pages have no coords, detail pages (`/pl/oferta/`) add lat/lng |
-| olx.pl | Active sale listings, Krakow | HTML `window.__PRERENDERED_STATE__` JSON incl. coordinates |
+| otodom.pl | Active sale listings, Małopolska | HTML `__NEXT_DATA__` JSON; list pages have no coords, detail pages (`/pl/oferta/`) add lat/lng |
+| otodom.pl (wynajem) | Long-term rental listings, Małopolska | Same `__NEXT_DATA__` path with `/wynajem/mieszkanie/malopolskie`; detail price read from `rentPrice` |
+| olx.pl | Active sale listings, Małopolska | HTML `window.__PRERENDERED_STATE__` JSON incl. coordinates |
 | morizon.pl / gratka.pl | Same feed (one company), agency-heavy | schema.org LD+JSON (`Offer` nodes); pagination `?page=N` |
 | domiporta.pl | Agency listings | LD+JSON `@graph` `ItemList` of `RealEstateListing`; pagination `?PageNumber=N` |
 | nieruchomosci-online.pl | Agency listings | LD+JSON `CollectionPage` offers; pagination `&p=N` |
 | rynekpierwotny.pl | New-development projects (osiedla) | `window.__INITIAL_STATE__` `offerList.list.offers` with geo points + price ranges; pagination `?page=N` (all pages) |
 | investmap.pl | **Every registered Krakow investment with its flats** (incl. small private ones) | Public JSON API `GET /api/investment/search?withEstates=1&categorySlug=mieszkania&citySlug=krakow&offset=N` — flats inline (`es[].list`): area, price, price_m2, floor, rooms; coordinates from the investment |
-| skaleczna.pl | Koneser Group private investment (Skałeczna 1/3/5/7, Kazimierz) | WordPress table `#offer-table` — unit rows with area, promo/regular price, status; only `Wolne` kept |
 | licytacje.komornik.pl | Court auction notices (Małopolska real estate, all subcategories) | Playwright only (WAF blocks non-browser TLS); anonymous JSON API `POST /services/item-back/rest/item/search` (same-origin, `termFilters` + `fullTextFilters` city, `offset` pagination); every REAL_ESTATE subcategory kept |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |

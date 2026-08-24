@@ -9,10 +9,10 @@ import { num, str } from "./ldoffer.ts";
  */
 export const nieruchomosciOnlineAdapter: CheerioAdapter = {
 	id: "nieruchomosci-online",
-	name: "Nieruchomosci-online - Krakow flats for sale",
+	name: "Nieruchomosci-online - Małopolska flats for sale",
 	kind: "cheerio",
 	startUrls: [
-		"https://www.nieruchomosci-online.pl/szukaj.html?3,mieszkanie,sprzedaz,,krakow,,,",
+		"https://www.nieruchomosci-online.pl/szukaj.html?3,mieszkanie,sprzedaz,malopolskie,,,",
 	],
 	maxRequestsPerCrawl: 30,
 

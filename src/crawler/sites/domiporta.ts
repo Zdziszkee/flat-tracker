@@ -9,11 +9,9 @@ import { num, str } from "./ldoffer.ts";
  */
 export const domiportaAdapter: CheerioAdapter = {
 	id: "domiporta",
-	name: "Domiporta - Krakow flats for sale",
+	name: "Domiporta - Małopolska flats for sale",
 	kind: "cheerio",
-	startUrls: [
-		"https://www.domiporta.pl/mieszkanie/sprzedam/malopolskie/krakow",
-	],
+	startUrls: ["https://www.domiporta.pl/mieszkanie/sprzedam/malopolskie"],
 	maxRequestsPerCrawl: 40,
 
 	async extractHtml(html, url, enqueue) {

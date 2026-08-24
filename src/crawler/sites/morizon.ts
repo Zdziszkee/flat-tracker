@@ -55,8 +55,8 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 
 export const morizonAdapter = makeLdOfferAdapter({
 	id: "morizon",
-	name: "Morizon - Krakow flats for sale",
-	startUrl: "https://www.morizon.pl/mieszkania/krakow/",
+	name: "Morizon - Małopolska flats for sale",
+	startUrl: "https://www.morizon.pl/mieszkania/malopolskie/",
 	pageParam: "page",
 	maxRequestsPerCrawl: 30,
 	offerToListing,

@@ -49,6 +49,7 @@ const SOURCE_LABELS: Record<string, string> = {
 	rynekpierwotny: "Rynekpierwotny",
 	"licytacje-komornik": "Licytacje komornicze",
 	"olx-rent": "OLX wynajem",
+	"otodom-rent": "Otodom wynajem",
 	airbnb: "Airbnb",
 	booking: "Booking",
 };

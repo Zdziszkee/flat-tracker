@@ -10,11 +10,13 @@ import { num, str } from "./ldoffer.ts";
  */
 export const rynekpierwotnyAdapter: CheerioAdapter = {
 	id: "rynekpierwotny",
-	name: "Rynekpierwotny - Krakow new developments",
+	name: "Rynekpierwotny - Małopolska new developments",
 	kind: "cheerio",
 	// sort=2 orders the list newest-first, so a bounded crawl always
 	// starts with the freshest investments.
-	startUrls: ["https://rynekpierwotny.pl/s/nowe-mieszkania-krakow/?sort=2"],
+	startUrls: [
+		"https://rynekpierwotny.pl/s/nowe-mieszkania-malopolskie/?sort=2",
+	],
 	maxRequestsPerCrawl: 20,
 
 	async extractHtml(html, _url, enqueue) {

@@ -193,7 +193,7 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					floorCount: sql`coalesce(excluded.floor_count, ${listings.floorCount})`,
 					condition: sql`coalesce(excluded.condition, ${listings.condition})`,
 					ownership: sql`coalesce(excluded.ownership, ${listings.ownership})`,
-					// Address-only sources (morizon, domiporta, skaleczna,
+					// Address-only sources (morizon, domiporta,
 					// komornik...) carry no coordinates: keep the geocoded
 					// position instead of wiping it with NULL on re-crawl.
 					lat: sql`coalesce(excluded.lat, ${listings.lat})`,

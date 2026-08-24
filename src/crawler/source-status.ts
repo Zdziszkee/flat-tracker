@@ -23,7 +23,12 @@ export interface SourceDescriptor {
 }
 
 const PORTAL_SOURCES: SourceDescriptor[] = [
-	{ id: "otodom", name: "Otodom - Krakow flats for sale", kind: "portal" },
+	{ id: "otodom", name: "Otodom - Małopolska flats for sale", kind: "portal" },
+	{
+		id: "otodom-rent",
+		name: "Otodom - Małopolska long-term rentals",
+		kind: "portal",
+	},
 	{ id: "olx", name: "OLX - Małopolska real estate (sale)", kind: "portal" },
 	{
 		id: "olx-rent",
@@ -40,21 +45,25 @@ const PORTAL_SOURCES: SourceDescriptor[] = [
 		name: "Booking - Małopolska short-term rentals",
 		kind: "portal",
 	},
-	{ id: "morizon", name: "Morizon - Krakow flats for sale", kind: "portal" },
-	{ id: "gratka", name: "Gratka - Krakow flats for sale", kind: "portal" },
+	{
+		id: "morizon",
+		name: "Morizon - Małopolska flats for sale",
+		kind: "portal",
+	},
+	{ id: "gratka", name: "Gratka - Małopolska flats for sale", kind: "portal" },
 	{
 		id: "domiporta",
-		name: "Domiporta - Krakow flats for sale",
+		name: "Domiporta - Małopolska flats for sale",
 		kind: "portal",
 	},
 	{
 		id: "nieruchomosci-online",
-		name: "Nieruchomosci-online - Krakow flats for sale",
+		name: "Nieruchomosci-online - Małopolska flats for sale",
 		kind: "portal",
 	},
 	{
 		id: "rynekpierwotny",
-		name: "Rynekpierwotny - Krakow new developments",
+		name: "Rynekpierwotny - Małopolska new developments",
 		kind: "portal",
 	},
 	{
@@ -65,11 +74,6 @@ const PORTAL_SOURCES: SourceDescriptor[] = [
 	{
 		id: "investmap",
 		name: "Investmap - Krakow investments with flats",
-		kind: "portal",
-	},
-	{
-		id: "skaleczna",
-		name: "Skałeczna (Koneser Group) - Kazimierz",
 		kind: "portal",
 	},
 ];

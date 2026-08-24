@@ -55,8 +55,8 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 
 export const gratkaAdapter = makeLdOfferAdapter({
 	id: "gratka",
-	name: "Gratka - Krakow flats for sale",
-	startUrl: "https://gratka.pl/nieruchomosci/mieszkania/krakow",
+	name: "Gratka - Małopolska flats for sale",
+	startUrl: "https://gratka.pl/nieruchomosci/mieszkania/malopolskie",
 	pageParam: "page",
 	maxRequestsPerCrawl: 30,
 	offerToListing,
