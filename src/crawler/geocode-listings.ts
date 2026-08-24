@@ -111,6 +111,81 @@ async function photonGeocode(
 	}
 }
 
+/** OSM place values that identify a locality (as opposed to a house/POI). */
+const PLACE_VALUES = new Set([
+	"village",
+	"town",
+	"city",
+	"hamlet",
+	"suburb",
+	"neighbourhood",
+	"locality",
+	"isolated_dwelling",
+]);
+
+/**
+ * Locality-only Photon geocode: resolve a bare village/town name with no
+ * street (komornik plots/houses, e.g. "Pstroszyce II") to its place centroid.
+ * The offline city index only knows cities tagged on OSM buildings, so small
+ * villages must fall back to Photon's place nodes. Restricts to place-typed
+ * features (a church/house with a similar name must not win) and requires the
+ * result to contain every significant query word.
+ */
+async function geocodeLocality(
+	name: string,
+): Promise<{ lat: number; lng: number } | null> {
+	const url = `${PHOTON}?q=${encodeURIComponent(`${name}, małopolskie`)}&limit=5`;
+	try {
+		const res = await fetch(url, {
+			headers: { accept: "application/json" },
+			signal: AbortSignal.timeout(15_000),
+		});
+		if (!res.ok) return null;
+		const j = (await res.json()) as {
+			features?: Array<{
+				geometry?: { coordinates?: number[] };
+				properties?: Record<string, string>;
+			}>;
+		};
+		const wanted = normalizeWord(name)
+			.split(" ")
+			.filter((w) => w.length >= 4);
+		for (const feature of j.features ?? []) {
+			const props = feature.properties ?? {};
+			const isPlace =
+				props.osm_key === "place" ||
+				(props.osm_value != null && PLACE_VALUES.has(props.osm_value));
+			if (!isPlace) continue;
+			const coords = feature.geometry?.coordinates;
+			const lat = coords?.[1];
+			const lng = coords?.[0];
+			if (
+				typeof lat !== "number" ||
+				typeof lng !== "number" ||
+				!Number.isFinite(lat) ||
+				!Number.isFinite(lng)
+			)
+				continue;
+			if (
+				lat < MALOPOLSKA_BOUNDS.minLat ||
+				lat > MALOPOLSKA_BOUNDS.maxLat ||
+				lng < MALOPOLSKA_BOUNDS.minLng ||
+				lng > MALOPOLSKA_BOUNDS.maxLng
+			)
+				continue;
+			const shown = normalizeWord(
+				[props.name, props.city].filter(Boolean).join(" "),
+			);
+			if (wanted.length > 0 && !wanted.every((w) => shown.includes(w)))
+				continue;
+			return { lat, lng };
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
 /** Resolve an osmId to a row in the `buildings` table (insert if missing). */
 async function ensureBuildingByOsmId(
 	osmId: number,
@@ -224,19 +299,23 @@ export async function geocodeUnlocatedListings(
 		let extractedAddress: string | null = null;
 		// The last non-postal-code segment of the address is usually the city;
 		// it disambiguates streets that exist in several towns ("Śląska" in
-		// Kraków and Zabierzów).
-		const cityHint =
+		// Kraków and Zabierzów). When the address carries no city, fall back to
+		// the portal's district/locality (morizon/gratka feed only "Krowodrza",
+		// komornik only "Pstroszyce II"), so locality-only listings still land.
+		const addressCity =
 			row.address
 				?.split(",")
 				.map((s) => s.trim())
 				.filter((s) => s && !/^\d{2}-\d{3}$/.test(s))
 				.pop() ?? null;
+		const cityHint =
+			addressCity ?? (row.district?.trim() ? row.district.trim() : null);
 
 		// Mine free text when the stored address has no usable street: either
-		// no address at all, or only a postal code ("33-100, Tarnów"). The
-		// title/description of court notices often carries the real street.
-		const noUsableStreet =
-			!parsed && (!streetPart || /^\d{2}-\d{3}$/.test(streetPart.trim()));
+		// no address at all, a postal code ("33-100, Tarnów"), or a stored
+		// street that the parser now rejects as boilerplate ("położone na 1",
+		// "o pow. 1,1600ha"). `parsed` is null in all three cases.
+		const noUsableStreet = !parsed;
 		if (noUsableStreet) {
 			// No usable address: mine the title, then the description, for
 			// "Street 12" patterns. The plausibleAddress gate only applies to
@@ -248,11 +327,13 @@ export async function geocodeUnlocatedListings(
 			// Descriptions are full of numbers ("45 m²", "rok 2014"), so the
 			// digit-based plausibleAddress gate is meaningless for them. Only
 			// trust a description-mined street when it maps to the Krakow
-			// lexicon; otherwise the title result (or nothing) wins.
+			// lexicon or carries a housenumber; otherwise the title result (or
+			// nothing) wins.
 			const mined =
 				titlePart && plausibleAddress(row.title)
 					? { part: titlePart, text: row.title }
-					: descPart && isKnownKrakowStreet(descPart.street)
+					: descPart &&
+							(isKnownKrakowStreet(descPart.street) || descPart.number)
 						? { part: descPart, text: row.description }
 						: null;
 			if (mined) {
@@ -334,6 +415,36 @@ export async function geocodeUnlocatedListings(
 				report.localHits++;
 				continue;
 			}
+			// Locality-only fallback: a bare village/town name with no street
+			// (komornik plots/houses, e.g. "Pstroszyce II"). The offline index
+			// only knows cities tagged on OSM buildings, so resolve the name
+			// against Photon's place nodes (cached, budgeted, ~1 req/s).
+			if (cityHint) {
+				const localityKey = normStreet(`loc:${cityHint}`);
+				let locality =
+					localityKey in nomCache ? nomCache[localityKey] : undefined;
+				if (locality === undefined) {
+					if (nomBudget <= 0) {
+						report.misses++;
+						continue;
+					}
+					nomBudget--;
+					locality = await geocodeLocality(cityHint);
+					nomCache[localityKey] = locality;
+					nomWrites++;
+					await new Promise((r) => setTimeout(r, 1050));
+				}
+				if (locality) {
+					await db
+						.update(listings)
+						.set({ lat: locality.lat, lng: locality.lng })
+						.where(eq(listings.id, row.id));
+					report.nomHits++;
+					continue;
+				}
+			}
+			report.misses++;
+			continue;
 		}
 
 		// Nominatim street-level fallback (bounded for scheduled runs).

@@ -160,6 +160,34 @@ const STOPWORDS = new Set([
 	"dr",
 	"mgr",
 	"nr",
+	// Court-notice / ad-description boilerplate that leaks past the bare
+	// street regex ("o pow. 1,1600ha", "położone na 1 piętrze",
+	// "dwóch sypialni oraz łazienki o łącznej powierzchni użytkowej 48").
+	"pow",
+	"położone",
+	"położona",
+	"położony",
+	"położeniu",
+	"położonej",
+	"łącznej",
+	"lacznej",
+	"użytkowej",
+	"uzytkowej",
+	"powierzchni",
+	"sypialni",
+	"sypialniach",
+	"łazienki",
+	"lazienki",
+	"dwóch",
+	"dwoch",
+	"trzech",
+	"czterech",
+	"m2",
+	"m²",
+	"ha",
+	"english",
+	"version",
+	"below",
 ]);
 
 /** Short function words allowed inside a street name ("ul. Na Błoniach"). */
@@ -195,9 +223,25 @@ function stripPrefix(street: string): string {
 		.trim();
 }
 
+/**
+ * Description markers that terminate a street name. The bare regex otherwise
+ * keeps reading into the body ("ul. Truszkowskiego english version below",
+ * "Mackiewicza 4-pokojowe mieszkanie"), so cut at the first marker.
+ */
+const STREET_END_MARKERS =
+	/\s+(english|wersja|opis|opisana|mamy|przyjemnosc|przyjemność|zapraszam|zapraszamy|oferujemy|oferuje|polecam|polecamy|biuro|kontakt|tel|numer|ksiega|pietro|pietra|kondygnacja|m2|m²)\b.*$/iu;
+
+function truncateStreet(street: string): string {
+	return street.replace(STREET_END_MARKERS, "").trim();
+}
+
 function validStreet(street: string): boolean {
 	if (street.length < 3) return false;
 	const words = street.toLowerCase().split(/\s+/);
+	// Real Polish street names are short (1-4 words). Longer runs are
+	// description boilerplate ("dwóch sypialni oraz łazienki o łącznej
+	// powierzchni użytkowej") that the bare regex otherwise accepts.
+	if (words.length > 4) return false;
 	return words.every((w) => {
 		const clean = w.replace(/\.$/, ""); // "ul." -> "ul"
 		if (FUNCTION_WORDS.has(clean)) return true;
@@ -283,19 +327,40 @@ export function parseAddressFromText(
 	if (!text) return null;
 	const t = text.replace(/\s+/g, " ").trim();
 
-	const candidates: Array<{ index: number; street: string; number?: string }> =
-		[];
+	const candidates: Array<{
+		index: number;
+		street: string;
+		number?: string;
+		prefixed: boolean;
+	}> = [];
 	for (const m of t.matchAll(PREFIXED_RE)) {
-		candidates.push({ index: m.index ?? 0, street: m[1], number: m[2] });
+		candidates.push({
+			index: m.index ?? 0,
+			street: m[1],
+			number: m[2],
+			prefixed: true,
+		});
 	}
 	for (const m of t.matchAll(BARE_RE)) {
-		candidates.push({ index: m.index ?? 0, street: m[1], number: m[2] });
+		candidates.push({
+			index: m.index ?? 0,
+			street: m[1],
+			number: m[2],
+			prefixed: false,
+		});
 	}
-	candidates.sort((a, b) => a.index - b.index);
+	// Prefer explicitly-prefixed streets (ul./al./os.) over bare "Word Number"
+	// matches, which are far more likely to be boilerplate ("pow. 1,1600ha",
+	// "powierzchni użytkowej 48").
+	candidates.sort(
+		(a, b) => Number(b.prefixed) - Number(a.prefixed) || a.index - b.index,
+	);
 
 	let fallback: { street: string; number?: string } | null = null;
 	for (const c of candidates) {
-		const street = stripPrefix(c.street).replace(/\s+/g, " ").trim();
+		const street = truncateStreet(
+			stripPrefix(c.street).replace(/\s+/g, " ").trim(),
+		);
 		if (!validStreet(street)) continue;
 		const out = {
 			street: resolveStreetName(street),
