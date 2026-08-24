@@ -17,6 +17,7 @@ import { Route as SourcesRouteImport } from './routes/sources'
 import { Route as ApiCrawlStatusRouteImport } from './routes/api/crawl-status'
 import { Route as ApiInvestmentAnalyticsRouteImport } from './routes/api/investment-analytics'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
+import { Route as ApiMarketInsightsRouteImport } from './routes/api/market-insights'
 import { Route as ApiRefreshRouteImport } from './routes/api/refresh'
 import { Route as ApiRentalAnalyticsRouteImport } from './routes/api/rental-analytics'
 import { Route as ApiRentalGuestPricesRouteImport } from './routes/api/rental-guest-prices'
@@ -68,6 +69,11 @@ const ApiInvestmentAnalyticsRoute = ApiInvestmentAnalyticsRouteImport.update({
 const ApiListingsRoute = ApiListingsRouteImport.update({
   id: '/api/listings',
   path: '/api/listings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiMarketInsightsRoute = ApiMarketInsightsRouteImport.update({
+  id: '/api/market-insights',
+  path: '/api/market-insights',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiRefreshRoute = ApiRefreshRouteImport.update({
@@ -140,6 +146,7 @@ export interface FileRoutesByFullPath {
   '/api/crawl-status': typeof ApiCrawlStatusRoute
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
+  '/api/market-insights': typeof ApiMarketInsightsRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -162,6 +169,7 @@ export interface FileRoutesByTo {
   '/api/crawl-status': typeof ApiCrawlStatusRoute
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
+  '/api/market-insights': typeof ApiMarketInsightsRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -185,6 +193,7 @@ export interface FileRoutesById {
   '/api/crawl-status': typeof ApiCrawlStatusRoute
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
+  '/api/market-insights': typeof ApiMarketInsightsRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -209,6 +218,7 @@ export interface FileRouteTypes {
     | '/api/crawl-status'
     | '/api/investment-analytics'
     | '/api/listings'
+    | '/api/market-insights'
     | '/api/refresh'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -231,6 +241,7 @@ export interface FileRouteTypes {
     | '/api/crawl-status'
     | '/api/investment-analytics'
     | '/api/listings'
+    | '/api/market-insights'
     | '/api/refresh'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -253,6 +264,7 @@ export interface FileRouteTypes {
     | '/api/crawl-status'
     | '/api/investment-analytics'
     | '/api/listings'
+    | '/api/market-insights'
     | '/api/refresh'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -276,6 +288,7 @@ export interface RootRouteChildren {
   ApiCrawlStatusRoute: typeof ApiCrawlStatusRoute
   ApiInvestmentAnalyticsRoute: typeof ApiInvestmentAnalyticsRoute
   ApiListingsRoute: typeof ApiListingsRoute
+  ApiMarketInsightsRoute: typeof ApiMarketInsightsRoute
   ApiRefreshRoute: typeof ApiRefreshRoute
   ApiRentalAnalyticsRoute: typeof ApiRentalAnalyticsRoute
   ApiRentalGuestPricesRoute: typeof ApiRentalGuestPricesRoute
@@ -346,6 +359,13 @@ declare module '@tanstack/react-router' {
       path: '/api/listings'
       fullPath: '/api/listings'
       preLoaderRoute: typeof ApiListingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/market-insights': {
+      id: '/api/market-insights'
+      path: '/api/market-insights'
+      fullPath: '/api/market-insights'
+      preLoaderRoute: typeof ApiMarketInsightsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/refresh': {
@@ -444,6 +464,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiCrawlStatusRoute: ApiCrawlStatusRoute,
   ApiInvestmentAnalyticsRoute: ApiInvestmentAnalyticsRoute,
   ApiListingsRoute: ApiListingsRoute,
+  ApiMarketInsightsRoute: ApiMarketInsightsRoute,
   ApiRefreshRoute: ApiRefreshRoute,
   ApiRentalAnalyticsRoute: ApiRentalAnalyticsRoute,
   ApiRentalGuestPricesRoute: ApiRentalGuestPricesRoute,

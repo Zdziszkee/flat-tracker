@@ -43,6 +43,29 @@ interface ValuationRow {
 	rentCount: number;
 }
 
+interface MarketInsights {
+	summary: {
+		saleCount: number;
+		saleAvgM2: number | null;
+		rentCount: number;
+		rentAvgM2: number | null;
+		rcnTxCount: number;
+		rcnAvgM2: number | null;
+		gapPct: number | null;
+	};
+	priceByRooms: Array<{
+		label: string;
+		avgM2: number | null;
+		avgPrice: number | null;
+		count: number;
+	}>;
+	priceHistogram: Array<{ label: string; count: number }>;
+	priceDrops: { droppedCount: number; avgDropPct: number | null };
+	occupancyByMonth: Array<{ month: string; occupancyPct: number }>;
+	rcnByMarket: Array<{ market: string; avgM2: number | null; count: number }>;
+	rcnYearly: Array<{ year: number; avgM2: number | null; count: number }>;
+}
+
 function fmt(n: number | null | undefined, digits = 0): string {
 	if (n == null) return "";
 	return new Intl.NumberFormat("pl-PL", {
@@ -63,6 +86,105 @@ function AnalyticsPage() {
 		queryKey: ["valuation"],
 		queryFn: () => fetch("/api/valuation").then((r) => r.json()),
 	});
+	const { data: insights } = useQuery<MarketInsights>({
+		queryKey: ["market-insights"],
+		queryFn: () => fetch("/api/market-insights").then((r) => r.json()),
+	});
+
+	const rcnMarketChart = useMemo(() => {
+		const rows = (insights?.rcnByMarket ?? []).filter((r) => r.avgM2 != null);
+		return defineChart({
+			marks: [barY(rows, { x: "market", y: "avgM2", fill: "#7c3aed" })],
+			x: {
+				scale: () => scaleBand<string>().padding(0.3),
+				axis: { label: "Rynek" },
+			},
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "zł/m² transakcyjna" },
+			},
+		});
+	}, [insights]);
+
+	const rcnYearlyChart = useMemo(() => {
+		const rows = (insights?.rcnYearly ?? [])
+			.filter((r) => r.avgM2 != null)
+			.map((r) => ({ ...r, year: String(r.year) }));
+		return defineChart({
+			marks: [
+				lineY(rows, {
+					x: "year",
+					y: "avgM2",
+					stroke: "#7c3aed",
+					strokeWidth: 2,
+					points: true,
+				}),
+			],
+			x: {
+				scale: () => scaleBand<string>().padding(0.2),
+				axis: { label: "Rok" },
+			},
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "zł/m² transakcyjna" },
+			},
+		});
+	}, [insights]);
+
+	const roomsChart = useMemo(() => {
+		const rows = (insights?.priceByRooms ?? []).filter((r) => r.avgM2 != null);
+		return defineChart({
+			marks: [barY(rows, { x: "label", y: "avgM2", fill: "#0891b2" })],
+			x: {
+				scale: () => scaleBand<string>().padding(0.2),
+				axis: { label: "Liczba pokoi" },
+			},
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "zł/m²" },
+			},
+		});
+	}, [insights]);
+
+	const histChart = useMemo(() => {
+		const rows = insights?.priceHistogram ?? [];
+		return defineChart({
+			marks: [barY(rows, { x: "label", y: "count", fill: "#f97316" })],
+			x: {
+				scale: () => scaleBand<string>().padding(0.1),
+				axis: { label: "Cena zł/m²" },
+			},
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "Liczba ofert" },
+			},
+		});
+	}, [insights]);
+
+	const occupancyChart = useMemo(() => {
+		const rows = insights?.occupancyByMonth ?? [];
+		return defineChart({
+			marks: [barY(rows, { x: "month", y: "occupancyPct", fill: "#14b8a6" })],
+			x: {
+				scale: () => scaleBand<string>().padding(0.2),
+				axis: { label: "Miesiąc" },
+			},
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "Obłożenie %" },
+			},
+		});
+	}, [insights]);
 
 	const yieldChart = useMemo(() => {
 		const rows = (data?.yieldByDistrict ?? [])
@@ -161,6 +283,108 @@ function AnalyticsPage() {
 					<Link to="/sources" className="text-blue-600 underline">
 						Data sources
 					</Link>
+				</div>
+			</div>
+
+			<div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
+				{[
+					{
+						label: "Oferty sprzedaży",
+						value: `${fmt(insights?.summary.saleCount)}`,
+						sub: `${fmt(insights?.summary.saleAvgM2)} zł/m²`,
+					},
+					{
+						label: "Najem długoterm.",
+						value: `${fmt(insights?.summary.rentCount)}`,
+						sub: `${fmt(insights?.summary.rentAvgM2)} zł/m²`,
+					},
+					{
+						label: "Transakcje RCN (2 lata)",
+						value: `${fmt(insights?.summary.rcnTxCount)}`,
+						sub: `${fmt(insights?.summary.rcnAvgM2)} zł/m²`,
+					},
+					{
+						label: "Oferta vs transakcja",
+						value: `${fmt(insights?.summary.gapPct, 1)}%`,
+						sub: "przewartościowanie",
+					},
+					{
+						label: "Obniżki cen",
+						value: `${fmt(insights?.priceDrops.droppedCount)}`,
+						sub:
+							insights?.priceDrops.avgDropPct != null
+								? `śr. -${fmt(insights.priceDrops.avgDropPct, 1)}%`
+								: "brak danych",
+					},
+				].map((m) => (
+					<div key={m.label} className="rounded border bg-gray-50 p-3">
+						<div className="text-xs text-gray-500">{m.label}</div>
+						<div className="mt-1 text-lg font-semibold">{m.value}</div>
+						<div className="text-xs text-gray-500">{m.sub}</div>
+					</div>
+				))}
+			</div>
+
+			<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+				<div className="rounded border p-2">
+					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
+						Rynek transakcyjny RCN · pierwotny vs wtórny
+					</h2>
+					<div className="h-64">
+						<Chart
+							definition={rcnMarketChart}
+							height={250}
+							ariaLabel="RCN pierwotny vs wtórny"
+						/>
+					</div>
+				</div>
+				<div className="rounded border p-2">
+					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
+						Trend cen transakcyjnych zł/m² (RCN)
+					</h2>
+					<div className="h-64">
+						<Chart
+							definition={rcnYearlyChart}
+							height={250}
+							ariaLabel="Trend cen transakcyjnych"
+						/>
+					</div>
+				</div>
+				<div className="rounded border p-2">
+					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
+						Cena ofertowa zł/m² wg liczby pokoi
+					</h2>
+					<div className="h-64">
+						<Chart
+							definition={roomsChart}
+							height={250}
+							ariaLabel="Cena wg pokoi"
+						/>
+					</div>
+				</div>
+				<div className="rounded border p-2">
+					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
+						Rozkład cen ofertowych zł/m²
+					</h2>
+					<div className="h-64">
+						<Chart
+							definition={histChart}
+							height={250}
+							ariaLabel="Rozkład cen zł/m²"
+						/>
+					</div>
+				</div>
+				<div className="rounded border p-2">
+					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
+						Obłożenie najmu krótkoterminowego wg miesiąca
+					</h2>
+					<div className="h-64">
+						<Chart
+							definition={occupancyChart}
+							height={250}
+							ariaLabel="Obłożenie wg dzielnicy"
+						/>
+					</div>
 				</div>
 			</div>
 
