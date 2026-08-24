@@ -1,10 +1,14 @@
 import { barY, defineChart, lineY } from "@tanstack/charts";
+import { geoShape } from "@tanstack/charts/geo";
 import { Chart } from "@tanstack/charts/react";
 import { scaleBand } from "@tanstack/charts/scales/band";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { geoMercator } from "d3-geo";
+import { useMemo, useState } from "react";
+
+import { krakowDistricts } from "#/data/krakow-districts";
 
 interface InvestmentAnalytics {
 	salesByDistrict: Array<{
@@ -73,6 +77,45 @@ function fmt(n: number | null | undefined, digits = 0): string {
 	}).format(n);
 }
 
+type DistrictMetricKey =
+	| "saleAvgM2"
+	| "saleCount"
+	| "rentAvgM2"
+	| "yieldPct"
+	| "rcnAvgM2";
+
+interface DistrictMetric {
+	name: string;
+	saleCount: number;
+	saleAvgM2: number | null;
+	rentCount: number;
+	rentAvgM2: number | null;
+	yieldPct: number | null;
+	rcnCount: number;
+	rcnAvgM2: number | null;
+}
+
+const DISTRICT_METRICS: Array<{
+	key: DistrictMetricKey;
+	label: string;
+	unit: string;
+}> = [
+	{ key: "saleAvgM2", label: "Cena sprzedaży", unit: "zł/m²" },
+	{ key: "saleCount", label: "Oferty sprzedaży", unit: "szt." },
+	{ key: "rentAvgM2", label: "Czynsz", unit: "zł/m²" },
+	{ key: "yieldPct", label: "Rentowność", unit: "%" },
+	{ key: "rcnAvgM2", label: "Transakcje RCN", unit: "zł/m²" },
+];
+
+/** Sequential light-blue -> dark-blue ramp for choropleth fills. */
+function seqColor(t: number): string {
+	const c = Math.max(0, Math.min(1, t));
+	const r = Math.round(224 + (30 - 224) * c);
+	const g = Math.round(242 + (58 - 242) * c);
+	const b = Math.round(254 + (138 - 254) * c);
+	return `rgb(${r},${g},${b})`;
+}
+
 export const Route = createFileRoute("/analytics")({
 	component: AnalyticsPage,
 });
@@ -90,6 +133,61 @@ function AnalyticsPage() {
 		queryKey: ["market-insights"],
 		queryFn: () => fetch("/api/market-insights").then((r) => r.json()),
 	});
+	const { data: districtMap } = useQuery<{ features: DistrictMetric[] }>({
+		queryKey: ["district-map"],
+		queryFn: () => fetch("/api/district-map").then((r) => r.json()),
+	});
+	const [metric, setMetric] = useState<DistrictMetricKey>("saleAvgM2");
+
+	const choropleth = useMemo(() => {
+		const byName = new Map(
+			(districtMap?.features ?? []).map((f) => [f.name, f]),
+		);
+		const features = krakowDistricts.map((f) => {
+			const m = byName.get(f.properties.name);
+			return {
+				type: "Feature" as const,
+				properties: {
+					name: f.properties.name,
+					saleCount: m?.saleCount ?? 0,
+					saleAvgM2: m?.saleAvgM2 ?? null,
+					rentCount: m?.rentCount ?? 0,
+					rentAvgM2: m?.rentAvgM2 ?? null,
+					yieldPct: m?.yieldPct ?? null,
+					rcnAvgM2: m?.rcnAvgM2 ?? null,
+				},
+				geometry: f.geometry,
+			};
+		});
+		const values = features.flatMap((f) => {
+			const v = f.properties[metric];
+			return typeof v === "number" && Number.isFinite(v) ? [v] : [];
+		});
+		const min = values.length ? Math.min(...values) : 0;
+		const max = values.length ? Math.max(...values) : 1;
+		const span = max - min || 1;
+		return {
+			definition: defineChart({
+				marks: [
+					geoShape(features, {
+						key: (f) => f.properties.name,
+						projection: { type: () => geoMercator(), fit: "data" },
+						fill: (f) => {
+							const v = f.properties[metric];
+							return typeof v === "number" && Number.isFinite(v)
+								? seqColor((v - min) / span)
+								: "#e5e7eb";
+						},
+						stroke: "#ffffff",
+						strokeWidth: 0.5,
+					}),
+				],
+				margin: 8,
+			}),
+			min,
+			max,
+		};
+	}, [districtMap, metric]);
 
 	const rcnMarketChart = useMemo(() => {
 		const rows = (insights?.rcnByMarket ?? []).filter((r) => r.avgM2 != null);
@@ -283,6 +381,90 @@ function AnalyticsPage() {
 					<Link to="/sources" className="text-blue-600 underline">
 						Data sources
 					</Link>
+				</div>
+			</div>
+
+			<div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+				<div className="rounded border p-2 lg:col-span-2">
+					<div className="flex flex-wrap items-center justify-between gap-2 px-2 py-1">
+						<h2 className="text-sm font-semibold text-gray-600">
+							Kraków — dzielnice (heatmapa)
+						</h2>
+						<div className="flex flex-wrap gap-1">
+							{DISTRICT_METRICS.map((m) => (
+								<button
+									key={m.key}
+									type="button"
+									onClick={() => setMetric(m.key)}
+									className={`rounded px-2 py-1 text-xs ${
+										metric === m.key
+											? "bg-blue-600 text-white"
+											: "bg-gray-100 text-gray-600 hover:bg-gray-200"
+									}`}
+								>
+									{m.label}
+								</button>
+							))}
+						</div>
+					</div>
+					<div className="h-96">
+						<Chart
+							definition={choropleth.definition}
+							height={380}
+							ariaLabel="Mapa dzielnic Krakowa"
+						/>
+					</div>
+					<div className="flex items-center gap-2 px-2 pt-1 text-xs text-gray-500">
+						<span>
+							{fmt(choropleth.min)}{" "}
+							{DISTRICT_METRICS.find((m) => m.key === metric)?.unit}
+						</span>
+						<div
+							className="h-2 flex-1 rounded"
+							style={{
+								background:
+									"linear-gradient(to right, rgb(224,242,254), rgb(30,58,138))",
+							}}
+						/>
+						<span>
+							{fmt(choropleth.max)}{" "}
+							{DISTRICT_METRICS.find((m) => m.key === metric)?.unit}
+						</span>
+					</div>
+				</div>
+				<div className="overflow-x-auto rounded border">
+					<h2 className="px-3 py-2 text-sm font-semibold text-gray-600">
+						Dzielnice wg:{" "}
+						{DISTRICT_METRICS.find((m) => m.key === metric)?.label}
+					</h2>
+					<table className="w-full text-sm">
+						<thead className="bg-gray-50 text-left">
+							<tr>
+								<th className="px-3 py-1.5">Dzielnica</th>
+								<th className="px-3 py-1.5 text-right">Wartość</th>
+							</tr>
+						</thead>
+						<tbody>
+							{[...(districtMap?.features ?? [])]
+								.map((f) => ({
+									name: f.name,
+									value: f[metric] as number | null,
+								}))
+								.sort(
+									(a, b) =>
+										(b.value ?? Number.NEGATIVE_INFINITY) -
+										(a.value ?? Number.NEGATIVE_INFINITY),
+								)
+								.map((r) => (
+									<tr key={r.name} className="border-t hover:bg-gray-50">
+										<td className="px-3 py-1">{r.name}</td>
+										<td className="px-3 py-1 text-right">
+											{fmt(r.value, metric === "saleCount" ? 0 : 1)}
+										</td>
+									</tr>
+								))}
+						</tbody>
+					</table>
 				</div>
 			</div>
 

@@ -15,6 +15,7 @@ import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as MapRouteImport } from './routes/map'
 import { Route as SourcesRouteImport } from './routes/sources'
 import { Route as ApiCrawlStatusRouteImport } from './routes/api/crawl-status'
+import { Route as ApiDistrictMapRouteImport } from './routes/api/district-map'
 import { Route as ApiInvestmentAnalyticsRouteImport } from './routes/api/investment-analytics'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiMarketInsightsRouteImport } from './routes/api/market-insights'
@@ -59,6 +60,11 @@ const SourcesRoute = SourcesRouteImport.update({
 const ApiCrawlStatusRoute = ApiCrawlStatusRouteImport.update({
   id: '/api/crawl-status',
   path: '/api/crawl-status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiDistrictMapRoute = ApiDistrictMapRouteImport.update({
+  id: '/api/district-map',
+  path: '/api/district-map',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiInvestmentAnalyticsRoute = ApiInvestmentAnalyticsRouteImport.update({
@@ -144,6 +150,7 @@ export interface FileRoutesByFullPath {
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
+  '/api/district-map': typeof ApiDistrictMapRoute
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
@@ -167,6 +174,7 @@ export interface FileRoutesByTo {
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
+  '/api/district-map': typeof ApiDistrictMapRoute
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
@@ -191,6 +199,7 @@ export interface FileRoutesById {
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
+  '/api/district-map': typeof ApiDistrictMapRoute
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
@@ -216,6 +225,7 @@ export interface FileRouteTypes {
     | '/map'
     | '/sources'
     | '/api/crawl-status'
+    | '/api/district-map'
     | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-insights'
@@ -239,6 +249,7 @@ export interface FileRouteTypes {
     | '/map'
     | '/sources'
     | '/api/crawl-status'
+    | '/api/district-map'
     | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-insights'
@@ -262,6 +273,7 @@ export interface FileRouteTypes {
     | '/map'
     | '/sources'
     | '/api/crawl-status'
+    | '/api/district-map'
     | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-insights'
@@ -286,6 +298,7 @@ export interface RootRouteChildren {
   MapRoute: typeof MapRoute
   SourcesRoute: typeof SourcesRoute
   ApiCrawlStatusRoute: typeof ApiCrawlStatusRoute
+  ApiDistrictMapRoute: typeof ApiDistrictMapRoute
   ApiInvestmentAnalyticsRoute: typeof ApiInvestmentAnalyticsRoute
   ApiListingsRoute: typeof ApiListingsRoute
   ApiMarketInsightsRoute: typeof ApiMarketInsightsRoute
@@ -345,6 +358,13 @@ declare module '@tanstack/react-router' {
       path: '/api/crawl-status'
       fullPath: '/api/crawl-status'
       preLoaderRoute: typeof ApiCrawlStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/district-map': {
+      id: '/api/district-map'
+      path: '/api/district-map'
+      fullPath: '/api/district-map'
+      preLoaderRoute: typeof ApiDistrictMapRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/investment-analytics': {
@@ -462,6 +482,7 @@ const rootRouteChildren: RootRouteChildren = {
   MapRoute: MapRoute,
   SourcesRoute: SourcesRoute,
   ApiCrawlStatusRoute: ApiCrawlStatusRoute,
+  ApiDistrictMapRoute: ApiDistrictMapRoute,
   ApiInvestmentAnalyticsRoute: ApiInvestmentAnalyticsRoute,
   ApiListingsRoute: ApiListingsRoute,
   ApiMarketInsightsRoute: ApiMarketInsightsRoute,
