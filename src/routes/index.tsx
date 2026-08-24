@@ -24,6 +24,12 @@ function Home() {
 				>
 					Lista ogłoszeń
 				</Link>
+				<Link
+					to="/sources"
+					className="rounded-lg border px-4 py-2 font-medium hover:bg-gray-100"
+				>
+					Data sources
+				</Link>
 			</nav>
 
 			<section className="mt-10 max-w-3xl space-y-4 text-sm leading-relaxed">
@@ -56,8 +62,8 @@ function Home() {
 					</li>
 					<li>
 						Historyczne ceny transakcyjne pochodzą z Rejestru Cen Nieruchomości
-						(RCN) dla Krakowa — dane publiczne, bezpłatne od lutego 2026.
-						Import: <code>npm run import-rcn</code>.
+						(RCN) dla Krakowa — dane publiczne, bezpłatne od lutego 2026. Import
+						odbywa się automatycznie przy każdym odświeżeniu danych.
 					</li>
 					<li>
 						Na mapie każda oferta jest pokazywana na swoim budynku; popup

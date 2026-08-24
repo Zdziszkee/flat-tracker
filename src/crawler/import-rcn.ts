@@ -8,7 +8,6 @@ import {
 import { mkdir, rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { pathToFileURL } from "node:url";
 import proj4 from "proj4";
 import { SaxesParser } from "saxes";
 import { Extract } from "unzipper";
@@ -567,16 +566,4 @@ async function flush(
 		.returning({ id: transactions.id });
 	rows.length = 0;
 	return inserted.length;
-}
-
-// CLI entry (`npm run import-rcn`). When imported as a module (e.g. by the
-// server refresh task), only the exported function is used.
-if (
-	process.argv[1] &&
-	import.meta.url === pathToFileURL(process.argv[1]).href
-) {
-	importRcn(process.argv.includes("--force")).catch((err) => {
-		console.error(err);
-		process.exitCode = 1;
-	});
 }

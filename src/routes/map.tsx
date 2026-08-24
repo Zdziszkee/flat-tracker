@@ -91,6 +91,9 @@ function MapPage() {
 				<Link to="/analytics" className="text-sm text-blue-600 underline">
 					Analityka inwestycyjna
 				</Link>
+				<Link to="/sources" className="text-sm text-blue-600 underline">
+					Data sources
+				</Link>
 			</header>
 
 			<div className="relative flex-1">

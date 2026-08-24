@@ -10,8 +10,8 @@ import { buildings, osmBuildings, transactions } from "#/db/schema";
  * nearest-centroid fallback) and return its RCN transaction history.
  *
  * The price history comes from the same Rejestr Cen Nieruchomości data
- * that portals like deweloperuch.pl aggregate, imported locally by
- * `npm run import-rcn`.
+ * that portals like deweloperuch.pl aggregate, imported locally by the
+ * refresh pipeline (see src/crawler/import-rcn.ts).
  */
 
 interface CachedBuilding {

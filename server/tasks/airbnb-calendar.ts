@@ -2,6 +2,7 @@ import "nitro/types";
 import { defineTask } from "nitro/task";
 
 import { runAirbnbCalendarImport } from "#/crawler/airbnb-calendar";
+import { recordCrawlRun } from "#/crawler/db-sink";
 
 /**
  * Daily Airbnb availability-calendar import. The hourly refresh keeps the
@@ -14,11 +15,33 @@ export default defineTask({
 		description: "Import Airbnb availability calendars and fold monthly prices",
 	},
 	run: async () => {
-		const summary = await runAirbnbCalendarImport();
-		console.log(
-			`[airbnb-calendar] listings=${summary.listings} days=${summary.days} ` +
-				`failures=${summary.failures} monthlyRows=${summary.monthlyRows}`,
-		);
-		return { result: summary };
+		const startedAt = new Date();
+		try {
+			const summary = await runAirbnbCalendarImport();
+			await recordCrawlRun({
+				source: "airbnb-calendar",
+				startedAt,
+				finishedAt: new Date(),
+				pages: 0,
+				newCount: summary.listings,
+				updatedCount: summary.monthlyRows,
+			});
+			console.log(
+				`[airbnb-calendar] listings=${summary.listings} days=${summary.days} ` +
+					`failures=${summary.failures} monthlyRows=${summary.monthlyRows}`,
+			);
+			return { result: summary };
+		} catch (err) {
+			await recordCrawlRun({
+				source: "airbnb-calendar",
+				startedAt,
+				finishedAt: new Date(),
+				pages: 0,
+				newCount: 0,
+				updatedCount: 0,
+				error: String(err),
+			});
+			throw err;
+		}
 	},
 });

@@ -335,16 +335,3 @@ export async function runAirbnbCalendarImport(): Promise<{
 		monthlyRows,
 	};
 }
-
-async function main(): Promise<void> {
-	const summary = await runAirbnbCalendarImport();
-	console.log(
-		`done: listings=${summary.listings} days=${summary.days} ` +
-			`failures=${summary.failures} monthlyRows=${summary.monthlyRows}`,
-	);
-}
-
-main().catch((err) => {
-	console.error(err);
-	process.exitCode = 1;
-});

@@ -28,18 +28,13 @@ npm run dev               # start dev server (vite, port 3000); kicks off a back
                           # data refresh on boot (see `server/plugins/refresh-on-start.ts`)
 npm run db:generate       # new migration from schema changes
 npm run db:migrate        # apply migrations
-npm run crawl -- --site <id> [--save-db] [--since-days N]   # crawl one site
-npm run crawl:otodom      # otodom Krakow, saves to DB
-npm run crawl:olx         # olx Krakow, saves to DB
-npm run crawl:all         # all 10 sites + incremental RCN diff (same program as the server refresh task)
-npm run crawl:komornik    # licytacje.komornik.pl (Małopolska real estate), saves to DB
-npm run crawl:skaleczna   # skaleczna.pl (Koneser Group, Kazimierz), saves to DB
-npm run crawl:investmap   # investmap.pl — every Krakow investment + flats (auto-discovery of private developments)
-npm run import-rcn        # RCN transactions: HEADs the zip, imports only NEW rows (diff)
-npm run import-rcn:force  # re-download + re-import everything
 npm run assign-buildings  # match listings/transactions to OSM buildings
 npm run geocode-addresses # geocode listings that carry only an address
 ```
+
+Crawling is triggered from the UI, not the terminal: the **/sources** page
+("Refresh now" → `POST /api/refresh`) runs the same `refreshAll()` as the
+hourly task. The old `crawl:*` / `import-rcn` CLI scripts were removed.
 
 `geocode-addresses` fills the coordinate gap for portals that hide
 lat/lng (morizon, gratka, domiporta, nieruchomosci-online,
@@ -68,15 +63,15 @@ instance throttles).
 Crawls are incremental and idempotent, designed for a once-per-hour cron.
 The server itself runs the refresh: a Nitro scheduled task `refresh`
 (cron `0 * * * *`, wired in `vite.config.ts` -> `scheduledTasks`,
-`experimental.tasks`) executes `refreshAll()` from `src/crawler/refresh.ts`
-— the same program as `npm run crawl:all`. It runs in dev AND prod node
-servers, and the dev server additionally fires one refresh on startup
-(`server/plugins/refresh-on-start.ts`, gated on `import.meta.dev`).
+`experimental.tasks`) executes `refreshAll()` from `src/crawler/refresh.ts`.
+It runs in dev AND prod node servers, and the dev server additionally fires
+one refresh on startup (`server/plugins/refresh-on-start.ts`, gated on
+`import.meta.dev`).
 
 Manual equivalents:
 
 ```bash
-npm run crawl:all           # CLI: all 7 sites + incremental RCN diff
+# /sources page "Refresh now" button → POST /api/refresh (recommended)
 curl -X POST http://localhost:3000/_nitro/tasks/refresh   # server task
 ```
 
@@ -92,8 +87,7 @@ paths fail to resolve from the virtual tasks module.
 **Server refreshes fetch only the first, newest-sorted page per site**
 (`firstPageOnly: true`, the default in `refreshAll`): each hourly run
 captures just the offers that appeared on page 1 and skips pagination and
-detail-page follow-ups. Manual `crawl:*` runs leave `firstPageOnly` unset
-and do full backfills. `alwaysFullCrawl` opts a source back into full
+detail-page follow-ups. `alwaysFullCrawl` opts a source back into full
 pagination (investmap: small private investments sit past pages that have
 no flats, so skipping page 1 would hide them).
 
@@ -111,14 +105,15 @@ history is pruned to the 7-day cap. Dev-start runs are also first-page-only.
   street+housenumber, street-only when the project has no housenumber,
   or normalized investment-title match). Both sources remain selectable
   individually in the UI filters.
-- `--since-days N` bounds the fetch window and prunes older portal
-  listings afterwards, so the DB only holds active/recent offers.
-- `import-rcn` (part of `crawl:all`) starts with a HEAD request on the
+- The fetch window is bounded by `sinceDays` (default 90) and older
+  otodom/olx listings are pruned afterwards, so the DB only holds
+  active/recent offers.
+- `importRcn()` starts with a HEAD request on the
   zip; when ETag/Last-Modified match `data/rcn/version.json`, it skips
   the 2 GB download+parse and reports 0 new transactions. When the file
   changed, only rows that are actually NEW are inserted
   (`INSERT OR IGNORE ... RETURNING`), so each run imports exactly the
-  diff the registry added. `--force` re-downloads and re-imports.
+  diff the registry added.
   Run `npm run assign-buildings` after an RCN refresh to anchor the new
   transactions.
 - The crawler paces requests (3 concurrent, ~350 ms delay) and retries
@@ -126,7 +121,7 @@ history is pruned to the 7-day cap. Dev-start runs are also first-page-only.
   `enqueueLinks` for a no-op stub on non-HTML responses, so JSON-API
   adapters (investmap, komornik) paginate via `addRequests` instead.
 - `runCrawlWithRetry` (exponential backoff) backs every site crawl in the
-  server refresh task and the `--retry` CLI flag.
+  server refresh task.
 
 `assign-buildings` uses a **local OSM building index** (`osm_buildings`
 table) built from a Geofabrik extract of the małopolskie region
@@ -198,7 +193,8 @@ Clicking a 3D building on the map queries `/api/buildings/lookup?lat&lng`
 fallback) and shows the building's RCN price history: transaction count,
 average/range zł/m², year-by-year breakdown and the 5 most recent sales.
 This is the same RCN data that portals like deweloperuch.pl aggregate —
-imported locally by `npm run import-rcn`, no extra scraping needed.
+imported locally by the refresh pipeline (`import-rcn.ts`), no extra
+scraping needed.
 
 ### Adding a new site (e.g. Facebook Marketplace, Morizon)
 
@@ -213,7 +209,8 @@ imported locally by `npm run import-rcn`, no extra scraping needed.
      `parseLdJson`/`findLdNodes` from `ldjson.ts`, or the
      `makeLdOfferAdapter` factory for the shared Morizon/Gratka shape.
 3. Register it in `src/crawler/sites/index.ts`.
-4. Test: `npm run crawl -- --site <id> --save-db` (uses Node/tsx).
+4. Test: trigger a refresh from the **/sources** page (or POST
+   `/_nitro/tasks/refresh`) and watch the new site's row on the status page.
 
 Normalized `Listing` shape: see `types.ts` (source, externalId, url, title,
 price, pricePerM2, areaM2, rooms, floor, district, lat, lng, listedAt).

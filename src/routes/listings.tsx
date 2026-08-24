@@ -120,6 +120,9 @@ function ListingsPage() {
 					<Link to="/map" className="text-blue-600 underline">
 						Mapa
 					</Link>
+					<Link to="/sources" className="text-blue-600 underline">
+						Data sources
+					</Link>
 				</div>
 			</div>
 
