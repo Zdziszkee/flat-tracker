@@ -21,6 +21,15 @@ export const Route = createFileRoute("/api/refresh")({
 				// bundled into the SSR route chunk: it references `__dirname`,
 				// which crashes the production ESM bundle when eagerly loaded.
 				const { refreshAll } = await import("#/crawler/refresh");
+				// Re-check after the (async) import: a concurrent POST may have
+				// started a refresh while this handler was loading the module.
+				if (isRunning()) {
+					return json({
+						started: false,
+						alreadyRunning: true,
+						runId: getProgress()?.runId ?? null,
+					});
+				}
 				void refreshAll()
 					.then((summary) => {
 						const ok = summary.sites.filter((s) => s.ok).length;
