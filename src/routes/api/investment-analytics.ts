@@ -22,7 +22,7 @@ export const Route = createFileRoute("/api/investment-analytics")({
 					})
 					.from(listings)
 					.where(
-						sql`${listings.offerType} = 'sale' and ${listings.pricePerM2} is not null and ${listings.district} is not null and ${listings.district} != ''`,
+						sql`${listings.offerType} = 'sale' and ${listings.pricePerM2} is not null and ${listings.areaM2} between 10 and 200 and ${listings.district} is not null and ${listings.district} != ''`,
 					)
 					.groupBy(listings.district)
 					.all();
@@ -30,12 +30,14 @@ export const Route = createFileRoute("/api/investment-analytics")({
 				const rentByDistrict = await db
 					.select({
 						district: listings.district,
-						avgRentM2: sql<number | null>`avg(${listings.pricePerM2})`,
+						avgRentM2: sql<
+							number | null
+						>`avg(${listings.price} / ${listings.areaM2})`,
 						count: sql<number>`count(*)`,
 					})
 					.from(listings)
 					.where(
-						sql`${listings.source} = 'olx-rent' and ${listings.pricePerM2} is not null and ${listings.district} is not null and ${listings.district} != ''`,
+						sql`${listings.source} = 'olx-rent' and ${listings.price} is not null and ${listings.areaM2} between 10 and 200 and ${listings.district} is not null and ${listings.district} != ''`,
 					)
 					.groupBy(listings.district)
 					.all();

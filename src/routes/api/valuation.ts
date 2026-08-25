@@ -22,7 +22,7 @@ export const Route = createFileRoute("/api/valuation")({
 					})
 					.from(listings)
 					.where(
-						sql`${listings.offerType} = 'sale' and ${listings.pricePerM2} is not null and ${listings.district} is not null and ${listings.district} != ''`,
+						sql`${listings.offerType} = 'sale' and ${listings.pricePerM2} is not null and ${listings.areaM2} between 10 and 200 and ${listings.district} is not null and ${listings.district} != ''`,
 					)
 					.groupBy(listings.district)
 					.all();
@@ -30,12 +30,14 @@ export const Route = createFileRoute("/api/valuation")({
 				const rents = await db
 					.select({
 						district: listings.district,
-						rentAvgM2: sql<number | null>`avg(${listings.pricePerM2})`,
+						rentAvgM2: sql<
+							number | null
+						>`avg(${listings.price} / ${listings.areaM2})`,
 						count: sql<number>`count(*)`,
 					})
 					.from(listings)
 					.where(
-						sql`${listings.source} = 'olx-rent' and ${listings.pricePerM2} is not null and ${listings.district} is not null and ${listings.district} != ''`,
+						sql`${listings.source} = 'olx-rent' and ${listings.price} is not null and ${listings.areaM2} between 10 and 200 and ${listings.district} is not null and ${listings.district} != ''`,
 					)
 					.groupBy(listings.district)
 					.all();
@@ -45,7 +47,8 @@ export const Route = createFileRoute("/api/valuation")({
 					.flatMap((r) => {
 						if (!r.district) return [];
 						const sale = saleMap.get(r.district);
-						if (!sale || sale.saleAvgM2 == null || r.rentAvgM2 == null) return [];
+						if (!sale || sale.saleAvgM2 == null || r.rentAvgM2 == null)
+							return [];
 						const saleM2 = sale.saleAvgM2;
 						const rentM2 = r.rentAvgM2;
 						const annualRentM2 = rentM2 * 12;
