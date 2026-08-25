@@ -42,6 +42,25 @@ const MALOPOLSKA_BOUNDS = {
 	maxLat: 50.6,
 };
 
+/**
+ * Inflected city names that portals put in titles but not in the structured
+ * address ("w Zakopanem"). When the title names one of these and the stored
+ * city is a generic fallback, the title city wins — it is usually the real
+ * location of the offer.
+ */
+const TITLE_CITY_FORMS: Record<string, string> = {
+	zakopanem: "Zakopane",
+	krakowie: "Kraków",
+	wieliczce: "Wieliczka",
+	tarnowie: "Tarnów",
+	olkuszu: "Olkusz",
+	chrzanowie: "Chrzanów",
+	oświęcimiu: "Oświęcim",
+	bochni: "Bochnia",
+	"nowym sączu": "Nowy Sącz",
+	"nowym targu": "Nowy Targ",
+};
+
 /** Demo adapters whose fixtures must never be geocoded. */
 const DEMO_SOURCES = new Set(["books", "quotes"]);
 
@@ -308,8 +327,21 @@ export async function geocodeUnlocatedListings(
 				.map((s) => s.trim())
 				.filter((s) => s && !/^\d{2}-\d{3}$/.test(s))
 				.pop() ?? null;
-		const cityHint =
+		let cityHint =
 			addressCity ?? (row.district?.trim() ? row.district.trim() : null);
+
+		// A portal title often names the real town while the structured
+		// address carries a generic "Kraków" fallback ("w Zakopanem przy ul.
+		// Paryskich, Kraków"). Trust the title city in that case.
+		const titleLower = row.title.toLowerCase();
+		for (const [form, city] of Object.entries(TITLE_CITY_FORMS)) {
+			if (titleLower.includes(form)) {
+				if (!cityHint || normStreet(cityHint) !== normStreet(city)) {
+					cityHint = city;
+				}
+				break;
+			}
+		}
 
 		// Mine free text when the stored address has no usable street: either
 		// no address at all, a postal code ("33-100, Tarnów"), or a stored
