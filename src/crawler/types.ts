@@ -59,6 +59,8 @@ export interface Listing {
 	availabilityCount?: number | null;
 	/** Maximum guest capacity for short-term rentals. */
 	maxGuests?: number | null;
+	/** Parsed monthly utility/administrative fees for rentals (JSON string). */
+	utilities?: string | null;
 }
 
 /** Common configuration shared by every adapter. */

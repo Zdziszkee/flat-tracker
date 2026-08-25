@@ -33,6 +33,7 @@ export interface ApiListing {
 	offerType?: string;
 	pricePeriod?: string | null;
 	maxGuests?: number | null;
+	utilities?: string | null;
 	transactionStats: {
 		buildingId: number;
 		address: string | null;
@@ -91,6 +92,29 @@ function formatPln(n: number | null): string {
 	}).format(n);
 }
 
+/** Render parsed utility/administrative fees as a short "Czynsz: ..." line. */
+function formatUtilities(json: string | null | undefined): string {
+	if (!json) return "";
+	try {
+		const u = JSON.parse(json) as Record<string, number | null>;
+		const parts: string[] = [];
+		for (const [key, label] of [
+			["czynsz", "czynsz"],
+			["ogrzewanie", "ogrz."],
+			["prad", "prąd"],
+			["woda", "woda"],
+			["gaz", "gaz"],
+			["smieci", "śmieci"],
+		] as Array<[string, string]>) {
+			const v = u[key];
+			if (typeof v === "number") parts.push(`${label} ${v} zł`);
+		}
+		return parts.length > 0 ? `Opłaty: ${parts.join(" · ")}` : "";
+	} catch {
+		return "";
+	}
+}
+
 /** Extract the 4-digit year from a date string ("2022-05-30") or unix timestamp. */
 function yearOf(d: string | number | null | undefined): string {
 	if (d === null || d === undefined) return "";
@@ -134,6 +158,7 @@ function popupHtml(l: ApiListing): string {
 		.filter(Boolean)
 		.join(" · ");
 	const heating = l.heatingType ? `Ogrzewanie: ${l.heatingType}` : "";
+	const utilities = formatUtilities(l.utilities);
 	return `
     <div class="min-w-56 space-y-1 text-sm">
       <div class="font-semibold leading-tight">${escapeHtml(l.title)}</div>
@@ -144,6 +169,7 @@ function popupHtml(l: ApiListing): string {
       </div>
       <div class="text-gray-500">${escapeHtml(details)}</div>
       <div class="text-gray-500">${escapeHtml(heating)}</div>
+      <div class="text-gray-500">${escapeHtml(utilities)}</div>
       <div class="text-gray-400">Dodano: ${addedLabel}</div>
       ${
 				stats

@@ -21,6 +21,7 @@
     "crawl:airbnb-calendar": "tsx src/crawler/airbnb-calendar.ts",
     "assign-buildings": "tsx src/crawler/assign-buildings.ts",
     "geocode-addresses": "tsx src/crawler/geocode-addresses.ts",
+    "estimate-utilities": "tsx src/crawler/estimate-utilities.ts",
     "build-street-lexicon": "tsx scripts/build-street-lexicon.ts"
   },
   "dependencies": {

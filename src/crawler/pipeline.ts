@@ -53,6 +53,7 @@ export const ListingSchema = Schema.Struct({
 	reviewsCount: Schema.optional(Schema.Union(Schema.Number, Schema.Null)),
 	availabilityCount: Schema.optional(Schema.Union(Schema.Number, Schema.Null)),
 	maxGuests: Schema.optional(Schema.Union(Schema.Number, Schema.Null)),
+	utilities: Schema.optional(Schema.Union(Schema.String, Schema.Null)),
 });
 
 export const ListingArraySchema = Schema.Array(ListingSchema);

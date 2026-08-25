@@ -1,5 +1,6 @@
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { parseAddressFromText } from "./address.ts";
+import { parseUtilities } from "../utilities.ts";
 
 interface OlxListState {
 	pageNumber?: number;
@@ -171,6 +172,7 @@ function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 			scrapedAt: new Date().toISOString(),
 			offerType: opts.offerType,
 			pricePeriod: opts.pricePeriod,
+			utilities: parseUtilities(ad.description ?? ad.title),
 		};
 	}
 

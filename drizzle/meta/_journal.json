@@ -57,6 +57,13 @@
       "when": 1786979497387,
       "tag": "0007_sharp_sabretooth",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1787672310694,
+      "tag": "0008_material_colonel_america",
+      "breakpoints": true
     }
   ]
 }
