@@ -16,7 +16,7 @@ async function main(): Promise<void> {
 		.select({ id: listings.id, description: listings.description })
 		.from(listings)
 		.where(
-			sql`${listings.offerType} != 'sale' and ${listings.utilities} is null`,
+			sql`${listings.offerType} = 'long_term_rental' and ${listings.utilities} is null`,
 		)
 		.all();
 
@@ -36,7 +36,7 @@ async function main(): Promise<void> {
 		})
 		.from(listings)
 		.where(
-			sql`${listings.offerType} != 'sale' and ${listings.utilities} is null`,
+			sql`${listings.offerType} = 'long_term_rental' and ${listings.utilities} is null`,
 		)
 		.all();
 
@@ -47,8 +47,8 @@ async function main(): Promise<void> {
 			.from(listings)
 			.where(
 				row.buildingId != null
-					? sql`${listings.offerType} != 'sale' and ${listings.utilities} is not null and ${listings.buildingId} = ${row.buildingId}`
-					: sql`${listings.offerType} != 'sale' and ${listings.utilities} is not null and ${listings.district} = ${row.district ?? ""}`,
+					? sql`${listings.offerType} = 'long_term_rental' and ${listings.utilities} is not null and ${listings.buildingId} = ${row.buildingId}`
+					: sql`${listings.offerType} = 'long_term_rental' and ${listings.utilities} is not null and ${listings.district} = ${row.district ?? ""}`,
 			)
 			.limit(1)
 			.get();

@@ -172,7 +172,10 @@ function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 			scrapedAt: new Date().toISOString(),
 			offerType: opts.offerType,
 			pricePeriod: opts.pricePeriod,
-			utilities: parseUtilities(ad.description ?? ad.title),
+			utilities:
+				opts.offerType === "long_term_rental"
+					? parseUtilities(ad.description ?? ad.title)
+					: null,
 		};
 	}
 
