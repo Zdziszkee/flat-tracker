@@ -138,7 +138,9 @@ async function scrapeMaxGuests(
 	});
 }
 
-export async function runAirbnbCalendarImport(): Promise<{
+export async function runAirbnbCalendarImport(
+	opts: { missingOnly?: boolean } = {},
+): Promise<{
 	listings: number;
 	days: number;
 	failures: number;
@@ -152,7 +154,11 @@ export async function runAirbnbCalendarImport(): Promise<{
 		})
 		.from(listings)
 		.where(
-			sql`${listings.source} = 'airbnb' and ${listings.isActive} = 1 and ${listings.externalId} != ''`,
+			sql`${listings.source} = 'airbnb' and ${listings.isActive} = 1 and ${listings.externalId} != ''${
+				opts.missingOnly
+					? sql` and ${listings.id} not in (select listing_id from availability)`
+					: sql``
+			}`,
 		)
 		.all();
 
@@ -352,7 +358,8 @@ export async function runAirbnbCalendarImport(): Promise<{
 }
 
 async function main(): Promise<void> {
-	const summary = await runAirbnbCalendarImport();
+	const missingOnly = process.argv.includes("--missing-only");
+	const summary = await runAirbnbCalendarImport({ missingOnly });
 	console.log(
 		`done: listings=${summary.listings} days=${summary.days} ` +
 			`failures=${summary.failures} monthlyRows=${summary.monthlyRows}`,
