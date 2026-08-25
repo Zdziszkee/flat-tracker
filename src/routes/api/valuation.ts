@@ -57,7 +57,7 @@ export const Route = createFileRoute("/api/valuation")({
 						const overUnderPct = ((saleM2 - fairPriceM2) / fairPriceM2) * 100;
 						const paybackYears = saleM2 / annualRentM2;
 						const priceToRent = saleM2 / annualRentM2;
-						const appreciation = saleM2 * (Math.pow(1.03, 10) - 1);
+						const appreciation = saleM2 * (1.03 ** 10 - 1);
 						const tenYearReturnPct =
 							((annualRentM2 * 10 + appreciation) / saleM2) * 100;
 						// Higher = cheaper relative to income (more undervalued).
