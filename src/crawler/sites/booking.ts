@@ -3,18 +3,19 @@ import type { Page } from "playwright";
 import type { Listing, PlaywrightAdapter } from "../types.ts";
 
 /**
- * Booking.com short-term rental search results for Małopolska (Kraków as the
- * destination anchor). Booking's search page is DataDome-protected and needs
- * a real browser; the card DOM is parsed in-page.
+ * Booking.com short-term rental search results for Małopolska (entire region).
+ * Booking's search page is DataDome-protected and serves a degraded, static
+ * variant (no "load more" button, ~25 cards) to ordinary automated browsers.
+ * A camoufox (Firefox anti-detect) session returns the real interactive view
+ * (full property count + the "Załaduj więcej wyników" load-more button), so the
+ * crawl launcher prefers camoufox and falls back to plain Playwright.
  *
  * NOTE: prices only render when `checkin`/`checkout` are present, so the
- * start URL pins a rolling 7-night window. This adapter is intentionally not
- * registered in the shared `adapters` list until it has been verified against
- * a live session — run it manually via `npm run crawl:booking`.
+ * start URL pins a rolling 7-night window.
  */
 
 const SEARCH_URL =
-	"https://www.booking.com/searchresults.pl.html?ss=ma%C5%82opolskie&ssne=ma%C5%82opolskie&ssne_untouched=ma%C5%82opolskie&efdco=1&label=gog235jc-10CAYotgFCC21hbG9wb2xza2llSB5YA2i2AYgBAZgBM7gBGcgBD9gBA-gBAfgBAYgCAagCAbgC6oW31AbAAgHSAiRiYzE5ZjQwZS0yYmYxLTRmYTYtOGFiNS1lNGZkOTIwZTZiMjDYAgHgAgE&aid=356980&lang=pl&sb=1&src_elem=sb&src=region&dest_id=1307&dest_type=region&group_adults=2&no_rooms=1&group_children=0&sb_lp=1&checkin=2026-09-01&checkout=2026-09-08";
+	"https://www.booking.com/searchresults.pl.html?ss=ma%C5%82opolskie&ssne=ma%C5%82opolskie&ssne_untouched=ma%C5%82opolskie&efdco=1&label=gog235jc-10CAYotgFCC21hbG9wb2xza2llSB5YA2i2AYgBAZgBM7gBGcgBD9gBA-gBAfgBAYgCAagCAbgC6oW31AbAAgHSAiRiYzE5ZjQwZS0yYmYxLTRmYTYtOGFiNS1lNGZkOTIwZTZiMjDYAgHgAgE&aid=356980&lang=pl&sb=1&src_elem=sb&src=region&dest_id=1307&dest_type=region&group_adults=2&no_rooms=1&group_children=0&sb_lp=1&checkin=2026-09-01&checkout=2026-09-08&chal_t=1787675374022&force_referer=https%3A%2F%2Fwww.booking.com%2Fregion%2Fpl%2Fmalopolskie.pl.html";
 
 // Booking strips the `offset` URL parameter and renders no page buttons:
 // the search page appends more results when the "Załaduj więcej wyników"

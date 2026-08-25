@@ -6,6 +6,7 @@ import {
 	PlaywrightCrawler,
 } from "crawlee";
 
+import { bookingLauncherFactory } from "./camoufox-launch.ts";
 import type { Listing, SiteAdapter } from "./types.ts";
 
 // Keep crawler logs compact: warnings/errors only. The per-page progress
@@ -21,6 +22,11 @@ export interface CrawlResult {
 /**
  * Run a crawl for a site adapter. Uses a real browser for JS-rendered
  * sites and plain HTTP + Cheerio for static ones, with the same output.
+ *
+ * Booking is special-cased: it is DataDome-protected, so it is launched via
+ * `bookingLauncherFactory` (camoufox anti-detect Firefox, with a plain
+ * Playwright fallback) directly instead of through Crawlee, which cannot
+ * accept a custom-launched browser.
  */
 export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 	const listings: Listing[] = [];
@@ -37,6 +43,34 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 		: (adapter.maxRequestsPerCrawl ?? 100);
 
 	if (adapter.kind === "playwright") {
+		// Booking is DataDome-protected: launch via bookingLauncherFactory
+		// (camoufox anti-detect Firefox, with a plain Playwright fallback)
+		// directly — Crawlee cannot accept a custom-launched browser. The
+		// adapter's extractListings() drives pagination/load-more itself.
+		if (adapter.id === "booking") {
+			const browser = await bookingLauncherFactory(true);
+			try {
+				const context = await browser.newContext({
+					viewport: { width: 1440, height: 900 },
+					locale: "pl-PL",
+				});
+				const page = await context.newPage();
+				await page.goto(adapter.startUrls[0], {
+					waitUntil: "domcontentloaded",
+					timeout: 60000,
+				});
+				await page.waitForSelector(adapter.listingSelector, {
+					timeout: 30000,
+				});
+				const pageListings = await adapter.extractListings(page);
+				listings.push(...pageListings);
+				await page.close();
+			} finally {
+				await browser.close();
+			}
+			return { listings, pages: 1 };
+		}
+
 		const crawler = new PlaywrightCrawler(
 			{
 				maxRequestsPerCrawl,
