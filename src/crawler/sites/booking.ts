@@ -14,7 +14,7 @@ import type { Listing, PlaywrightAdapter } from "../types.ts";
  */
 
 const SEARCH_URL =
-	"https://www.booking.com/searchresults.pl.html?ss=Krak%C3%B3w&dest_id=-510625&dest_type=city&checkin=2026-08-20&checkout=2026-08-27&group_adults=2&no_rooms=1&group_children=0&sb=1";
+	"https://www.booking.com/searchresults.pl.html?ss=ma%C5%82opolskie&ssne=ma%C5%82opolskie&ssne_untouched=ma%C5%82opolskie&efdco=1&label=gog235jc-10CAYotgFCC21hbG9wb2xza2llSB5YA2i2AYgBAZgBM7gBGcgBD9gBA-gBAfgBAYgCAagCAbgC6oW31AbAAgHSAiRiYzE5ZjQwZS0yYmYxLTRmYTYtOGFiNS1lNGZkOTIwZTZiMjDYAgHgAgE&aid=356980&lang=pl&sb=1&src_elem=sb&src=region&dest_id=1307&dest_type=region&group_adults=2&no_rooms=1&group_children=0&sb_lp=1&checkin=2026-09-01&checkout=2026-09-08";
 
 const PAGES = 20;
 

@@ -14,7 +14,7 @@ import type { CheerioAdapter, Listing } from "../types.ts";
  */
 
 const SEARCH_URL =
-	"https://www.airbnb.pl/s/homes?adults=2&ne_lat=50.6&ne_lng=21.6&sw_lat=49.1&sw_lng=19.0&zoom=8&search_type=unknown&location_search=NEARBY";
+	"https://www.airbnb.pl/s/Lesser-Poland-Voivodeship--Poland/homes?adults=1&refinement_paths%5B%5D=%2Fhomes&place_id=ChIJXe0Xc18WFkcRcMDkxa18AQE&query=Lesser%20Poland%20Voivodeship%2C%20Poland&flexible_trip_lengths%5B%5D=one_week&monthly_start_date=2026-09-01&monthly_length=3&monthly_end_date=2026-12-01&search_mode=regular_search&price_filter_input_type=2&channel=EXPLORE&ne_lat=51.32727302353554&ne_lng=23.143675988176255&sw_lat=48.41323651378321&sw_lng=18.360351146270887&zoom=8.73265530645283&zoom_level=8.73265530645283&search_by_map=true&search_type=user_map_move";
 
 interface Coordinate {
 	latitude?: number;
