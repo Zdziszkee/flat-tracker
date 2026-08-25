@@ -19,7 +19,7 @@ import {
  * captures seasonality (June vs January) instead of one flat nightly price.
  */
 
-const MONTHS = 12;
+const MONTHS = 4;
 
 interface CalendarDay {
 	calendarDate?: string;
@@ -215,7 +215,7 @@ export async function runAirbnbCalendarImport(): Promise<{
 			}
 
 			// Capture how the first month's price changes with guest count.
-			const guestCap = Math.min(maxGuests ?? 2, 4);
+			const guestCap = Math.min(maxGuests ?? 2, 2);
 			const guestTotals: Array<{ adults: number; total: number | null }> = [];
 			for (let adults = 1; adults <= guestCap; adults++) {
 				const total = await scrapeStayTotal(
