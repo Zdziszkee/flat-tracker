@@ -112,11 +112,15 @@ async function scrapeCalendarDays(
 			waitUntil: "domcontentloaded",
 			timeout: 30_000,
 		});
-		await page.waitForSelector('[aria-label="Kalendarz"]', { timeout: 20_000 });
+		await page
+			.waitForSelector('[aria-label="Kalendarz"]', { timeout: 20_000 })
+			.catch(() => {});
 		return await Promise.race([
 			calendarPromise,
 			new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
 		]);
+	} catch {
+		return null;
 	} finally {
 		page.off("response", onResponse);
 	}
