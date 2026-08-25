@@ -18,6 +18,7 @@
     "db:push": "drizzle-kit push",
     "db:pull": "drizzle-kit pull",
     "db:studio": "drizzle-kit studio",
+    "crawl:airbnb-calendar": "tsx src/crawler/airbnb-calendar.ts",
     "assign-buildings": "tsx src/crawler/assign-buildings.ts",
     "geocode-addresses": "tsx src/crawler/geocode-addresses.ts",
     "build-street-lexicon": "tsx scripts/build-street-lexicon.ts"

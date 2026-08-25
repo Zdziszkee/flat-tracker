@@ -54,20 +54,31 @@ async function scrapeStayTotal(
 	end: string,
 	adults = 2,
 ): Promise<number | null> {
-	await page.goto(roomUrl(listingId, start, end, adults), {
-		waitUntil: "domcontentloaded",
-		timeout: 30_000,
-	});
-	await page.waitForSelector('[aria-label="Kalendarz"]', { timeout: 20_000 });
-	return page.evaluate(() => {
-		const text =
-			document.querySelector<HTMLElement>('[data-testid="book-it-default"]')
-				?.innerText ?? "";
-		const amounts = [...text.matchAll(/([\d\s.,]+)\s*zł/g)]
-			.map((m) => Number(m[1].replace(/\s/g, "").replace(",", ".")))
-			.filter((n) => Number.isFinite(n) && n > 0);
-		return amounts.length > 0 ? (amounts[1] ?? amounts[0]) : null;
-	});
+	try {
+		await page.goto(roomUrl(listingId, start, end, adults), {
+			waitUntil: "domcontentloaded",
+			timeout: 30_000,
+		});
+		await page
+			.waitForSelector(
+				'[data-testid="book-it-default"], [aria-label="Kalendarz"]',
+				{
+					timeout: 20_000,
+				},
+			)
+			.catch(() => {});
+		return await page.evaluate(() => {
+			const text =
+				document.querySelector<HTMLElement>('[data-testid="book-it-default"]')
+					?.innerText ?? "";
+			const amounts = [...text.matchAll(/([\d\s.,]+)\s*zł/g)]
+				.map((m) => Number(m[1].replace(/\s/g, "").replace(",", ".")))
+				.filter((n) => Number.isFinite(n) && n > 0);
+			return amounts.length > 0 ? (amounts[1] ?? amounts[0]) : null;
+		});
+	} catch {
+		return null;
+	}
 }
 
 async function scrapeCalendarDays(
@@ -335,3 +346,16 @@ export async function runAirbnbCalendarImport(): Promise<{
 		monthlyRows,
 	};
 }
+
+async function main(): Promise<void> {
+	const summary = await runAirbnbCalendarImport();
+	console.log(
+		`done: listings=${summary.listings} days=${summary.days} ` +
+			`failures=${summary.failures} monthlyRows=${summary.monthlyRows}`,
+	);
+}
+
+main().catch((err) => {
+	console.error(err);
+	process.exitCode = 1;
+});
