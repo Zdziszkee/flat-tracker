@@ -19,3 +19,4 @@ storage/
 # SQLite dev database (regenerate with db:migrate + crawl/import)
 dev.db
 dev.db-journal
+.devserver.log
