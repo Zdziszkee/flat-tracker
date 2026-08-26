@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { sql } from "drizzle-orm";
 import type { CheerioAdapter, Listing } from "../types.ts";
 
 /**
@@ -53,6 +54,8 @@ interface Tile {
 	depth: number;
 	/** Last completed cursor-chain walk; spreads leaf revisits across runs. */
 	drainedAt?: string;
+	/** Listings already known from this tile (DB-aware crawl bookkeeping). */
+	knownListings?: number;
 }
 
 interface QuadtreeCache {
@@ -139,6 +142,40 @@ function markDrained(name: string): void {
 	if (!tile) return;
 	tile.drainedAt = new Date().toISOString();
 	persistFrontier(frontier);
+}
+
+/**
+ * DB-aware crawl: when enabled (default), each drained tile records how
+ * many of its listings are already stored, and tiles whose last walk
+ * yielded nothing new are demoted so the next run spends its budget on
+ * tiles that still grow the DB.
+ */
+const SKIP_KNOWN =
+	(process.env.AIRBNB_SKIP_KNOWN ?? "1") !== "0" &&
+	typeof process !== "undefined";
+
+async function countListingsInBox(
+	minLat: number,
+	minLng: number,
+	maxLat: number,
+	maxLng: number,
+): Promise<number | null> {
+	if (!SKIP_KNOWN) return null;
+	try {
+		const { db } = await import("../../db/index.ts");
+		const { listings } = await import("../../db/schema.ts");
+		const rows = await db
+			.select({
+				c: sql<number>`count(*)`,
+			})
+			.from(listings)
+			.where(
+				sql`${listings.source} = 'airbnb' AND ${listings.lat} between ${minLat} and ${maxLat} AND ${listings.lng} between ${minLng} and ${maxLng}`,
+			);
+		return rows[0]?.c ?? 0;
+	} catch {
+		return null;
+	}
 }
 
 function replaceTile(tile: Tile, kids: Tile[]): void {
@@ -404,7 +441,32 @@ export const airbnbAdapter: CheerioAdapter = {
 			maxLng: Number(u.searchParams.get("ne_lng")),
 			depth: Number(u.searchParams.get("d") ?? "0"),
 		};
+		// Was this leaf fully walked by an earlier run? Only then may we
+		// trust the DB count to skip its pagination (fresh tiles must walk).
+		const wasDrainedBefore =
+			frontier.find((t) => t.name === tile.name)?.drainedAt != null;
 		markDrained(tile.name);
+		const known = await countListingsInBox(
+			tile.minLat,
+			tile.minLng,
+			tile.maxLat,
+			tile.maxLng,
+		);
+		if (known != null) tile.knownListings = known;
+		persistFrontier(frontier);
+		if (
+			SKIP_KNOWN &&
+			wasDrainedBefore &&
+			pageCursors.length > 0 &&
+			results.length >= PAGE_SIZE &&
+			tile.knownListings != null &&
+			tile.knownListings <= results.length
+		) {
+			// Fully drained before AND every listing on the first page is
+			// already stored: nothing new to walk. Demote it (stale drainedAt)
+			// so future runs prefer tiles that still grow the DB.
+			return results.map(resultToListing);
+		}
 		const saturated =
 			pageCursors.length >= CURSOR_CAP && results.length >= PAGE_SIZE;
 		if (saturated && tile.depth < MAX_DEPTH) {

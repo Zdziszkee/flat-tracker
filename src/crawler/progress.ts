@@ -21,7 +21,13 @@ export interface SourceProgress {
 	error?: string;
 }
 
-export type RefreshPhase = "crawl" | "prune" | "geocode" | "rcn" | "done";
+export type RefreshPhase =
+	| "crawl"
+	| "prune"
+	| "airbnb-enrich"
+	| "geocode"
+	| "rcn"
+	| "done";
 
 export interface RefreshProgress {
 	runId: string;

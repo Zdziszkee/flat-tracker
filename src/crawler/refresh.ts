@@ -5,6 +5,7 @@ import { Effect } from "effect";
 
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
+import { enrichAirbnbDetails } from "./airbnb-enrich.ts";
 import { pruneOldListings, recordCrawlRun } from "./db-sink.ts";
 import { geocodeUnlocatedListings } from "./geocode-listings.ts";
 import { importRcn } from "./import-rcn.ts";
@@ -91,6 +92,8 @@ export async function refreshAll(
 		sinceDays?: number;
 		diffOnly?: boolean;
 		includeRcn?: boolean;
+		/** Airbnb detail-page enrichment (beds/guests/amenities). Default on. */
+		includeAirbnbEnrich?: boolean;
 		/**
 		 * Fetch only the first (newest) page per site. Defaults to true: the
 		 * hourly/server refresh is an incremental catch-up.
@@ -266,6 +269,32 @@ export async function refreshAll(
 		const pruned = await pruneOldListings(
 			new Date(now - sinceDays * 24 * 60 * 60 * 1000),
 		);
+
+		// Airbnb room-page enrichment: bedrooms/beds/bathrooms, guests,
+		// amenities for listings captured by the search crawl. Budgeted so
+		// the hourly cron drains the backlog politely (~100 pages/run).
+		if (opts.includeAirbnbEnrich !== false) {
+			setPhase("airbnb-enrich");
+			const aT0 = Date.now();
+			setSourceProgress("airbnb-enrich", {
+				state: "running",
+				startedAt: new Date(aT0).toISOString(),
+			});
+			const enrich = await enrichAirbnbDetails({ limit: 100 });
+			await recordCrawlRun({
+				source: "airbnb-enrich",
+				startedAt: new Date(aT0),
+				finishedAt: new Date(),
+				pages: enrich.fetched,
+				newCount: enrich.enriched,
+				updatedCount: 0,
+			});
+			setSourceProgress("airbnb-enrich", {
+				state: "ok",
+				finishedAt: new Date().toISOString(),
+				newCount: enrich.enriched,
+			});
+		}
 
 		// Anchor new offers on the map: local OSM-index matches are instant,
 		// Nominatim is budgeted (100/run) so the hourly cron drains the backlog
