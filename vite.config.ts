@@ -38,6 +38,12 @@ const config = defineConfig({
 					/^linkedom$/,
 					/^jsdom$/,
 					/^got-scraping/,
+					// camoufox-js (Booking anti-detect) pulls `impit`, whose
+					// native .node binary must load from node_modules, not be
+					// inlined/read as text by the bundler.
+					/^camoufox/,
+					/^impit($|\/)/,
+					/^fingerprint-generator$/,
 				],
 			},
 			experimental: { tasks: true },

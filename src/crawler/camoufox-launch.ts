@@ -1,4 +1,3 @@
-import { launchOptions } from "camoufox-js";
 import { chromium } from "playwright";
 // camoufox-js peers on playwright-core <1.61.0; using its `firefox` (1.60.0)
 // for the camoufox launch avoids the viewport schema mismatch that the newer
@@ -26,7 +25,9 @@ async function detectCamoufox(): Promise<boolean> {
 	if (camoufoxAvailable !== null) return camoufoxAvailable;
 	try {
 		// Resolving the module is enough to know whether it was installed.
-		await import("camoufox-js");
+		// @vite-ignore keeps the dependency optimizer from scanning
+		// camoufox-js (its impit native binary cannot be prebundled).
+		await import(/* @vite-ignore */ "camoufox-js");
 		camoufoxAvailable = true;
 	} catch {
 		camoufoxAvailable = false;
@@ -47,6 +48,10 @@ export async function bookingLauncherFactory(
 			// `launchOptions` produces a Playwright Firefox launch config that
 			// points at the downloaded camoufox binary. It injects a `viewport`
 			// object Playwright's launcher schema rejects, so strip it.
+			// Lazy + @vite-ignore: never let the bundler touch camoufox-js.
+			const { launchOptions } = await import(
+				/* @vite-ignore */ "camoufox-js"
+			);
 			const opts = await launchOptions({ os: ["linux"] });
 			const { viewport: _omit, ...rest } = opts as Record<string, unknown>;
 			return (await firefox.launch({
