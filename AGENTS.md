@@ -126,6 +126,8 @@ history is pruned to the 7-day cap. Dev-start runs are also first-page-only.
 `assign-buildings` uses a **local OSM building index** (`osm_buildings`
 table) built from a Geofabrik extract of the małopolskie region
 (`data/osm/malopolskie.osm.pbf`, ~200 MB, streamed with `osm-pbf-parser`).
+The index covers **all of małopolska** (not just Kraków), so region-wide
+sources (booking, airbnb: Zakopane, Oświęcim, ...) anchor too.
 Point-in-polygon matching then runs in-memory via RBush — the public
 Overpass API is far too rate-limited for the ~84k RCN transactions. The
 index is rebuilt automatically when missing; `npm run assign-buildings`
@@ -221,7 +223,7 @@ price, pricePerM2, areaM2, rooms, floor, district, lat, lng, listedAt).
   sink, so detail-page records refine list-page records
 - `buildings` — OSM buildings referenced by listings/transactions
   (osmId unique, address, tags, geometry)
-- `osm_buildings` — local OSM footprint index for Krakow (bbox, centroid,
+- `osm_buildings` — local OSM footprint index for małopolska (bbox, centroid,
   polygon JSON); built from the Geofabrik extract by `osm-index.ts`
 - `transactions` — RCN history; unique `transactionId`
 
@@ -233,8 +235,9 @@ price, pricePerM2, areaM2, rooms, floor, district, lat, lng, listedAt).
 - **Transactions** — **address-first** (`matchByAddress` in
   `address-index.ts`): RCN transactions carry street + housenumber from
   notarial records, matched exactly against OSM `addr:street` +
-  `addr:housenumber`. ~54k of 84k transactions have an address match
-  (verified: zero mismatches against assigned buildings). Without an
+  `addr:housenumber`, gated by the transaction's own coordinates (same
+  street + number can exist in several towns, so matches farther than
+  300 m from the record's point are rejected). Without an
   address match, fall back to `matchPointStreetAware`: point-in-polygon,
   then a 150 m street-aware fallback. Re-running the script corrects any
   geo-fallback assignments that disagree with the address.
