@@ -123,7 +123,10 @@ export interface PlaywrightAdapter extends AdapterBase {
 	/** Selector to wait for before extracting. */
 	listingSelector: string;
 	/** Extract all listings from a fully rendered page. */
-	extractListings(page: Page): Promise<Listing[]>;
+	extractListings(
+		page: Page,
+		opts?: { firstPageOnly?: boolean },
+	): Promise<Listing[]>;
 }
 
 export type SiteAdapter = CheerioAdapter | PlaywrightAdapter;

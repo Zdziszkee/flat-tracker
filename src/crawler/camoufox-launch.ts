@@ -1,11 +1,14 @@
+import { launchOptions } from "camoufox-js";
 import { chromium } from "playwright";
 // camoufox-js peers on playwright-core <1.61.0; using its `firefox` (1.60.0)
 // for the camoufox launch avoids the viewport schema mismatch that the newer
 // `playwright` (1.62) firefox throws on camoufox's injected context options.
 import { firefox } from "playwright-core";
-import type { Browser } from "playwright";
 
-import { launchOptions } from "camoufox-js";
+// The launcher mixes playwright-core (camoufox peer, 1.60) with the app's
+// `playwright` (1.62); their `Browser` types differ structurally, so every
+// return crosses the boundary through an explicit cast.
+type AppBrowser = import("playwright").Browser;
 
 /**
  * Booking.com (and some other DataDome-protected portals) serve a degraded,
@@ -37,7 +40,7 @@ async function detectCamoufox(): Promise<boolean> {
  */
 export async function bookingLauncherFactory(
 	headless = true,
-): Promise<Browser> {
+): Promise<AppBrowser> {
 	const useCamoufox = await detectCamoufox();
 	if (useCamoufox) {
 		try {
@@ -46,7 +49,10 @@ export async function bookingLauncherFactory(
 			// object Playwright's launcher schema rejects, so strip it.
 			const opts = await launchOptions({ os: ["linux"] });
 			const { viewport: _omit, ...rest } = opts as Record<string, unknown>;
-			return await firefox.launch({ ...rest, headless });
+			return (await firefox.launch({
+				...rest,
+				headless,
+			})) as unknown as AppBrowser;
 		} catch (err) {
 			console.warn(
 				"[camoufox] launch failed, falling back to plain Playwright:",

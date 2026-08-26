@@ -50,8 +50,10 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 		if (adapter.id === "booking") {
 			const browser = await bookingLauncherFactory(true);
 			try {
+				// viewport:null keeps camoufox's injected fingerprint window size
+				// instead of overriding it (Booking fingerprints viewports).
 				const context = await browser.newContext({
-					viewport: { width: 1440, height: 900 },
+					viewport: null,
 					locale: "pl-PL",
 				});
 				const page = await context.newPage();
@@ -62,7 +64,9 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 				await page.waitForSelector(adapter.listingSelector, {
 					timeout: 30000,
 				});
-				const pageListings = await adapter.extractListings(page);
+				const pageListings = await adapter.extractListings(page, {
+					firstPageOnly,
+				});
 				listings.push(...pageListings);
 				await page.close();
 			} finally {
