@@ -506,6 +506,9 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const mapRef = useRef<mapboxgl.Map | null>(null);
 	const popupRef = useRef<mapboxgl.Popup | null>(null);
+	// Latest listings snapshot, readable from the async map-load callback
+	// no matter whether the API resolves before or after "load" fires.
+	const listingsRef = useRef(listings);
 
 	// Create the map once. The listings snapshot at init is only used for
 	// the initial source data; the effect below pushes updates on changes,
@@ -529,15 +532,20 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			accessToken: TOKEN,
 		});
 		mapRef.current = map;
+		// Debug hook for browser-console inspection.
+		(window as unknown as { __map?: mapboxgl.Map }).__map = map;
 
 		map.addControl(
 			new mapboxgl.NavigationControl({ visualizePitch: true }),
 			"top-right",
 		);
 
-		map.on("load", () => {
-			// Standard ships its own DEM source + terrain/sky/lighting; only
-			// expose the 3D-terrain toggle for users who want flat mode.
+		// Terrain + hillshade, per docs.mapbox.com/mapbox-gl-js/example/add-terrain
+		// and /example/hillshade: add the DEM source(s) and setTerrain in
+		// `style.load`, which fires after every style (re)load. Terrain is
+		// NOT part of the Standard fragment style — `mapbox-dem` there only
+		// exists as an import-internal source, so we add our own.
+		map.on("style.load", () => {
 			if (!map.getSource("mapbox-dem")) {
 				map.addSource("mapbox-dem", {
 					type: "raster-dem",
@@ -547,32 +555,29 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				});
 			}
 			map.setTerrain({ source: "mapbox-dem", exaggeration: 1.2 });
-			// Hillshade over the whole viewport (Malopolska included) —
-			// slotted below every Standard basemap layer so labels/roads
-			// stay readable on top of the relief shading.
-			if (!map.getLayer("hillshade-demo")) {
-				map.addLayer(
-					{
-						id: "hillshade-demo",
-						type: "hillshade",
-						source: "mapbox-dem",
-						slot: "bottom",
-						paint: { "hillshade-exaggeration": 0.3 },
-					},
-					map.getStyle().layers?.[0]?.id,
-				);
+			// Hillshade in its own DEM source (sharing one source with
+			// terrain halves hillshade resolution), slotted `bottom` so
+			// every Standard basemap layer draws on top of the relief.
+			if (!map.getSource("mapbox-dem-hillshade")) {
+				map.addSource("mapbox-dem-hillshade", {
+					type: "raster-dem",
+					url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+					tileSize: 512,
+					maxzoom: 14,
+				});
 			}
-			map.addControl(
-				new (
-					mapboxgl as unknown as {
-						TerrainControl: new (o: object) => mapboxgl.IControl;
-					}
-				).TerrainControl({
-					source: "mapbox-dem",
-				}),
-				"top-right",
-			);
+			if (!map.getLayer("hillshade-demo")) {
+				map.addLayer({
+					id: "hillshade-demo",
+					type: "hillshade",
+					source: "mapbox-dem-hillshade",
+					slot: "bottom",
+					paint: { "hillshade-exaggeration": 0.3 },
+				});
+			}
+		});
 
+		map.on("load", () => {
 			// Softer daytime light so the colorful Standard palette reads well.
 			try {
 				map.setConfigProperty("basemap", "lightPreset", "day");
@@ -581,43 +586,30 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			}
 
 			// RCN history on Standard's own extruded buildings: the style's
-			// 3d-building layer colors features whose `select`/`highlight`
+			// building featureset colors features whose `select`/`highlight`
 			// feature-state is set, using colorBuildingSelect/colorBuildingHighlight
 			// config values. We mark history buildings via `highlight` so they
 			// pop in the accent color while keeping real heights + landmarks.
+			// The `composite` source lives inside the `basemap` import, so the
+			// state must be set through the scoped featureset target
+			// ({target: {featuresetId, importId}}) — a root-style
+			// {source: "composite"} selector throws "source does not exist".
 			void fetch("/api/buildings/history-ids")
 				.then((r) => r.json())
 				.then((d: { osmIds: number[] }) => {
 					for (const osmId of d.osmIds) {
 						map.setFeatureState(
 							{
-								source: "composite",
-								sourceLayer: "building",
+								target: {
+									featuresetId: "buildings",
+									importId: "basemap",
+								},
 								id: osmId,
-							},
+								// The public typings only spell out TargetFeature
+								// (a queryRenderedFeatures result), but the impl
+								// accepts this plain {target, id} descriptor.
+							} as unknown as mapboxgl.MapboxGeoJSONFeature,
 							{ highlight: true },
-						);
-					}
-					console.log(`marked ${d.osmIds.length} buildings with history`);
-				})
-				.catch(() => {
-					// Coloring is optional; the map works without it.
-				});
-
-			// Mark history buildings with feature-state. Composite building
-			// features carry OSM ids (verified against our osm_buildings), so
-			// setFeatureState colors exactly the right buildings.
-			void fetch("/api/buildings/history-ids")
-				.then((r) => r.json())
-				.then((d: { osmIds: number[] }) => {
-					for (const osmId of d.osmIds) {
-						map.setFeatureState(
-							{
-								source: "composite",
-								sourceLayer: "building",
-								id: osmId,
-							},
-							{ hasHistory: true },
 						);
 					}
 					console.log(`marked ${d.osmIds.length} buildings with history`);
@@ -658,7 +650,7 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			// Listings as a GeoJSON circle layer (fast with thousands of points).
 			map.addSource("listings", {
 				type: "geojson",
-				data: toGeoJson(listings),
+				data: toGeoJson(listingsRef.current),
 			});
 			map.addLayer({
 				id: "listings-circle",
@@ -763,19 +755,23 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 
 			// ---- Cadastral parcels (RCN_Dzialka) --------------------------
 			// Viewport-limited GeoJSON grid; refetched as the camera moves.
-			// Parcels WITH RCN transactions get a warm fill, the rest stay
-			// faint gray outlines. Clicking one shows its RCN history.
+			// Loaded at every zoom (the API caps at 6000 features), so the
+			// layer is present from boot. Parcels WITH RCN transactions get a
+			// warm fill, the rest stay faint gray outlines. Clicking one
+			// shows its RCN history.
 			let parcelsSeq = 0;
 			const loadParcels = () => {
-				if (map.getZoom() < 12) return; // grid is meaningless far out
 				const b = map.getBounds();
 				if (!b) return;
+				// Pad the viewport so panning doesn't expose empty edges.
+				const padLng = (b.getEast() - b.getWest()) * 0.1;
+				const padLat = (b.getNorth() - b.getSouth()) * 0.1;
 				const seq = ++parcelsSeq;
 				const params = new URLSearchParams({
-					minLng: String(b.getWest()),
-					minLat: String(b.getSouth()),
-					maxLng: String(b.getEast()),
-					maxLat: String(b.getNorth()),
+					minLng: String(b.getWest() - padLng),
+					minLat: String(b.getSouth() - padLat),
+					maxLng: String(b.getEast() + padLng),
+					maxLat: String(b.getNorth() + padLat),
 				});
 				void fetch(`/api/parcels?${params.toString()}`)
 					.then((r) => r.json())
@@ -804,18 +800,26 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 								id: "parcel-fill",
 								type: "fill",
 								source: "parcels",
+								// `middle` slot: above landuse/water/hillshade,
+								// below streets and labels. With terrain enabled
+								// the fill drapes onto the DEM, so parcels hug
+								// the relief instead of floating flat.
+								slot: "middle",
 								paint: {
 									"fill-color": [
 										"case",
 										["==", ["get", "hasRcn"], true],
 										"#e8a33d",
-										"#9ca3af",
+										"#6b7280",
 									],
 									"fill-opacity": [
-										"case",
-										["==", ["get", "hasRcn"], true],
-										0.18,
-										0.05,
+										"interpolate",
+										["linear"],
+										["zoom"],
+										9,
+										0,
+										12,
+										["case", ["==", ["get", "hasRcn"], true], 0.18, 0.05],
 									],
 								},
 							});
@@ -823,12 +827,13 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 								id: "parcel-outline",
 								type: "line",
 								source: "parcels",
+								slot: "middle",
 								paint: {
 									"line-color": [
 										"case",
 										["==", ["get", "hasRcn"], true],
 										"#b97a17",
-										"#c7cbd1",
+										"#9aa1a9",
 									],
 									"line-width": [
 										"interpolate",
@@ -839,7 +844,15 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 										16,
 										1.6,
 									],
-									"line-opacity": 0.85,
+									"line-opacity": [
+										"interpolate",
+										["linear"],
+										["zoom"],
+										9,
+										0.2,
+										12,
+										0.85,
+									],
 								},
 							});
 							// Parcel popups mirror building history.
@@ -973,17 +986,18 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 	}, []);
 
 	// Push updated listings into the source whenever the filter changes.
+	// setData is safe even while the style is still streaming, so apply it
+	// unconditionally. The old isStyleLoaded()/once("load") guard dead-locked
+	// when the API resolved after "load" had already fired: the queued
+	// callback never ran and the source stayed empty (no dots on the map).
 	useEffect(() => {
+		listingsRef.current = listings;
 		const map = mapRef.current;
 		if (!map) return;
-		const apply = () => {
-			const src = map.getSource("listings");
-			if (src && "setData" in src) {
-				(src as mapboxgl.GeoJSONSource).setData(toGeoJson(listings));
-			}
-		};
-		if (map.isStyleLoaded()) apply();
-		else map.once("load", apply);
+		const src = map.getSource("listings");
+		if (src && "setData" in src) {
+			(src as mapboxgl.GeoJSONSource).setData(toGeoJson(listings));
+		}
 	}, [listings]);
 
 	return <div ref={containerRef} className="h-full w-full" />;
