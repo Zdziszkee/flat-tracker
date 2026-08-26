@@ -49,9 +49,7 @@ export async function bookingLauncherFactory(
 			// points at the downloaded camoufox binary. It injects a `viewport`
 			// object Playwright's launcher schema rejects, so strip it.
 			// Lazy + @vite-ignore: never let the bundler touch camoufox-js.
-			const { launchOptions } = await import(
-				/* @vite-ignore */ "camoufox-js"
-			);
+			const { launchOptions } = await import(/* @vite-ignore */ "camoufox-js");
 			const opts = await launchOptions({ os: ["linux"] });
 			const { viewport: _omit, ...rest } = opts as Record<string, unknown>;
 			return (await firefox.launch({
