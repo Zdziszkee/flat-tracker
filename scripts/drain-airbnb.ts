@@ -16,13 +16,17 @@ process.env.AIRBNB_MAX_REQUESTS = String(budget);
 
 const { crawlSite } = await import("../src/crawler/crawler.ts");
 const { airbnbAdapter } = await import("../src/crawler/sites/airbnb.ts");
+const { saveListings } = await import("../src/crawler/db-sink.ts");
 
 console.log(`drain-airbnb: budget=${budget} requests per run`);
 const t0 = Date.now();
 const { listings, pages } = await crawlSite(airbnbAdapter);
+const report = await saveListings(listings);
 const uniques = new Set(listings.map((l) => l.externalId));
 const withCoords = listings.filter((l) => l.lat !== null).length;
 console.log(
 	`done: pages=${pages} rows=${listings.length} uniques=${uniques.size} ` +
-		`withCoords=${withCoords} elapsed=${((Date.now() - t0) / 60000).toFixed(1)}min`,
+		`withCoords=${withCoords} saved=${report.newCount + report.updatedCount} ` +
+		`(inserted=${report.newCount}, updated=${report.updatedCount}) ` +
+		`elapsed=${((Date.now() - t0) / 60000).toFixed(1)}min`,
 );
