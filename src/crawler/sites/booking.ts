@@ -183,10 +183,10 @@ export const bookingAdapter: PlaywrightAdapter = {
 					);
 					const ratingMatch = (ratingEl?.innerText ?? "").match(/([\d,]+)/);
 					const href = link?.href ?? "";
-					const externalId =
-						href.match(/\/hotel\/pl\/([^./?#]+)/)?.[1] ??
-						href.split("/hotel/")[1]?.split(".")[0] ??
-						href;
+					// Keep the legacy key format (`pl/<slug>`): rows already in
+					// the DB use it, so the coalesce-upsert enriches them in
+					// place instead of inserting near-duplicates under a new key.
+					const externalId = href.split("/hotel/")[1]?.split(".")[0] ?? href;
 
 					return {
 						source: "booking",
@@ -209,9 +209,10 @@ export const bookingAdapter: PlaywrightAdapter = {
 			for (const c of cards) {
 				if (!c.externalId || seen.has(c.externalId)) continue;
 				seen.add(c.externalId);
-				// Join Apollo-cache facts by slug; fall back to whatever the card
-				// itself rendered (rating may appear only on one of the two).
-				const facts = geo.get(c.externalId);
+				// Join Apollo-cache facts by slug (the externalId carries a
+				// `pl/` prefix; strip it for the lookup). Rating may appear only
+				// on the card or only in the cache: prefer whichever exists.
+				const facts = geo.get(c.externalId.replace(/^pl\//, ""));
 				const rating = c.ratingFromCard ?? facts?.rating ?? null;
 				all.push({
 					source: "booking",
