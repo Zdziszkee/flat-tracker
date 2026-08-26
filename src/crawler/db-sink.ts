@@ -167,6 +167,9 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 			reviewsCount: l.reviewsCount ?? null,
 			availabilityCount: l.availabilityCount ?? null,
 			maxGuests: l.maxGuests ?? null,
+			bedrooms: l.bedrooms ?? null,
+			beds: l.beds ?? null,
+			bathrooms: l.bathrooms ?? null,
 			utilities: l.utilities ?? null,
 		};
 	});
@@ -216,12 +219,15 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					scrapedAt: sql.raw(`excluded.scraped_at`),
 					offerType: sql.raw(`excluded.offer_type`),
 					pricePeriod: sql.raw(`excluded.price_period`),
-					minimumStayNights: sql.raw(`excluded.minimum_stay_nights`),
-					rating: sql.raw(`excluded.rating`),
-					reviewsCount: sql.raw(`excluded.reviews_count`),
-					availabilityCount: sql.raw(`excluded.availability_count`),
-					maxGuests: sql.raw(`excluded.max_guests`),
-					utilities: sql.raw(`excluded.utilities`),
+					minimumStayNights: sql`coalesce(excluded.minimum_stay_nights, ${listings.minimumStayNights})`,
+					rating: sql`coalesce(excluded.rating, ${listings.rating})`,
+					reviewsCount: sql`coalesce(excluded.reviews_count, ${listings.reviewsCount})`,
+					availabilityCount: sql`coalesce(excluded.availability_count, ${listings.availabilityCount})`,
+					maxGuests: sql`coalesce(excluded.max_guests, ${listings.maxGuests})`,
+					bedrooms: sql`coalesce(excluded.bedrooms, ${listings.bedrooms})`,
+					beds: sql`coalesce(excluded.beds, ${listings.beds})`,
+					bathrooms: sql`coalesce(excluded.bathrooms, ${listings.bathrooms})`,
+					utilities: sql`coalesce(excluded.utilities, ${listings.utilities})`,
 				},
 			})
 			.returning({

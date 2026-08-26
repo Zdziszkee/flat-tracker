@@ -113,6 +113,12 @@ export const listings = sqliteTable(
 		availabilityCount: integer("availability_count", { mode: "number" }),
 		/** Maximum guest capacity for short-term rentals. */
 		maxGuests: integer("max_guests", { mode: "number" }),
+		/** Bedroom count (short-term rentals, from Airbnb PDP overview). */
+		bedrooms: integer({ mode: "number" }),
+		/** Bed count (short-term rentals, from Airbnb PDP overview). */
+		beds: integer({ mode: "number" }),
+		/** Bathroom count (short-term rentals, may be fractional, e.g. 1.5). */
+		bathrooms: real(),
 		/** Parsed monthly utility/administrative fees for rentals (JSON: ogrzewanie, prad, woda, gaz, smieci). */
 		utilities: text(),
 	},

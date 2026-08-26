@@ -59,6 +59,12 @@ export interface Listing {
 	availabilityCount?: number | null;
 	/** Maximum guest capacity for short-term rentals. */
 	maxGuests?: number | null;
+	/** Bedroom count (short-term rentals). */
+	bedrooms?: number | null;
+	/** Bed count (short-term rentals). */
+	beds?: number | null;
+	/** Bathroom count, may be fractional (short-term rentals). */
+	bathrooms?: number | null;
 	/** Parsed monthly utility/administrative fees for rentals (JSON string). */
 	utilities?: string | null;
 }
