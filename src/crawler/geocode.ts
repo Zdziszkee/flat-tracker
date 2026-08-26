@@ -262,9 +262,7 @@ export async function findBuildingsBatch(
 			// 60 m fetch radius is enough to find the containing building and
 			// keeps the response small enough to avoid 429s/timeouts.
 			const around = slice
-				.map(
-					(p) => `way["building"](around:60,${p.lat},${p.lng});`,
-				)
+				.map((p) => `way["building"](around:60,${p.lat},${p.lng});`)
 				.join("\n");
 			const query = `[out:json][timeout:30];
 (
@@ -476,9 +474,7 @@ export async function assignBuildingsToListings(): Promise<number> {
 
 	const matches = await findBuildingsBatch(points);
 
-	const existing = await db
-		.select({ osmId: buildings.osmId })
-		.from(buildings);
+	const existing = await db.select({ osmId: buildings.osmId }).from(buildings);
 	const existingOsmIds = new Set(existing.map((b) => b.osmId));
 	const ids = await resolveBuildingIds(matches, existingOsmIds);
 
@@ -531,9 +527,7 @@ export async function assignBuildingsToTransactions(): Promise<number> {
 
 	const matches = await findBuildingsBatch(uniquePoints);
 
-	const existing = await db
-		.select({ osmId: buildings.osmId })
-		.from(buildings);
+	const existing = await db.select({ osmId: buildings.osmId }).from(buildings);
 	const existingOsmIds = new Set(existing.map((b) => b.osmId));
 	const ids = await resolveBuildingIds(matches, existingOsmIds);
 

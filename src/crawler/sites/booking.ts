@@ -98,7 +98,9 @@ async function harvestEmbeddedCache(
 ): Promise<number> {
 	const scripts = await page
 		.$$eval('script[type="application/json"]', (els) =>
-			els.map((el) => el.textContent ?? "").filter((t) => t.includes('"latitude"')),
+			els
+				.map((el) => el.textContent ?? "")
+				.filter((t) => t.includes('"latitude"')),
 		)
 		.catch(() => [] as string[]);
 	let found = 0;

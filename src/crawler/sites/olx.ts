@@ -1,6 +1,6 @@
 import type { CheerioAdapter, Listing } from "../types.ts";
-import { parseAddressFromText } from "./address.ts";
 import { parseUtilities } from "../utilities.ts";
+import { parseAddressFromText } from "./address.ts";
 
 interface OlxListState {
 	pageNumber?: number;
