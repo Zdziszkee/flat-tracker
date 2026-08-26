@@ -86,7 +86,12 @@ export const Route = createFileRoute("/api/parcels")({
 				for (const r of rows) {
 					let coords: unknown;
 					try {
-						coords = JSON.parse(r.polygon);
+						// Stored JSON is a full Geometry ({type:"Polygon",coordinates:…})
+						const parsed = JSON.parse(r.polygon) as
+							| { coordinates?: unknown; type?: string }
+							| unknown[];
+						coords = Array.isArray(parsed) ? parsed : parsed.coordinates;
+						if (!Array.isArray(coords)) continue;
 					} catch {
 						continue;
 					}
