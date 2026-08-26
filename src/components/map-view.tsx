@@ -33,6 +33,13 @@ interface ApiListing {
 	offerType?: string;
 	pricePeriod?: string | null;
 	maxGuests?: number | null;
+	bedrooms?: number | null;
+	beds?: number | null;
+	bathrooms?: number | null;
+	rating?: number | null;
+	reviewsCount?: number | null;
+	availabilityCount?: number | null;
+	minimumStayNights?: number | null;
 	utilities?: string | null;
 	transactionStats: {
 		buildingId: number;
@@ -149,28 +156,95 @@ function popupHtml(l: ApiListing): string {
 		? new Date(added).toLocaleDateString("pl-PL")
 		: "n/d";
 	const location = l.address ?? l.district ?? l.buildingAddress ?? "";
-	const details = [
-		l.areaM2 ? `${l.areaM2} m²` : "",
-		l.rooms ? `${l.rooms} pok.` : "",
-		l.floor ? `piętro ${l.floor}` : "",
-		l.propertyType ? l.propertyType : "",
-	]
-		.filter(Boolean)
-		.join(" · ");
+
+	// Physical layout: portal columns first, then Airbnb PDP extraction.
+	// bedrooms wins over rooms so short-term rentals show sypialnie.
+	const layoutParts: string[] = [];
+	if (l.areaM2) layoutParts.push(`${l.areaM2} m²`);
+	if (l.rooms && l.bedrooms == null) layoutParts.push(`${l.rooms} pok.`);
+	if (l.bedrooms != null)
+		layoutParts.push(
+			l.bedrooms === 0
+				? "kawalerka"
+				: `${l.bedrooms} sypialn${l.bedrooms === 1 ? "ia" : "ie"}`,
+		);
+	if (l.beds != null)
+		layoutParts.push(`${l.beds} łóż${l.beds === 1 ? "ko" : "ka"}`);
+	if (l.bathrooms != null)
+		layoutParts.push(
+			`${String(l.bathrooms).replace(".", ",")} łazienk${l.bathrooms === 1 ? "a" : "i"}`,
+		);
+	if (l.maxGuests != null) layoutParts.push(`do ${l.maxGuests} gości`);
+	if (l.floor) layoutParts.push(`piętro ${l.floor}`);
+	if (l.propertyType) layoutParts.push(l.propertyType);
+	const details = layoutParts.join(" · ");
+
 	const heating = l.heatingType ? `Ogrzewanie: ${l.heatingType}` : "";
 	const utilities = formatUtilities(l.utilities);
+
+	// Short-term-rental context lines.
+	const stayLines: string[] = [];
+	if (l.minimumStayNights != null && l.minimumStayNights > 1)
+		stayLines.push(
+			`<div class="text-gray-500">Min. ${l.minimumStayNights} nocy</div>`,
+		);
+	if (l.availabilityCount != null && l.availabilityCount > 0)
+		stayLines.push(
+			`<div class="text-gray-500">Wolne ~${l.availabilityCount} nocy/rok</div>`,
+		);
+
+	// Amenities preview from the enriched features JSON.
+	let amenitiesHtml = "";
+	try {
+		const f: unknown = l.features ? JSON.parse(l.features) : null;
+		const amenities =
+			f &&
+			typeof f === "object" &&
+			Array.isArray((f as Record<string, unknown>).amenities)
+				? ((f as Record<string, unknown>).amenities as unknown[])
+				: [];
+		if (amenities.length > 0) {
+			const shown = amenities.slice(0, 6).map((a) => escapeHtml(String(a)));
+			const rest = amenities.length - shown.length;
+			amenitiesHtml = `
+      <div class="border-t pt-1 text-xs">
+        <div class="font-medium text-emerald-700">Udogodnienia</div>
+        <div class="text-gray-600">${shown.join(", ")}${
+					rest > 0 ? ` <span class="text-gray-400">+${rest} więcej</span>` : ""
+				}</div>
+      </div>`;
+		}
+	} catch {
+		// malformed features JSON: skip the section silently
+	}
+
 	return `
     <div class="min-w-56 space-y-1 text-sm">
       <div class="font-semibold leading-tight">${escapeHtml(l.title)}</div>
       <div class="text-gray-500">${escapeHtml(location)}</div>
       <div class="flex justify-between gap-4 pt-1">
-        <span class="font-medium">${formatPln(l.price)}</span>
+        <span class="font-medium">${formatPln(l.price)}${
+					l.pricePeriod === "night"
+						? '<span class="text-xs font-normal text-gray-400"> /noc</span>'
+						: ""
+				}</span>
         <span>${l.pricePerM2 ? `${l.pricePerM2.toFixed(0)} zł/m²` : ""}</span>
       </div>
       <div class="text-gray-500">${escapeHtml(details)}</div>
-      <div class="text-gray-500">${escapeHtml(heating)}</div>
-      <div class="text-gray-500">${escapeHtml(utilities)}</div>
+      ${
+				l.rating != null && l.rating > 0
+					? `<div><span class="font-medium">${l.rating.toFixed(2)}</span> <span class="text-amber-500">★</span>${
+							l.reviewsCount
+								? ` <span class="text-gray-400">(${l.reviewsCount} opinii)</span>`
+								: ""
+						}</div>`
+					: ""
+			}
+      ${heating ? `<div class="text-gray-500">${escapeHtml(heating)}</div>` : ""}
+      ${utilities ? `<div class="text-gray-500">${escapeHtml(utilities)}</div>` : ""}
+      ${stayLines.join("\n      ")}
       <div class="text-gray-400">Dodano: ${addedLabel}</div>
+      ${amenitiesHtml}
       ${
 				stats
 					? `<div class="border-t pt-1 text-xs">

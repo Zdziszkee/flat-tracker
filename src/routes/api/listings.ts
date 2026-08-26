@@ -110,6 +110,9 @@ export const Route = createFileRoute("/api/listings")({
 						reviewsCount: listings.reviewsCount,
 						availabilityCount: listings.availabilityCount,
 						maxGuests: listings.maxGuests,
+						bedrooms: listings.bedrooms,
+						beds: listings.beds,
+						bathrooms: listings.bathrooms,
 						utilities: listings.utilities,
 					})
 					.from(listings)
