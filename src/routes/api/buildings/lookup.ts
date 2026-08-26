@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import { buildings, osmBuildings, transactions } from "#/db/schema";
 
@@ -32,43 +32,61 @@ interface OsmBuildingLight {
 	lng: number;
 }
 
-let osmCache: OsmBuildingLight[] | null = null;
-
-async function getOsmBuildingsCache(): Promise<OsmBuildingLight[]> {
-	if (osmCache) return osmCache;
+/**
+ * Nearest osm_buildings centroid within 25 m (address-only fallback).
+ * The table is małopolska-wide (~2M rows), so the candidate set is
+ * bbox-filtered in SQL (native scan) and only those rows are scanned
+ * in JS — no full-table in-memory cache.
+ */
+async function findNearestOsm(
+	lat: number,
+	lng: number,
+): Promise<OsmBuildingLight | null> {
+	const dLat = 25 / 111_320; // ~25 m in degrees latitude
+	const cosLat = Math.max(Math.cos((lat * Math.PI) / 180), 0.5);
+	const dLng = dLat / cosLat;
 	const rows = await db
 		.select({
 			osmId: osmBuildings.osmId,
 			address: osmBuildings.address,
-			centroidLat: osmBuildings.centroidLat,
-			centroidLng: osmBuildings.centroidLng,
+			lat: osmBuildings.centroidLat,
+			lng: osmBuildings.centroidLng,
 		})
-		.from(osmBuildings);
-	osmCache = rows.map((r) => ({
-		osmId: r.osmId,
-		address: r.address,
-		lat: r.centroidLat,
-		lng: r.centroidLng,
-	}));
-	return osmCache;
-}
-
-/** Nearest osm_buildings centroid within 25 m (address-only fallback). */
-function findNearestOsm(
-	rows: OsmBuildingLight[],
-	lat: number,
-	lng: number,
-): OsmBuildingLight | null {
+		.from(osmBuildings)
+		.where(
+			and(
+				gte(osmBuildings.centroidLat, lat - dLat),
+				lte(osmBuildings.centroidLat, lat + dLat),
+				gte(osmBuildings.centroidLng, lng - dLng),
+				lte(osmBuildings.centroidLng, lng + dLng),
+			),
+		)
+		.limit(200);
 	let best: OsmBuildingLight | null = null;
 	let bestDist = 25;
 	for (const b of rows) {
-		const d = haversineMeters(lat, lng, b.lat, b.lng);
-		if (d < bestDist) {
-			bestDist = d;
+		const dist = haversineMeters(lat, lng, b.lat, b.lng);
+		if (dist < bestDist) {
+			bestDist = dist;
 			best = b;
 		}
 	}
 	return best;
+}
+
+/** Address-only fallback by exact OSM way id. */
+async function findOsmByld(osmId: number): Promise<OsmBuildingLight | null> {
+	const [row] = await db
+		.select({
+			osmId: osmBuildings.osmId,
+			address: osmBuildings.address,
+			lat: osmBuildings.centroidLat,
+			lng: osmBuildings.centroidLng,
+		})
+		.from(osmBuildings)
+		.where(eq(osmBuildings.osmId, osmId))
+		.limit(1);
+	return row ?? null;
 }
 
 /** Reverse-geocode a point via Nominatim (street-level address). */
@@ -299,8 +317,7 @@ export const Route = createFileRoute("/api/buildings/lookup")({
 							});
 						}
 						// Fallback: address-only from osm_buildings.
-						const osmRows = await getOsmBuildingsCache();
-						const osm = osmRows.find((r) => r.osmId === osmId);
+						const osm = await findOsmByld(osmId);
 						if (osm) {
 							const address =
 								osm.address ?? (await reverseGeocodeCached(osm.lat, osm.lng));
@@ -339,10 +356,9 @@ export const Route = createFileRoute("/api/buildings/lookup")({
 					});
 				}
 
-				// Fallback: any Krakow building (osm_buildings) so the
-				// address is always shown, even without RCN history.
-				const osmRows = await getOsmBuildingsCache();
-				const osm = findNearestOsm(osmRows, lat, lng);
+				// Fallback: any indexed małopolska building (osm_buildings) so
+				// the address is always shown, even without RCN history.
+				const osm = await findNearestOsm(lat, lng);
 				if (osm) {
 					const address =
 						osm.address ?? (await reverseGeocodeCached(osm.lat, osm.lng));

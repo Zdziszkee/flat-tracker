@@ -117,7 +117,16 @@ async function assignBuildingsToTransactionsLocal(): Promise<number> {
 		if (t.lat === null || t.lng === null) continue;
 
 		// 1. Exact address match (RCN street + number -> OSM building).
-		const addrMatch = matchByAddress(streetIndex, t.street, t.streetNumber);
+		// The index is małopolska-wide, so the same street + number can
+		// exist in several towns; the transaction's own coordinates gate
+		// the match to buildings within ~300 m (same-town distances).
+		const addrMatch = matchByAddress(
+			streetIndex,
+			t.street,
+			t.streetNumber,
+			null,
+			t.lat !== null && t.lng !== null ? { lat: t.lat, lng: t.lng } : undefined,
+		);
 		if (addrMatch) {
 			const buildingId = await ensureBuildingByOsmId(
 				addrMatch.osmId,

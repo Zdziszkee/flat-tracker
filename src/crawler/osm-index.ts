@@ -10,28 +10,26 @@ import { db } from "#/db/index";
 import { osmBuildings } from "#/db/schema";
 
 /**
- * Local OSM building index for Krakow.
+ * Local OSM building index for małopolska.
  *
  * The public Overpass API is too rate-limited for assigning ~84k RCN
  * transactions to buildings, so this module downloads a Geofabrik extract
  * of the małopolskie region, streams the PBF with osm-pbf-parser, keeps
- * building footprints inside the Krakow bounding box, and stores them in
- * the `osm_buildings` table. Matching is then a local point-in-polygon
+ * every building footprint in the region, and stores them in the
+ * `osm_buildings` table. Matching is then a local point-in-polygon
  * query via an in-memory RBush, with zero network dependency.
+ *
+ * Region-wide coverage matters for sources that span the whole voivodeship
+ * (booking, airbnb: Zakopane, Oświęcim, Szczawnica...). Cross-town street
+ * name collisions are handled downstream: address matching is guarded by
+ * city hints (address-index.ts) and, for georeferenced records, by a
+ * max-distance check against the record's own coordinates.
  */
 
 const PBF_URL =
 	"https://download.geofabrik.de/europe/poland/malopolskie-latest.osm.pbf";
 const DATA_DIR = "data/osm";
 const PBF_PATH = `${DATA_DIR}/malopolskie.osm.pbf`;
-
-/** Expanded Krakow bounding box (city proper + immediate suburbs). */
-const BBOX = {
-	minLat: 49.95,
-	minLng: 19.75,
-	maxLat: 50.15,
-	maxLng: 20.25,
-};
 
 export interface OsmBuilding {
 	osmId: number;
@@ -87,9 +85,9 @@ async function downloadIfMissing(): Promise<void> {
 	);
 }
 
-/** Stream the PBF, collect building ways in the Krakow bbox, resolve polygons. */
+/** Stream the PBF, collect every building way, resolve polygons. */
 async function extractBuildings(): Promise<OsmBuilding[]> {
-	// Pass 1: collect building ways (id, refs, tags) inside the bbox.
+	// Pass 1: collect all building ways (id, refs, tags) in the region.
 	const ways = new Map<
 		number,
 		{ refs: number[]; tags: Record<string, string> }
@@ -114,7 +112,8 @@ async function extractBuildings(): Promise<OsmBuilding[]> {
 
 	console.log(`building ways in extract: ${ways.size}`);
 
-	// Pass 2: collect coordinates only for referenced nodes inside the bbox.
+	// Pass 2: collect coordinates for every referenced node. The extract is
+	// małopolskie-wide, so no geographic filtering is needed here.
 	const nodeCoords = new Map<number, { lat: number; lng: number }>();
 	const needed = new Set<number>();
 	for (const w of ways.values()) {
@@ -130,11 +129,10 @@ async function extractBuildings(): Promise<OsmBuilding[]> {
 				if (item.type !== "node") continue;
 				const id = item.id as number;
 				if (!needed.has(id)) continue;
-				const lat = item.lat as number;
-				const lng = item.lon as number;
-				if (lat < BBOX.minLat || lat > BBOX.maxLat) continue;
-				if (lng < BBOX.minLng || lng > BBOX.maxLng) continue;
-				nodeCoords.set(id, { lat, lng });
+				nodeCoords.set(id, {
+					lat: item.lat as number,
+					lng: item.lon as number,
+				});
 			}
 		});
 		osm.on("end", resolve);
@@ -144,20 +142,20 @@ async function extractBuildings(): Promise<OsmBuilding[]> {
 
 	console.log(`node coords kept: ${nodeCoords.size}`);
 
-	// Build polygons, keep only buildings fully inside the bbox.
+	// Build polygons; skip ways with unresolved refs (clipped at extract edge).
 	const buildings: OsmBuilding[] = [];
 	for (const [osmId, way] of ways) {
 		const ring: Array<{ lat: number; lng: number }> = [];
-		let inBbox = true;
+		let complete = true;
 		for (const ref of way.refs) {
 			const c = nodeCoords.get(ref);
 			if (!c) {
-				inBbox = false;
+				complete = false;
 				break;
 			}
 			ring.push(c);
 		}
-		if (!inBbox || ring.length < 3) continue;
+		if (!complete || ring.length < 3) continue;
 
 		const c = centroid(ring);
 		let minLat = Infinity;
@@ -184,7 +182,7 @@ async function extractBuildings(): Promise<OsmBuilding[]> {
 		});
 	}
 
-	console.log(`buildings in bbox: ${buildings.length}`);
+	console.log(`buildings indexed: ${buildings.length}`);
 	return buildings;
 }
 

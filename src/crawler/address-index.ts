@@ -8,6 +8,12 @@ import { osmBuildings } from "#/db/schema";
  * RCN transactions carry street + housenumber from notarial records; OSM
  * buildings carry addr:street + addr:housenumber. An exact address match
  * is far more precise than a geo fallback, so it is tried first.
+ *
+ * The index covers all of małopolska, so the same street name exists in
+ * many towns ("Długa" in Kraków, Nowy Targ, Tarnów...). Callers must
+ * disambiguate: either a cityHint (filterByCity below) or a georeferenced
+ * `near` point with a max distance (cross-town matches are kilometres
+ * away; same-town RCN points sit within ~300 m of their building).
  */
 
 export function normStreet(s: string): string {
@@ -161,21 +167,57 @@ function filterByCity(
 	return withCity.length === 0 ? buildings : [];
 }
 
+/** Great-circle distance in meters. */
+function haversineM(
+	lat1: number,
+	lon1: number,
+	lat2: number,
+	lon2: number,
+): number {
+	const R = 6371000;
+	const toRad = (d: number) => (d * Math.PI) / 180;
+	const dLat = toRad(lat2 - lat1);
+	const dLon = toRad(lon2 - lon1);
+	const a =
+		Math.sin(dLat / 2) ** 2 +
+		Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+	return 2 * R * Math.asin(Math.sqrt(a));
+}
+
 /**
  * Exact street + housenumber match. Returns the building, or null.
+ *
+ * `near` (georeferenced records): among same street+number buildings,
+ * keep only those within `maxDistanceM` (default 300 m) of the point and
+ * return the closest. Without it, a region-wide index could anchor a
+ * Kraków transaction to the same-numbered house in a different town.
  */
 export function matchByAddress(
 	index: StreetIndex,
 	street: string | null,
 	number: string | null,
 	cityHint?: string | null,
+	near?: { lat: number; lng: number; maxDistanceM?: number },
 ): StreetBuilding | null {
 	if (!street) return null;
 	const buildings = filterByCity(buildingsFor(index, street), cityHint);
 	if (!buildings || buildings.length === 0) return null;
 	if (number) {
-		const exact = buildings.find((b) => b.number === number);
-		if (exact) return exact;
+		const exact = buildings.filter((b) => b.number === number);
+		if (exact.length > 0) {
+			if (!near) return exact[0];
+			const maxD = near.maxDistanceM ?? 300;
+			let best: StreetBuilding | null = null;
+			let bestDist = Number.POSITIVE_INFINITY;
+			for (const b of exact) {
+				const d = haversineM(near.lat, near.lng, b.lat, b.lng);
+				if (d < bestDist) {
+					bestDist = d;
+					best = b;
+				}
+			}
+			return bestDist <= maxD ? best : null;
+		}
 	}
 	// Number-less query: return null so geo fallback handles it (a street
 	// centroid would claim a random building's history).
@@ -200,6 +242,15 @@ export function matchAddressString(
 		if (exact) return { lat: exact.lat, lng: exact.lng, building: exact };
 	}
 	// Street-only: centroid of the street's buildings, no building claim.
+	// Region-wide guard: without a city hint, a street that exists in
+	// several towns must not average into one bogus midpoint between
+	// them — return null so the caller falls back to Nominatim.
+	if (!cityHint) {
+		const cities = new Set(
+			buildings.filter((b) => b.city).map((b) => normStreet(b.city as string)),
+		);
+		if (cities.size > 1) return null;
+	}
 	const lat = buildings.reduce((s, b) => s + b.lat, 0) / buildings.length;
 	const lng = buildings.reduce((s, b) => s + b.lng, 0) / buildings.length;
 	return { lat, lng, building: null };
