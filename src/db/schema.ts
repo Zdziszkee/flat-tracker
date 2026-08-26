@@ -202,6 +202,37 @@ export const osmBuildings = sqliteTable(
 );
 
 /**
+ * Local index of cadastral parcels (działki) parsed from the RCN GML
+ * export. One row per RCN_Dzialka with a polygon; used to bind
+ * transactions to their true parcel (exact xlink ref, no fuzzy matching)
+ * and to render a parcel grid on the map.
+ */
+export const parcels = sqliteTable(
+	"parcels",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		/** Full registry id, e.g. 126104_9.0090.101/6. */
+		parcelId: text().notNull().unique(),
+		bboxMinLat: real().notNull(),
+		bboxMinLng: real().notNull(),
+		bboxMaxLat: real().notNull(),
+		bboxMaxLng: real().notNull(),
+		centroidLat: real().notNull(),
+		centroidLng: real().notNull(),
+		/** Exterior ring as JSON array of {lat, lng}. */
+		polygon: text().notNull(),
+	},
+	(t) => [
+		index("parcels_bbox_idx").on(
+			t.bboxMinLat,
+			t.bboxMinLng,
+			t.bboxMaxLat,
+			t.bboxMaxLng,
+		),
+	],
+);
+
+/**
  * Price/attribute snapshots per listing, one row whenever a crawl observes
  * a change. Enables price-drop and time-on-market analytics.
  */

@@ -174,7 +174,7 @@ function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 			pricePeriod: opts.pricePeriod,
 			utilities:
 				opts.offerType === "long_term_rental"
-					? parseUtilities(ad.description ?? ad.title)
+					? parseUtilities(ad.description ?? ad.title, price)
 					: null,
 		};
 	}
