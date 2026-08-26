@@ -547,6 +547,21 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				});
 			}
 			map.setTerrain({ source: "mapbox-dem", exaggeration: 1.2 });
+			// Hillshade over the whole viewport (Malopolska included) —
+			// slotted below every Standard basemap layer so labels/roads
+			// stay readable on top of the relief shading.
+			if (!map.getLayer("hillshade-demo")) {
+				map.addLayer(
+					{
+						id: "hillshade-demo",
+						type: "hillshade",
+						source: "mapbox-dem",
+						slot: "bottom",
+						paint: { "hillshade-exaggeration": 0.3 },
+					},
+					map.getStyle().layers?.[0]?.id,
+				);
+			}
 			map.addControl(
 				new (
 					mapboxgl as unknown as {
