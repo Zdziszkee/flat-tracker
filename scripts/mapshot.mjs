@@ -7,23 +7,21 @@ await page.waitForFunction(() => {
   const m = window.__map;
   return m && m.getSource("parcels") && m.isStyleLoaded();
 }, { timeout: 45000 });
-// Fly to central Krakow where RCN history buildings + parcels are dense
+// Kazimierz / Podgorze block, zoomed enough for dzialka ID labels
 await page.evaluate(() => {
   const m = window.__map;
-  m.jumpTo({ center: [19.94, 50.0615], zoom: 15.5, pitch: 55, bearing: -25 });
+  m.jumpTo({ center: [19.945, 50.0505], zoom: 15.6, pitch: 25, bearing: 0 });
 });
-await page.waitForTimeout(9000);
+await page.waitForTimeout(8000);
 const diag = await page.evaluate(() => {
   const m = window.__map;
+  const parcels = m.querySourceFeatures("parcels");
+  const labels = m.queryRenderedFeatures(undefined, { layers: ["parcel-labels"] }).length;
   const blds = m.queryRenderedFeatures(undefined, { target: { featuresetId: "buildings", importId: "basemap" } });
-  return {
-    zoom: m.getZoom(),
-    feats: m.querySourceFeatures("parcels").length,
-    bldRend: blds.length,
-    bldHi: blds.filter(f => f.properties && f.properties.highlight === true).length,
-    terrain: m.getTerrain(),
-  };
+  // restore a realistic highlight count: only API ids (already applied on load)
+  const hi = blds.filter(f => f.state && f.state.highlight === true).length;
+  return { parcels: parcels.length, labelsRendered: labels, bldHi: hi, layers: m.getStyle().layers.map(l => l.id).filter(id => id.startsWith("parcel")) };
 });
 console.log(JSON.stringify(diag));
-await page.screenshot({ path: "/tmp/map-krakow.png" });
+await page.screenshot({ path: "/tmp/map-geoportal.png" });
 await browser.close();

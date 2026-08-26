@@ -754,11 +754,13 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			map.on("click", "3d-building", showBuildingHistory);
 
 			// ---- Cadastral parcels (RCN_Dzialka) --------------------------
-			// Viewport-limited GeoJSON grid; refetched as the camera moves.
-			// Loaded at every zoom (the API caps at 6000 features), so the
-			// layer is present from boot. Parcels WITH RCN transactions get a
-			// warm fill, the rest stay faint gray outlines. Clicking one
-			// shows its RCN history.
+			// Viewport-limited GeoJSON; refetched as the camera moves.
+			// Rendered Geoportal-style (podział gruntów): thin dark boundary
+			// lines + działka ID labels, NO fills — RCN coloring belongs to
+			// the 3D buildings above. The fill layer stays as an invisible
+			// click-catcher for the parcel history popup. Loaded at every
+			// zoom (the API caps at 6000 features), so the layer is present
+			// from boot.
 			let parcelsSeq = 0;
 			const loadParcels = () => {
 				const b = map.getBounds();
@@ -796,62 +798,85 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 								return;
 							}
 							map.addSource("parcels", { type: "geojson", data: fc });
+							// Invisible click-catcher: keeps parcel clicks working
+							// without any fill visuals (fill layers are hit-tested
+							// even at opacity 0).
 							map.addLayer({
 								id: "parcel-fill",
 								type: "fill",
 								source: "parcels",
-								// `middle` slot: above landuse/water/hillshade,
-								// below streets and labels. With terrain enabled
-								// the fill drapes onto the DEM, so parcels hug
-								// the relief instead of floating flat.
+								// `middle` slot so hit-testing priority matches the
+								// drawing order (above basemap fills, below labels).
+								// With terrain enabled the geometry drapes onto the
+								// DEM, so clicks track the relief.
 								slot: "middle",
-								paint: {
-									"fill-color": [
-										"case",
-										["==", ["get", "hasRcn"], true],
-										"#e8a33d",
-										"#6b7280",
-									],
-									"fill-opacity": [
-										"interpolate",
-										["linear"],
-										["zoom"],
-										9,
-										0,
-										12,
-										["case", ["==", ["get", "hasRcn"], true], 0.18, 0.05],
-									],
-								},
+								paint: { "fill-opacity": 0 },
 							});
+							// Cadastral boundaries, Geoportal podział gruntów look:
+							// thin dark lines, slightly stronger as you zoom in.
 							map.addLayer({
 								id: "parcel-outline",
 								type: "line",
 								source: "parcels",
 								slot: "middle",
 								paint: {
-									"line-color": [
-										"case",
-										["==", ["get", "hasRcn"], true],
-										"#b97a17",
-										"#9aa1a9",
-									],
+									"line-color": "#3d4652",
 									"line-width": [
 										"interpolate",
 										["linear"],
 										["zoom"],
 										12,
-										0.6,
+										0.7,
 										16,
-										1.6,
+										1.4,
 									],
 									"line-opacity": [
 										"interpolate",
 										["linear"],
 										["zoom"],
 										9,
-										0.2,
+										0.15,
 										12,
-										0.85,
+										0.55,
+										14,
+										0.9,
+									],
+								},
+							});
+							// Działka IDs at parcel centroids, like geoportal's
+							// identyfikator działki; fade in from z14.
+							map.addLayer({
+								id: "parcel-labels",
+								type: "symbol",
+								source: "parcels",
+								slot: "middle",
+								minzoom: 14,
+								layout: {
+									"text-field": ["get", "parcelId"],
+									"text-font": ["DIN Pro Medium", "Noto Sans Regular"],
+									"text-size": [
+										"interpolate",
+										["linear"],
+										["zoom"],
+										14,
+										9.5,
+										17,
+										12,
+									],
+									"text-letter-spacing": 0.05,
+								},
+								paint: {
+									"text-color": "#1f2937",
+									"text-halo-color": "#ffffff",
+									"text-halo-width": 1.2,
+									"text-opacity": [
+										"interpolate",
+										["linear"],
+										["zoom"],
+										14,
+										0,
+										15,
+										1,
 									],
 								},
 							});
