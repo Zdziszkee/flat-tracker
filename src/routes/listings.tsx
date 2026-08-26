@@ -82,11 +82,18 @@ function ListingsPage() {
 	});
 	const sourceOptions = sources?.sources ?? ["otodom", "olx"];
 
-	const rows = (data?.listings ?? []).filter(
-		(r) =>
-			(source === "all" || r.source === source) &&
-			addedWithin(r.listedAt ?? r.firstSeenAt, days),
+	const allRows = data?.listings ?? [];
+	// Counts must respect the active time window so every option shows how
+	// many offers it would actually list when selected.
+	const daysRows = allRows.filter((r) =>
+		addedWithin(r.listedAt ?? r.firstSeenAt, days),
 	);
+	const countsBySource = new Map<string, number>();
+	for (const r of daysRows) {
+		countsBySource.set(r.source, (countsBySource.get(r.source) ?? 0) + 1);
+	}
+
+	const rows = daysRows.filter((r) => source === "all" || r.source === source);
 
 	return (
 		<div className="p-6">
@@ -99,11 +106,11 @@ function ListingsPage() {
 						className="rounded border px-2 py-1"
 					>
 						<option value="all">
-							Wszystkie ({data?.listings.length ?? 0})
+							Wszystkie ({daysRows.length})
 						</option>
 						{sourceOptions.map((s) => (
 							<option key={s} value={s}>
-								{SOURCE_LABELS[s] ?? s}
+								{SOURCE_LABELS[s] ?? s} ({countsBySource.get(s) ?? 0})
 							</option>
 						))}
 					</select>
