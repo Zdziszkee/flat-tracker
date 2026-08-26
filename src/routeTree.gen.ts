@@ -18,6 +18,7 @@ import { Route as ApiCrawlStatusRouteImport } from './routes/api/crawl-status'
 import { Route as ApiInvestmentAnalyticsRouteImport } from './routes/api/investment-analytics'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiMarketInsightsRouteImport } from './routes/api/market-insights'
+import { Route as ApiParcelsRouteImport } from './routes/api/parcels'
 import { Route as ApiPowiatMapRouteImport } from './routes/api/powiat-map'
 import { Route as ApiRefreshRouteImport } from './routes/api/refresh'
 import { Route as ApiRentalAnalyticsRouteImport } from './routes/api/rental-analytics'
@@ -31,6 +32,7 @@ import { Route as ApiBuildingsGeojsonRouteImport } from './routes/api/buildings/
 import { Route as ApiBuildingsHistoryIdsRouteImport } from './routes/api/buildings/history-ids'
 import { Route as ApiBuildingsLabelsRouteImport } from './routes/api/buildings/labels'
 import { Route as ApiBuildingsLookupRouteImport } from './routes/api/buildings/lookup'
+import { Route as ApiParcelsLookupRouteImport } from './routes/api/parcels/lookup'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -75,6 +77,11 @@ const ApiListingsRoute = ApiListingsRouteImport.update({
 const ApiMarketInsightsRoute = ApiMarketInsightsRouteImport.update({
   id: '/api/market-insights',
   path: '/api/market-insights',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiParcelsRoute = ApiParcelsRouteImport.update({
+  id: '/api/parcels',
+  path: '/api/parcels',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPowiatMapRoute = ApiPowiatMapRouteImport.update({
@@ -142,6 +149,11 @@ const ApiBuildingsLookupRoute = ApiBuildingsLookupRouteImport.update({
   path: '/api/buildings/lookup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiParcelsLookupRoute = ApiParcelsLookupRouteImport.update({
+  id: '/lookup',
+  path: '/lookup',
+  getParentRoute: () => ApiParcelsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -153,6 +165,7 @@ export interface FileRoutesByFullPath {
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
+  '/api/parcels': typeof ApiParcelsRouteWithChildren
   '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
@@ -166,6 +179,7 @@ export interface FileRoutesByFullPath {
   '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
   '/api/buildings/labels': typeof ApiBuildingsLabelsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
+  '/api/parcels/lookup': typeof ApiParcelsLookupRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -177,6 +191,7 @@ export interface FileRoutesByTo {
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
+  '/api/parcels': typeof ApiParcelsRouteWithChildren
   '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
@@ -190,6 +205,7 @@ export interface FileRoutesByTo {
   '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
   '/api/buildings/labels': typeof ApiBuildingsLabelsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
+  '/api/parcels/lookup': typeof ApiParcelsLookupRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -202,6 +218,7 @@ export interface FileRoutesById {
   '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
+  '/api/parcels': typeof ApiParcelsRouteWithChildren
   '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
@@ -215,6 +232,7 @@ export interface FileRoutesById {
   '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
   '/api/buildings/labels': typeof ApiBuildingsLabelsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
+  '/api/parcels/lookup': typeof ApiParcelsLookupRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -228,6 +246,7 @@ export interface FileRouteTypes {
     | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-insights'
+    | '/api/parcels'
     | '/api/powiat-map'
     | '/api/refresh'
     | '/api/rental-analytics'
@@ -241,6 +260,7 @@ export interface FileRouteTypes {
     | '/api/buildings/history-ids'
     | '/api/buildings/labels'
     | '/api/buildings/lookup'
+    | '/api/parcels/lookup'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -252,6 +272,7 @@ export interface FileRouteTypes {
     | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-insights'
+    | '/api/parcels'
     | '/api/powiat-map'
     | '/api/refresh'
     | '/api/rental-analytics'
@@ -265,6 +286,7 @@ export interface FileRouteTypes {
     | '/api/buildings/history-ids'
     | '/api/buildings/labels'
     | '/api/buildings/lookup'
+    | '/api/parcels/lookup'
   id:
     | '__root__'
     | '/'
@@ -276,6 +298,7 @@ export interface FileRouteTypes {
     | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-insights'
+    | '/api/parcels'
     | '/api/powiat-map'
     | '/api/refresh'
     | '/api/rental-analytics'
@@ -289,6 +312,7 @@ export interface FileRouteTypes {
     | '/api/buildings/history-ids'
     | '/api/buildings/labels'
     | '/api/buildings/lookup'
+    | '/api/parcels/lookup'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -301,6 +325,7 @@ export interface RootRouteChildren {
   ApiInvestmentAnalyticsRoute: typeof ApiInvestmentAnalyticsRoute
   ApiListingsRoute: typeof ApiListingsRoute
   ApiMarketInsightsRoute: typeof ApiMarketInsightsRoute
+  ApiParcelsRoute: typeof ApiParcelsRouteWithChildren
   ApiPowiatMapRoute: typeof ApiPowiatMapRoute
   ApiRefreshRoute: typeof ApiRefreshRoute
   ApiRentalAnalyticsRoute: typeof ApiRentalAnalyticsRoute
@@ -379,6 +404,13 @@ declare module '@tanstack/react-router' {
       path: '/api/market-insights'
       fullPath: '/api/market-insights'
       preLoaderRoute: typeof ApiMarketInsightsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/parcels': {
+      id: '/api/parcels'
+      path: '/api/parcels'
+      fullPath: '/api/parcels'
+      preLoaderRoute: typeof ApiParcelsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/powiat-map': {
@@ -472,8 +504,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiBuildingsLookupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/parcels/lookup': {
+      id: '/api/parcels/lookup'
+      path: '/lookup'
+      fullPath: '/api/parcels/lookup'
+      preLoaderRoute: typeof ApiParcelsLookupRouteImport
+      parentRoute: typeof ApiParcelsRoute
+    }
   }
 }
+
+interface ApiParcelsRouteChildren {
+  ApiParcelsLookupRoute: typeof ApiParcelsLookupRoute
+}
+
+const ApiParcelsRouteChildren: ApiParcelsRouteChildren = {
+  ApiParcelsLookupRoute: ApiParcelsLookupRoute,
+}
+
+const ApiParcelsRouteWithChildren = ApiParcelsRoute._addFileChildren(
+  ApiParcelsRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -485,6 +536,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiInvestmentAnalyticsRoute: ApiInvestmentAnalyticsRoute,
   ApiListingsRoute: ApiListingsRoute,
   ApiMarketInsightsRoute: ApiMarketInsightsRoute,
+  ApiParcelsRoute: ApiParcelsRouteWithChildren,
   ApiPowiatMapRoute: ApiPowiatMapRoute,
   ApiRefreshRoute: ApiRefreshRoute,
   ApiRentalAnalyticsRoute: ApiRentalAnalyticsRoute,

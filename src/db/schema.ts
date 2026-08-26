@@ -158,12 +158,15 @@ export const transactions = sqliteTable(
 		lat: real(),
 		lng: real(),
 		buildingId: integer("building_id").references(() => buildings.id),
+		/** Cadastral parcel (RCN_Dzialka registry id) this transaction sits on. */
+		parcelId: text("parcel_id"),
 		importedAt: integer("imported_at", { mode: "timestamp" }).default(
 			sql`(unixepoch())`,
 		),
 	},
 	(t) => [
 		index("transactions_building_idx").on(t.buildingId),
+		index("transactions_parcel_idx").on(t.parcelId),
 		index("transactions_district_date_idx").on(t.district, t.date),
 		index("transactions_price_m2_date_idx").on(t.pricePerM2, t.date),
 		index("transactions_building_date_idx").on(t.buildingId, t.date),

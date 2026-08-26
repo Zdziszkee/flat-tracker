@@ -8,11 +8,12 @@ import {
 import { mkdir, rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { inArray, sql } from "drizzle-orm";
 import proj4 from "proj4";
 import { SaxesParser } from "saxes";
 import { Extract } from "unzipper";
 import { db } from "#/db/index";
-import { transactions } from "#/db/schema";
+import { parcels as parcelsTable, transactions } from "#/db/schema";
 
 /**
  * Imports the Krakow Rejestr Cen Nieruchomości (RCN) GML export.
@@ -125,6 +126,7 @@ const TEXT_FIELDS = new Set([
 	"liczbaIzb",
 	"ulica",
 	"numerPorzadkowy",
+	"idDzialki",
 ]);
 
 interface FeatureRec {
@@ -133,6 +135,10 @@ interface FeatureRec {
 	fields: Record<string, string>;
 	refs: Record<string, string>;
 	pos: string | null;
+	/** Accumulated <gml:posList> text of the feature's surface geometry. */
+	posListText: string;
+	/** True while inside a <gml:posList> element. */
+	inPosList: boolean;
 }
 
 /** Parse gml:pos text into {lat, lng}. The GML ships coordinates in the
@@ -151,8 +157,39 @@ function parsePos(text: string): { lat: number; lng: number } | null {
 	const northing = easting === a ? b : a;
 	if (easting < 7_400_000 || easting > 7_460_000) return null;
 	if (northing < 5_520_000 || northing > 5_580_000) return null;
+	return toWgs84(easting, northing);
+}
+
+function toWgs84(
+	easting: number,
+	northing: number,
+): { lat: number; lng: number } {
 	const [lng, lat] = proj4(PL2000_21, "WGS84", [easting, northing]);
 	return { lat, lng };
+}
+
+/** Parse one <gml:posList> ring (srsDimension=2 default): flat
+ * "x y x y ..." coordinate pairs in PL-2000, axis order detected by range.
+ * Returns [lng, lat] pairs for GeoJSON-style storage. */
+function parsePosList(text: string): Array<[number, number]> | null {
+	const nums = text.trim().split(/\s+/).map(Number);
+	if (nums.length < 6 || nums.some((n) => Number.isNaN(n))) return null;
+	const ring: Array<[number, number]> = [];
+	// Axis order is consistent within one ring; decide from the first pair.
+	let eastingFirst = true;
+	if (!(nums[0] >= 7_400_000 && nums[0] <= 7_460_000)) eastingFirst = false;
+	if (!eastingFirst && !(nums[1] >= 7_400_000 && nums[1] <= 7_460_000)) {
+		return null; // neither axis looks like an easting
+	}
+	for (let i = 0; i + 1 < nums.length; i += 2) {
+		const easting = eastingFirst ? nums[i] : nums[i + 1];
+		const northing = eastingFirst ? nums[i + 1] : nums[i];
+		if (easting < 7_400_000 || easting > 7_460_000) continue;
+		if (northing < 5_520_000 || northing > 5_580_000) continue;
+		const w = toWgs84(easting, northing);
+		ring.push([w.lng, w.lat]);
+	}
+	return ring.length >= 4 ? ring : null;
 }
 
 interface ParsedGml {
@@ -192,6 +229,16 @@ interface ParsedGml {
 		}
 	>;
 	adresy: Map<string, { ulica: string; numer: string }>;
+	/** Registry parcels (RCN_Dzialka): gml:id -> ring + centroid + bbox. */
+	parcels: Map<
+		string,
+		{
+			registryId: string;
+			ring: Array<[number, number]>;
+			centroid: { lat: number; lng: number } | null;
+			bbox: [number, number, number, number] | null;
+		}
+	>;
 }
 
 function parseGml(filePath: string): Promise<ParsedGml> {
@@ -206,6 +253,7 @@ function parseGml(filePath: string): Promise<ParsedGml> {
 			budynki: new Map(),
 			lokale: new Map(),
 			adresy: new Map(),
+			parcels: new Map(),
 		};
 
 		let feature: FeatureRec | null = null;
@@ -222,6 +270,8 @@ function parseGml(filePath: string): Promise<ParsedGml> {
 					fields: {},
 					refs: {},
 					pos: null,
+					posListText: "",
+					inPosList: false,
 				};
 				return;
 			}
@@ -233,13 +283,21 @@ function parseGml(filePath: string): Promise<ParsedGml> {
 			}
 			if (name === "pos") {
 				currentTextField = "pos";
+			} else if (name === "posList") {
+				feature.inPosList = true;
 			} else if (TEXT_FIELDS.has(name)) {
 				currentTextField = name;
 			}
 		});
 
 		parser.on("text", (text) => {
-			if (!feature || !currentTextField) return;
+			if (!feature) return;
+			if (feature.inPosList) {
+				// posList bodies can be megabytes of coordinates; keep them raw.
+				feature.posListText += text;
+				return;
+			}
+			if (!currentTextField) return;
 			if (currentTextField === "pos") {
 				feature.pos = (feature.pos ?? "") + text;
 			} else {
@@ -252,6 +310,10 @@ function parseGml(filePath: string): Promise<ParsedGml> {
 			const name = tag.name.replace(/^(rcn|gml):/, "");
 			if (currentTextField && (name === currentTextField || name === "pos")) {
 				currentTextField = null;
+				return;
+			}
+			if (feature?.inPosList && name === "posList") {
+				feature.inPosList = false;
 				return;
 			}
 			if (!feature) return;
@@ -290,12 +352,37 @@ function parseGml(filePath: string): Promise<ParsedGml> {
 						pos: f.pos ? parsePos(f.pos) : null,
 					});
 					break;
-				case "RCN_Dzialka":
+				case "RCN_Dzialka": {
 					if (f.pos) {
 						const pos = parsePos(f.pos);
 						if (pos) result.dzialki.set(f.id, pos);
 					}
+					const registryId = f.fields["idDzialki"]?.trim() ?? "";
+					const ring = f.posListText ? parsePosList(f.posListText) : null;
+					// Only keep registry parcels with a usable surface geometry.
+					if (registryId && ring) {
+						let minX = Infinity;
+						let minY = Infinity;
+						let maxX = -Infinity;
+						let maxY = -Infinity;
+						for (const [x, y] of ring) {
+							if (x < minX) minX = x;
+							if (y < minY) minY = y;
+							if (x > maxX) maxX = x;
+							if (y > maxY) maxY = y;
+						}
+						result.parcels.set(f.id, {
+							registryId,
+							ring,
+							centroid: {
+								lat: (minY + maxY) / 2,
+								lng: (minX + maxX) / 2,
+							},
+							bbox: [minX, minY, maxX, maxY],
+						});
+					}
 					break;
+				}
 				case "RCN_Budynek":
 					if (f.pos) {
 						const pos = parsePos(f.pos);
@@ -409,9 +496,17 @@ export async function importRcn(force = false): Promise<number> {
 	const marker = readMarker();
 
 	// The diff check: when the remote identity matches the marker of the
-	// last successful import, nothing was added on the registry — skip the
-	// 2 GB download+parse entirely.
-	if (!force && remote && marker && sameVersion(remote, marker)) {
+	// last successful import, nothing was added on the registry — skip
+	// the 2 GB download+parse entirely. RCN_FORCE_PARSE=1 bypasses this
+	// (maintenance runs that must reprocess the cached GML, e.g. schema
+	// additions like parcels) without re-downloading anything.
+	if (
+		process.env.RCN_FORCE_PARSE !== "1" &&
+		!force &&
+		remote &&
+		marker &&
+		sameVersion(remote, marker)
+	) {
 		console.log(
 			`RCN unchanged since ${marker.checkedAt.slice(0, 10)} ` +
 				`(etag ${marker.etag}); 0 new transactions`,
@@ -430,11 +525,13 @@ export async function importRcn(force = false): Promise<number> {
 		budynki,
 		lokale,
 		adresy,
+		parcels,
 	} = await parseGml(GML_PATH);
 
 	console.log(
 		`Parsed: ${txMap.size} transactions, ${dokumenty.size} documents, ` +
-			`${nieruchomosci.size} properties, ${lokale.size} lokale, ${adresy.size} addresses`,
+			`${nieruchomosci.size} properties, ${lokale.size} lokale, ${adresy.size} addresses, ` +
+			`${parcels.size} parcels with geometry`,
 	);
 
 	const rows: Array<{
@@ -450,6 +547,7 @@ export async function importRcn(force = false): Promise<number> {
 		market: number | null;
 		lat: number | null;
 		lng: number | null;
+		parcelId: string | null;
 	}> = [];
 
 	let skippedNotSale = 0;
@@ -458,6 +556,8 @@ export async function importRcn(force = false): Promise<number> {
 	let skippedNoDate = 0;
 	let parsed = 0;
 	let newCount = 0;
+	const txParcels: Array<{ transactionId: string; parcelId: string | null }> =
+		[];
 
 	for (const tx of txMap.values()) {
 		if (tx.rodzaj !== "1") {
@@ -498,6 +598,13 @@ export async function importRcn(force = false): Promise<number> {
 			continue;
 		}
 
+		// Cadastral parcel registry id of the linked RCN_Dzialka, when it
+		// carries a surface geometry (kept in result.parcels).
+		const parcelId = nier.dzialkaRef
+			? (parcels.get(nier.dzialkaRef)?.registryId ?? null)
+			: null;
+		txParcels.push({ transactionId: tx.oznaczenie, parcelId });
+
 		const adres = lokal.adresRef ? adresy.get(lokal.adresRef) : undefined;
 		const area = lokal.pow > 0 ? lokal.pow : null;
 
@@ -514,6 +621,7 @@ export async function importRcn(force = false): Promise<number> {
 			market: tx.rynek ? Number.parseInt(tx.rynek, 10) : null,
 			lat: pos.lat,
 			lng: pos.lng,
+			parcelId,
 		});
 
 		if (rows.length >= BATCH_SIZE) {
@@ -524,6 +632,15 @@ export async function importRcn(force = false): Promise<number> {
 
 	newCount += await flush(rows);
 	parsed += rows.length;
+
+	// Bind parcels onto ALL parsed transactions, not just newly inserted
+	// ones: existing rows keep their original identity across re-imports,
+	// so this is what fills/backfills the parcel_id column.
+	await backfillTransactionParcels(txParcels);
+
+	// Registry parcels are a full-refresh table (geometry can be corrected
+	// upstream), so upsert every run that got this far.
+	await persistParcels(parcels);
 
 	// Record the remote identity we just imported, so the next run can
 	// skip straight to the diff check.
@@ -554,6 +671,7 @@ async function flush(
 		market: number | null;
 		lat: number | null;
 		lng: number | null;
+		parcelId: string | null;
 	}>,
 ): Promise<number> {
 	if (rows.length === 0) return 0;
@@ -566,4 +684,102 @@ async function flush(
 		.returning({ id: transactions.id });
 	rows.length = 0;
 	return inserted.length;
+}
+
+/** Set transactions.parcel_id in batches via a parameterized CASE update. */
+async function backfillTransactionParcels(
+	updates: Array<{ transactionId: string; parcelId: string | null }>,
+): Promise<void> {
+	const CHUNK = 300;
+	let bound = 0;
+	for (let i = 0; i < updates.length; i += CHUNK) {
+		const chunk = updates.slice(i, i + CHUNK);
+		const caseExpr = sql.join(
+			chunk.map((u) => sql`WHEN ${u.transactionId} THEN ${u.parcelId}`),
+			sql` `,
+		);
+		const updated = await db
+			.update(transactions)
+			.set({
+				parcelId: sql`CASE ${transactions.transactionId} ${caseExpr} END`,
+			})
+			.where(
+				inArray(
+					transactions.transactionId,
+					chunk.map((u) => u.transactionId),
+				),
+			)
+			.returning({ id: transactions.id });
+		bound += updated.filter((r) => r.id != null).length;
+	}
+	const withParcel = updates.filter((u) => u.parcelId).length;
+	console.log(
+		`Parcel binding: ${withParcel}/${updates.length} transactions map to a registry parcel (${bound} rows touched)`,
+	);
+}
+
+/** Upsert parsed RCN_Dzialka surfaces into the parcels table in batches. */
+async function persistParcels(
+	parcels: Map<
+		string,
+		{
+			registryId: string;
+			ring: Array<[number, number]>;
+			centroid: { lat: number; lng: number } | null;
+			bbox: [number, number, number, number] | null;
+		}
+	>,
+): Promise<number> {
+	let written = 0;
+	let batch: Array<typeof parcelsTable.$inferInsert> = [];
+	for (const p of parcels.values()) {
+		batch.push({
+			parcelId: p.registryId,
+			bboxMinLng: p.bbox?.[0] ?? 0,
+			bboxMinLat: p.bbox?.[1] ?? 0,
+			bboxMaxLng: p.bbox?.[2] ?? 0,
+			bboxMaxLat: p.bbox?.[3] ?? 0,
+			centroidLat: p.centroid?.lat ?? 0,
+			centroidLng: p.centroid?.lng ?? 0,
+			polygon: JSON.stringify({ type: "Polygon", coordinates: [p.ring] }),
+		});
+		if (batch.length >= BATCH_SIZE) {
+			written += await insertParcels(batch);
+			batch = [];
+		}
+	}
+	written += await insertParcels(batch);
+	console.log(`Parcels persisted: ${written} rows (${parcels.size} parsed)`);
+	return written;
+}
+
+async function insertParcels(
+	batch: Array<typeof parcelsTable.$inferInsert>,
+): Promise<number> {
+	if (batch.length === 0) return 0;
+	const inserted = await db
+		.insert(parcelsTable)
+		.values(batch)
+		.onConflictDoUpdate({
+			target: parcelsTable.parcelId,
+			set: {
+				bboxMinLng: sql`excluded.bboxMinLng`,
+				bboxMinLat: sql`excluded.bboxMinLat`,
+				bboxMaxLng: sql`excluded.bboxMaxLng`,
+				bboxMaxLat: sql`excluded.bboxMaxLat`,
+				centroidLat: sql`excluded.centroidLat`,
+				centroidLng: sql`excluded.centroidLng`,
+				polygon: sql`excluded.polygon`,
+			},
+		})
+		.returning({ id: parcelsTable.id });
+	return inserted.length;
+}
+
+/** CLI entry: RCN_FORCE_PARSE=1 npx tsx src/crawler/import-rcn.ts */
+if (process.argv[1]?.replace(/\\/g, "/").endsWith("import-rcn.ts")) {
+	importRcn(process.argv.includes("--force")).catch((err) => {
+		console.error(err);
+		process.exit(1);
+	});
 }

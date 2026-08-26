@@ -71,6 +71,13 @@
       "when": 1787721091280,
       "tag": "0009_loving_black_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1787724062117,
+      "tag": "0010_conscious_zaladane",
+      "breakpoints": true
     }
   ]
 }

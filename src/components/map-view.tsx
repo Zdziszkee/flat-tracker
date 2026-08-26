@@ -66,6 +66,39 @@ const MALOPOLSKA_CENTER: [number, number] = [20.25, 49.85];
 
 const TOKEN = env.VITE_MAPBOX_TOKEN;
 
+/** Distinct dot color per data source (legend + map points). */
+const SOURCE_COLORS: Record<string, string> = {
+	otodom: "#2563eb",
+	"otodom-rent": "#60a5fa",
+	olx: "#f97316",
+	"olx-rent": "#fdba74",
+	morizon: "#16a34a",
+	gratka: "#4ade80",
+	domiporta: "#a855f7",
+	"nieruchomosci-online": "#ca8a04",
+	rynekpierwotny: "#06b6d4",
+	investmap: "#0891b2",
+	airbnb: "#ff385c",
+	booking: "#003580",
+	books: "#8b5cf6",
+	skaleczna: "#d946ef",
+	"licytacje-komornik": "#6b7280",
+};
+
+/** Mapbox match expression coloring each point by its source. */
+function sourceColorExpr(): mapboxgl.ExpressionSpecification {
+	const pairs: string[] = [];
+	for (const [src, color] of Object.entries(SOURCE_COLORS)) {
+		pairs.push(src, color);
+	}
+	return [
+		"match",
+		["get", "source"],
+		...pairs,
+		"#94a3b8",
+	] as mapboxgl.ExpressionSpecification;
+}
+
 /** Draw the court-auction diamond marker as raw pixels (SVG loadImage is flaky). */
 function makeKomornikIcon(): ImageData {
 	const size = 28;
@@ -483,7 +516,11 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 
 		const map = new mapboxgl.Map({
 			container: containerRef.current,
-			style: "mapbox://styles/mapbox/light-v11",
+			// Mapbox Standard core style: colorful basemap with native 3D
+			// landmarks, trees, procedural buildings, dynamic light and
+			// atmosphere sky. Our RCN feature-state coloring hooks into the
+			// style's own select/highlight states (see below).
+			style: "mapbox://styles/mapbox/standard",
 			center: MALOPOLSKA_CENTER,
 			zoom: 9,
 			pitch: 45,
@@ -499,32 +536,58 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 		);
 
 		map.on("load", () => {
-			// All OSM buildings extruded in 3D (Mapbox composite source).
-			// Buildings WITH RCN history get colored amber via feature-state
-			// (keyed by OSM id), so the color uses the building's REAL height
-			// from the Mapbox tiles - no separate overlay, no height mismatch.
-			map.addLayer(
-				{
-					id: "3d-buildings",
-					source: "composite",
-					"source-layer": "building",
-					filter: ["==", "extrude", "true"],
-					type: "fill-extrusion",
-					minzoom: 14.5,
-					paint: {
-						"fill-extrusion-color": [
-							"case",
-							["==", ["feature-state", "hasHistory"], true],
-							"#e8a33d", // has RCN history: amber
-							"#c8c8cc", // no history: gray
-						],
-						"fill-extrusion-height": ["coalesce", ["get", "height"], 0],
-						"fill-extrusion-base": ["coalesce", ["get", "min_height"], 0],
-						"fill-extrusion-opacity": 0.75,
-					},
-				},
-				"waterway-label",
+			// Standard ships its own DEM source + terrain/sky/lighting; only
+			// expose the 3D-terrain toggle for users who want flat mode.
+			if (!map.getSource("mapbox-dem")) {
+				map.addSource("mapbox-dem", {
+					type: "raster-dem",
+					url: "mapbox://mapbox.mapbox-terrain-dem-v1",
+					tileSize: 512,
+					maxzoom: 14,
+				});
+			}
+			map.setTerrain({ source: "mapbox-dem", exaggeration: 1.2 });
+			map.addControl(
+				new (
+					mapboxgl as unknown as {
+						TerrainControl: new (o: object) => mapboxgl.IControl;
+					}
+				).TerrainControl({
+					source: "mapbox-dem",
+				}),
+				"top-right",
 			);
+
+			// Softer daytime light so the colorful Standard palette reads well.
+			try {
+				map.setConfigProperty("basemap", "lightPreset", "day");
+			} catch {
+				// Older style versions ignore config presets.
+			}
+
+			// RCN history on Standard's own extruded buildings: the style's
+			// 3d-building layer colors features whose `select`/`highlight`
+			// feature-state is set, using colorBuildingSelect/colorBuildingHighlight
+			// config values. We mark history buildings via `highlight` so they
+			// pop in the accent color while keeping real heights + landmarks.
+			void fetch("/api/buildings/history-ids")
+				.then((r) => r.json())
+				.then((d: { osmIds: number[] }) => {
+					for (const osmId of d.osmIds) {
+						map.setFeatureState(
+							{
+								source: "composite",
+								sourceLayer: "building",
+								id: osmId,
+							},
+							{ highlight: true },
+						);
+					}
+					console.log(`marked ${d.osmIds.length} buildings with history`);
+				})
+				.catch(() => {
+					// Coloring is optional; the map works without it.
+				});
 
 			// Mark history buildings with feature-state. Composite building
 			// features carry OSM ids (verified against our osm_buildings), so
@@ -589,17 +652,7 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				// Komornik offers get their own symbol layer below.
 				filter: ["!=", ["get", "source"], "licytacje-komornik"],
 				paint: {
-					"circle-color": [
-						"step",
-						["coalesce", ["get", "pricePerM2"], 0],
-						"#10b981",
-						12000,
-						"#eab308",
-						15000,
-						"#f97316",
-						18000,
-						"#ef4444",
-					],
+					"circle-color": sourceColorExpr(),
 					"circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 4, 16, 9],
 					"circle-stroke-color": "#ffffff",
 					"circle-stroke-width": 1,
@@ -638,7 +691,7 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				// can be far from where the user visually clicked on a tall
 				// building. Use the clicked feature's own geometry instead.
 				const feature = map.queryRenderedFeatures(e.point, {
-					layers: ["3d-buildings"],
+					layers: ["3d-building"],
 				})[0] as
 					| {
 							geometry?: { type: string; coordinates?: number[][][][] };
@@ -685,13 +738,189 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 						// Ignore fetch errors; the map stays usable.
 					});
 			};
-			map.on("mouseenter", "3d-buildings", () => {
+			map.on("mouseenter", "3d-building", () => {
 				map.getCanvas().style.cursor = "pointer";
 			});
-			map.on("mouseleave", "3d-buildings", () => {
+			map.on("mouseleave", "3d-building", () => {
 				map.getCanvas().style.cursor = "";
 			});
-			map.on("click", "3d-buildings", showBuildingHistory);
+			map.on("click", "3d-building", showBuildingHistory);
+
+			// ---- Cadastral parcels (RCN_Dzialka) --------------------------
+			// Viewport-limited GeoJSON grid; refetched as the camera moves.
+			// Parcels WITH RCN transactions get a warm fill, the rest stay
+			// faint gray outlines. Clicking one shows its RCN history.
+			let parcelsSeq = 0;
+			const loadParcels = () => {
+				if (map.getZoom() < 12) return; // grid is meaningless far out
+				const b = map.getBounds();
+				if (!b) return;
+				const seq = ++parcelsSeq;
+				const params = new URLSearchParams({
+					minLng: String(b.getWest()),
+					minLat: String(b.getSouth()),
+					maxLng: String(b.getEast()),
+					maxLat: String(b.getNorth()),
+				});
+				void fetch(`/api/parcels?${params.toString()}`)
+					.then((r) => r.json())
+					.then(
+						(fc: {
+							type: "FeatureCollection";
+							features: Array<{
+								type: "Feature";
+								geometry: {
+									type: "Polygon";
+									coordinates: number[][][];
+								};
+								properties: { parcelId: string; hasRcn: boolean };
+							}>;
+						}) => {
+							if (seq !== parcelsSeq) return; // stale response
+							const src = map.getSource("parcels") as
+								| mapboxgl.GeoJSONSource
+								| undefined;
+							if (src) {
+								src.setData(fc);
+								return;
+							}
+							map.addSource("parcels", { type: "geojson", data: fc });
+							map.addLayer({
+								id: "parcel-fill",
+								type: "fill",
+								source: "parcels",
+								paint: {
+									"fill-color": [
+										"case",
+										["==", ["get", "hasRcn"], true],
+										"#e8a33d",
+										"#9ca3af",
+									],
+									"fill-opacity": [
+										"case",
+										["==", ["get", "hasRcn"], true],
+										0.18,
+										0.05,
+									],
+								},
+							});
+							map.addLayer({
+								id: "parcel-outline",
+								type: "line",
+								source: "parcels",
+								paint: {
+									"line-color": [
+										"case",
+										["==", ["get", "hasRcn"], true],
+										"#b97a17",
+										"#c7cbd1",
+									],
+									"line-width": [
+										"interpolate",
+										["linear"],
+										["zoom"],
+										12,
+										0.6,
+										16,
+										1.6,
+									],
+									"line-opacity": 0.85,
+								},
+							});
+							// Parcel popups mirror building history.
+							interface ParcelLookup {
+								parcel: {
+									id: string;
+									stats: {
+										txCount: number;
+										avgPricePerM2: number | null;
+										minPricePerM2: number | null;
+										maxPricePerM2: number | null;
+										recent: Array<{
+											date: string;
+											price: number;
+											pricePerM2: number | null;
+											areaM2: number | null;
+											street: string | null;
+											streetNumber: string | null;
+										}>;
+									};
+								} | null;
+							}
+							map.on("click", "parcel-fill", (e) => {
+								const props = e.features?.[0]?.properties as
+									| { parcelId?: string }
+									| undefined;
+								const pid = props?.parcelId;
+								if (!pid) return;
+								e.preventDefault();
+								void fetch(
+									`/api/parcels/lookup?parcelId=${encodeURIComponent(pid)}`,
+								)
+									.then((r) => r.json())
+									.then((data: ParcelLookup) => {
+										const s = data.parcel?.stats;
+										const fmt = (n: number | null | undefined) =>
+											n == null
+												? "—"
+												: `${Math.round(n).toLocaleString("pl-PL")} zł/m²`;
+										const rows = (s?.recent ?? [])
+											.map(
+												(r) =>
+													`<tr><td>${r.date}</td><td>${Math.round(
+														r.price,
+													).toLocaleString("pl-PL")} zł</td><td>${fmt(
+														r.pricePerM2,
+													)}</td><td>${r.areaM2 ?? "?"} m²${
+														r.street
+															? ` · ${r.street} ${r.streetNumber ?? ""}`
+															: ""
+													}</td></tr>`,
+											)
+											.join("");
+										const html = `<div class="min-w-56 p-1 text-sm">
+											<div class="font-medium">Działka ${pid}</div>
+											${
+												s && s.txCount > 0
+													? `<div class="mt-1">${s.txCount} transakcji RCN · średnio ${fmt(
+															s.avgPricePerM2,
+														)}</div>
+													<div class="text-gray-500">zakres ${fmt(
+														s.minPricePerM2,
+													)} – ${fmt(s.maxPricePerM2)}</div>
+													${
+														rows
+															? `<table class="mt-2 w-full text-xs"><thead><tr class="text-left text-gray-500"><th>data</th><th>cena</th><th>zł/m²</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+															: ""
+													}`
+													: `<div class="mt-1 text-gray-500">Brak transakcji RCN na tej działce.</div>`
+											}
+										</div>`;
+										popupRef.current?.remove();
+										const popup = new mapboxgl.Popup({
+											offset: 10,
+											closeButton: false,
+											maxWidth: "320px",
+										})
+											.setLngLat(e.lngLat)
+											.setHTML(html)
+											.addTo(map);
+										popupRef.current = popup;
+									})
+									.catch(() => {});
+							});
+							map.on("mouseenter", "parcel-fill", () => {
+								map.getCanvas().style.cursor = "pointer";
+							});
+							map.on("mouseleave", "parcel-fill", () => {
+								map.getCanvas().style.cursor = "";
+							});
+						},
+					)
+					.catch(() => {});
+			};
+			loadParcels();
+			map.on("moveend", loadParcels);
 
 			const showListingPopup = (e: mapboxgl.MapLayerMouseEvent) => {
 				const feature = e.features?.[0] as { properties?: unknown } | undefined;
