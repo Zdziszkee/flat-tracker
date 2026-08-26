@@ -1,102 +1,199 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { CheerioAdapter, Listing } from "../types.ts";
 
 /**
- * Airbnb short-term rental search results for Małopolska (sharded markets).
+ * Airbnb short-term rental search for Małopolska: adaptive quadtree
+ * partitioning.
  *
- * Airbnb's search HTML embeds the full result payload in
- * `<script id="data-deferred-state-0" type="application/json">` (no browser
- * required). Each `StaySearchResult` carries the listing title, rating,
- * coordinates and a structured total price for a default stay; the nightly
- * asking rate is recovered from the price breakdown line ("5 nocy x 929 zł").
+ * A single Airbnb search session exposes only ~15 cursor pages (~270
+ * listings) regardless of the true count ("1000+" shown in the UI), and
+ * Kraków alone holds thousands of active listings. To reach the real supply
+ * the region is tiled on a 6x6 grid and each tile's cursor chain is walked
+ * independently. Whenever a tile saturates the session cap (15 cursors and
+ * a still-full final page) it is split into 4 quadrant searches which are
+ * crawled too, recursively down to ~100 m boxes. The partition is therefore
+ * supply-proportional: dense markets (Kraków, Tatry) subdivide deeply while
+ * empty areas stay one tile.
  *
- * A single Airbnb search session exposes only ~15 cursor pages (~18 cards
- * each), regardless of the true result count ("1000+" shown in the UI).
- * Crawling one region-wide box therefore tops out near ~250 listings. To
- * get past that ceiling the region is split into overlapping per-market
- * bounding boxes: every shard paginates its own cursor chain, and duplicate
- * listings collapse in the DB upsert on `(source, externalId)`.
+ * The reached leaf set is persisted to data/crawler/airbnb-quadtree.json so
+ * subsequent crawls start directly from the refined tiles instead of
+ * re-exploring top-down. Duplicate listings across overlapping tiles collapse
+ * in the DB upsert on `(source, externalId)`.
  *
  * Exact street addresses are hidden by Airbnb until booking, so listings are
  * anchored by coordinates and district-level analytics only.
  */
 
-/** One search shard: an approximate bounding box over a rental market. */
-interface MarketShard {
+/** Małopolska bounds (union of powiat polygons). */
+const REGION = {
+	minLat: 49.18,
+	minLng: 19.0831,
+	maxLat: 50.5205,
+	maxLng: 21.4217,
+};
+const GRID_COLS = 6;
+const GRID_ROWS = 6;
+/** Airbnb serves at most 15 cursor pages (~270 listings) per search. */
+const CURSOR_CAP = 15;
+/** Cards per page; a full final page at the cap means likely truncation. */
+const PAGE_SIZE = 18;
+/** Safety bound against infinite splitting (~100 m boxes at depth 8). */
+const MAX_DEPTH = 8;
+
+const CACHE_DIR = "data/crawler";
+const CACHE_PATH = `${CACHE_DIR}/airbnb-quadtree.json`;
+
+/** One search shard: a bounding box over part of the rental market. */
+interface Tile {
 	name: string;
-	neLat: number;
-	neLng: number;
-	swLat: number;
-	swLng: number;
+	minLat: number;
+	minLng: number;
+	maxLat: number;
+	maxLng: number;
+	depth: number;
+	/** Last completed cursor-chain walk; spreads leaf revisits across runs. */
+	drainedAt?: string;
 }
 
-/**
- * Overlapping boxes tiling Małopolska's short-term rental supply: Kraków,
- * the Tatry/Podhale winter belt, the Poprad valley spa towns, plus the
- * smaller western/northern/eastern markets.
- */
-const MARKET_SHARDS: MarketShard[] = [
-	{ name: "krakow", neLat: 50.25, neLng: 20.25, swLat: 49.95, swLng: 19.75 },
-	{
-		name: "wieliczka-bochnia",
-		neLat: 50.08,
-		neLng: 20.65,
-		swLat: 49.88,
-		swLng: 20.0,
-	},
-	{
-		name: "tatry-podhale",
-		neLat: 49.45,
-		neLng: 20.3,
-		swLat: 49.2,
-		swLng: 19.75,
-	},
-	{
-		name: "pieniny-poprad",
-		neLat: 49.6,
-		neLng: 21.0,
-		swLat: 49.32,
-		swLng: 20.3,
-	},
-	{ name: "sadecki", neLat: 49.85, neLng: 20.95, swLat: 49.5, swLng: 20.4 },
-	{
-		name: "oswiecim-chrzanow",
-		neLat: 50.18,
-		neLng: 19.55,
-		swLat: 49.9,
-		swLng: 19.05,
-	},
-	{
-		name: "olkusz-miechow",
-		neLat: 50.52,
-		neLng: 20.35,
-		swLat: 50.15,
-		swLng: 19.4,
-	},
-	{
-		name: "tarnow-dabrowskie",
-		neLat: 50.35,
-		neLng: 21.42,
-		swLat: 49.95,
-		swLng: 20.6,
-	},
-];
+interface QuadtreeCache {
+	savedAt: string;
+	tiles: Tile[];
+}
 
-function shardSearchUrl(s: MarketShard): string {
+function tileUrl(t: Tile, cursor?: string): string {
 	const params = new URLSearchParams({
 		adults: "2",
 		"refinement_paths[]": "/homes",
-		query: "Lesser Poland Voivodeship, Poland",
 		search_mode: "regular_search",
 		search_by_map: "true",
-		ne_lat: String(s.neLat),
-		ne_lng: String(s.neLng),
-		sw_lat: String(s.swLat),
-		sw_lng: String(s.swLng),
-		zoom: "10",
+		ne_lat: t.maxLat.toFixed(5),
+		ne_lng: t.maxLng.toFixed(5),
+		sw_lat: t.minLat.toFixed(5),
+		sw_lng: t.minLng.toFixed(5),
+		// Zoom hints Airbnb's viewport clustering; deeper tiles zoom in.
+		zoom: String(Math.min(10 + t.depth, 16)),
+		// Our bookkeeping: recursion depth, echoed back on every page.
+		d: String(t.depth),
 	});
-	return `https://www.airbnb.pl/s/${encodeURIComponent(
-		s.name,
-	)}/homes?${params.toString()}`;
+	if (cursor) params.set("cursor", cursor);
+	return `https://www.airbnb.pl/s/${encodeURIComponent(t.name)}/homes?${params.toString()}`;
+}
+
+function baseGridTiles(): Tile[] {
+	const tiles: Tile[] = [];
+	const dLat = (REGION.maxLat - REGION.minLat) / GRID_ROWS;
+	const dLng = (REGION.maxLng - REGION.minLng) / GRID_COLS;
+	for (let r = 0; r < GRID_ROWS; r++) {
+		for (let c = 0; c < GRID_COLS; c++) {
+			tiles.push({
+				name: `t${r}-${c}`,
+				minLat: REGION.minLat + r * dLat,
+				maxLat: REGION.minLat + (r + 1) * dLat,
+				minLng: REGION.minLng + c * dLng,
+				maxLng: REGION.minLng + (c + 1) * dLng,
+				depth: 0,
+			});
+		}
+	}
+	return tiles;
+}
+
+function loadCachedTiles(): Tile[] | null {
+	try {
+		const raw = JSON.parse(readFileSync(CACHE_PATH, "utf8")) as QuadtreeCache;
+		if (!Array.isArray(raw.tiles) || raw.tiles.length === 0) return null;
+		return raw.tiles.map((t) => ({ ...t }));
+	} catch {
+		return null;
+	}
+}
+
+function persistFrontier(tiles: Tile[]): void {
+	try {
+		mkdirSync(CACHE_DIR, { recursive: true });
+		const cache: QuadtreeCache = {
+			savedAt: new Date().toISOString(),
+			tiles: [...tiles].sort(
+				(a, b) => a.depth - b.depth || a.name.localeCompare(b.name),
+			),
+		};
+		writeFileSync(CACHE_PATH, JSON.stringify(cache));
+	} catch {
+		// Best-effort: a failed cache write only costs re-exploration next run.
+	}
+}
+
+/**
+ * Crawl frontier: cached leaves from previous runs when available, else the
+ * base grid. Never-drained tiles first, then stale ones, shallow-first.
+ */
+const frontier: Tile[] = loadCachedTiles() ?? baseGridTiles();
+frontier.sort((a, b) => {
+	const ta = a.drainedAt ? Date.parse(a.drainedAt) : 0;
+	const tb = b.drainedAt ? Date.parse(b.drainedAt) : 0;
+	return ta - tb || a.depth - b.depth || a.name.localeCompare(b.name);
+});
+
+function markDrained(name: string): void {
+	const tile = frontier.find((t) => t.name === name);
+	if (!tile) return;
+	tile.drainedAt = new Date().toISOString();
+	persistFrontier(frontier);
+}
+
+function replaceTile(tile: Tile, kids: Tile[]): void {
+	const idx = frontier.findIndex((t) => t.name === tile.name);
+	if (idx >= 0) frontier.splice(idx, 1, ...kids);
+	else frontier.push(...kids);
+	persistFrontier(frontier);
+}
+
+function childrenOf(parent: {
+	name: string;
+	minLat: number;
+	minLng: number;
+	maxLat: number;
+	maxLng: number;
+	depth: number;
+}): Tile[] {
+	const midLat = (parent.minLat + parent.maxLat) / 2;
+	const midLng = (parent.minLng + parent.maxLng) / 2;
+	const n = parent.name;
+	const d = parent.depth + 1;
+	return [
+		{
+			name: `${n}1`,
+			minLat: midLat,
+			maxLat: parent.maxLat,
+			minLng: midLng,
+			maxLng: parent.maxLng,
+			depth: d,
+		},
+		{
+			name: `${n}2`,
+			minLat: midLat,
+			maxLat: parent.maxLat,
+			minLng: parent.minLng,
+			maxLng: midLng,
+			depth: d,
+		},
+		{
+			name: `${n}3`,
+			minLat: parent.minLat,
+			maxLat: midLat,
+			minLng: midLng,
+			maxLng: parent.maxLng,
+			depth: d,
+		},
+		{
+			name: `${n}4`,
+			minLat: parent.minLat,
+			maxLat: midLat,
+			minLng: parent.minLng,
+			maxLng: midLng,
+			depth: d,
+		},
+	];
 }
 
 interface Coordinate {
@@ -228,12 +325,16 @@ export const airbnbAdapter: CheerioAdapter = {
 	id: "airbnb",
 	name: "Airbnb - Małopolska short-term rentals",
 	kind: "cheerio",
-	startUrls: MARKET_SHARDS.map((s) => shardSearchUrl(s)),
-	// Each shard walks its own ~15-page cursor chain.
-	maxRequestsPerCrawl: MARKET_SHARDS.length * 20,
+	startUrls: frontier.map((t) => tileUrl(t)),
+	// Per-run ceiling; the frontier persists across runs, so coverage grows
+	// run over run (default keeps the hourly refresh polite).
+	maxRequestsPerCrawl: Math.min(
+		5000,
+		Math.max(40, Number(process.env.AIRBNB_MAX_REQUESTS ?? 400)),
+	),
 	// Airbnb rankings are not newest-first, so a first-page-only hourly run
-	// would see nothing new past shard #1 (crawler.ts caps it at 1 request).
-	// Always walk every shard; ~120 light JSON-in-HTML fetches per run.
+	// would see nothing new past the first tile (crawler.ts caps it at 1
+	// request). Always walk every leaf tile.
 	alwaysFullCrawl: true,
 
 	async extractHtml(html, url, enqueue) {
@@ -250,8 +351,8 @@ export const airbnbAdapter: CheerioAdapter = {
 
 		const results = findSearchResults(data) ?? [];
 
-		// Pagination is a base64 cursor list; enqueue the next page once.
-		// Page 1 (no `cursor` param) continues at cursors[0].
+		// Pagination is a base64 cursor list. Page 1 (no `cursor` param)
+		// continues at cursors[0]; later pages continue at their successor.
 		const pageCursors = (() => {
 			const walk = (n: unknown): string[] | null => {
 				if (!n || typeof n !== "object") return null;
@@ -273,15 +374,46 @@ export const airbnbAdapter: CheerioAdapter = {
 			return walk(data) ?? [];
 		})();
 
+		const u = new URL(url);
+		const current = u.searchParams.get("cursor");
+
 		if (pageCursors.length > 0) {
-			const current = new URL(url).searchParams.get("cursor") ?? null;
 			const currentIndex = current ? pageCursors.indexOf(current) : -1;
-			const next = pageCursors[currentIndex + 1];
-			if (next) {
-				const base = new URL(url);
-				base.searchParams.set("cursor", next);
-				await enqueue([base.toString()]);
+			if (current != null && currentIndex === -1) {
+				// Stale cursor (session rotated between runs): stop walking
+				// instead of looping back to page 2 forever.
+				console.warn(`airbnb: stale cursor in ${u.pathname}, stopping chain`);
+			} else {
+				const next = pageCursors[currentIndex + 1];
+				if (next) {
+					u.searchParams.set("cursor", next);
+					await enqueue([u.toString()]);
+					return results.map(resultToListing);
+				}
 			}
+		}
+
+		// Chain complete (or unwalkable). Saturated = hit the cursor cap with
+		// a still-full final page: Airbnb truncated this search, so split the
+		// tile into quadrants (each gets its own session budget).
+		const tile: Tile = {
+			name: decodeURIComponent(u.pathname.split("/")[2] ?? "?"),
+			minLat: Number(u.searchParams.get("sw_lat")),
+			minLng: Number(u.searchParams.get("sw_lng")),
+			maxLat: Number(u.searchParams.get("ne_lat")),
+			maxLng: Number(u.searchParams.get("ne_lng")),
+			depth: Number(u.searchParams.get("d") ?? "0"),
+		};
+		markDrained(tile.name);
+		const saturated =
+			pageCursors.length >= CURSOR_CAP && results.length >= PAGE_SIZE;
+		if (saturated && tile.depth < MAX_DEPTH) {
+			const kids = childrenOf(tile);
+			replaceTile(tile, kids);
+			console.log(
+				`airbnb: split ${tile.name} at depth ${tile.depth} -> ${kids.map((k) => k.name).join(" ")}`,
+			);
+			await enqueue(kids.map((k) => tileUrl(k)));
 		}
 
 		return results.map(resultToListing);
