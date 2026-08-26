@@ -630,7 +630,9 @@ function AnalyticsPage() {
 							<th className="px-3 py-2">Dzielnica</th>
 							<th className="px-3 py-2 text-right">Wynik</th>
 							<th className="px-3 py-2 text-right">Cena zł/m²</th>
+							<th className="px-3 py-2 text-right">Ofert sprz.</th>
 							<th className="px-3 py-2 text-right">Czynsz zł/m²</th>
+							<th className="px-3 py-2 text-right">Ofert najmu</th>
 							<th className="px-3 py-2 text-right">Rentowność</th>
 							<th className="px-3 py-2 text-right">Wartość godziwa</th>
 							<th className="px-3 py-2 text-right">Przewart.</th>
@@ -646,8 +648,14 @@ function AnalyticsPage() {
 									{fmt(r.valueScore, 1)}
 								</td>
 								<td className="px-3 py-1.5 text-right">{fmt(r.saleAvgM2)}</td>
+								<td className="px-3 py-1.5 text-right text-gray-500">
+									{r.saleCount}
+								</td>
 								<td className="px-3 py-1.5 text-right">
 									{fmt(r.rentAvgM2, 1)}
+								</td>
+								<td className="px-3 py-1.5 text-right text-gray-500">
+									{r.rentCount}
 								</td>
 								<td className="px-3 py-1.5 text-right">
 									{fmt(r.grossYieldPct, 1)}%

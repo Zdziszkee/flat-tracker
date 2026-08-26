@@ -10,6 +10,9 @@ import { listings } from "#/db/schema";
  * against an income-based fair value (monthly rent/m² capitalized at a 5%
  * gross yield) and derives the key investment-decision metrics.
  */
+/** Minimum offers on each side for a district to enter the ranking. */
+const MIN_OFFERS = 3;
+
 export const Route = createFileRoute("/api/valuation")({
 	server: {
 		handlers: {
@@ -81,7 +84,14 @@ export const Route = createFileRoute("/api/valuation")({
 					})
 					.sort((a, b) => b.valueScore - a.valueScore);
 
-				return json({ rows: rows.slice(0, 15) });
+				// Districts resting on <3 offers produce wild yields (a single
+				// luxury flat can look "43% undervalued"); keep the ranking
+				// statistically meaningful and expose counts in the UI.
+				const qualified = rows.filter(
+					(r) => r.saleCount >= MIN_OFFERS && r.rentCount >= MIN_OFFERS,
+				);
+
+				return json({ rows: qualified.slice(0, 15) });
 			},
 		},
 	},
