@@ -1,6 +1,7 @@
 import type { Page, Response } from "playwright";
 
-import type { Listing, PlaywrightAdapter } from "../types.ts";
+import { bookingLauncherFactory } from "../camoufox-launch.ts";
+import type { CustomLaunchAdapter, Listing } from "../types.ts";
 
 /**
  * Booking.com short-term rental search results for Małopolska.
@@ -44,7 +45,7 @@ function stayDates(): { checkin: string; checkout: string } {
  * and the smaller towns so regional supply isn't lost under the big-city
  * rankings.
  */
-export const BOOKING_CITIES = [
+const BOOKING_CITIES = [
 	"Kraków",
 	"Zakopane",
 	"Białka Tatrzańska",
@@ -61,7 +62,7 @@ export const BOOKING_CITIES = [
 	"Olkusz",
 ];
 
-export function citySearchUrl(city: string): string {
+function citySearchUrl(city: string): string {
 	const { checkin, checkout } = stayDates();
 	return (
 		"https://www.booking.com/searchresults.pl.html?" +
@@ -169,10 +170,15 @@ async function harvestEmbeddedCache(
 	return found;
 }
 
-export const bookingAdapter: PlaywrightAdapter = {
+/**
+ * DataDome-protected: needs the camoufox anti-detect launcher, which Crawlee
+ * cannot accept — exposed as a capability the crawler detects and calls.
+ */
+export const bookingAdapter: CustomLaunchAdapter = {
 	id: "booking",
 	name: "Booking - Małopolska short-term rentals",
 	kind: "playwright",
+	launchBrowser: () => bookingLauncherFactory(true),
 	startUrls: BOOKING_CITIES.map((city) => citySearchUrl(city)),
 	maxRequestsPerCrawl: 1,
 	listingSelector: '[data-testid="property-card"]',
@@ -206,7 +212,7 @@ export const bookingAdapter: PlaywrightAdapter = {
  * each search gets its own load-more budget from Booking, and duplicates
  * across cities collapse later in the DB upsert.
  */
-export async function drainCity(
+async function drainCity(
 	page: Page,
 	url: string,
 	opts: { firstPageOnly: boolean },

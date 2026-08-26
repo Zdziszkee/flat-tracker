@@ -49,7 +49,7 @@ export const DEV_SINCE_DAYS = 7;
 
 const STATE_PATH = "data/crawler/state.json";
 
-export interface SiteRefresh {
+interface SiteRefresh {
 	site: string;
 	ok: boolean;
 	newListings: number;

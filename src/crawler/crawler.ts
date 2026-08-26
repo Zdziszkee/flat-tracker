@@ -6,8 +6,7 @@ import {
 	PlaywrightCrawler,
 } from "crawlee";
 
-import { bookingLauncherFactory } from "./camoufox-launch.ts";
-import type { Listing, SiteAdapter } from "./types.ts";
+import type { CustomLaunchAdapter, Listing, SiteAdapter } from "./types.ts";
 
 // Keep crawler logs compact: warnings/errors only. The per-page progress
 // lines come from the adapters themselves via console.log, and failures are
@@ -23,10 +22,9 @@ export interface CrawlResult {
  * Run a crawl for a site adapter. Uses a real browser for JS-rendered
  * sites and plain HTTP + Cheerio for static ones, with the same output.
  *
- * Booking is special-cased: it is DataDome-protected, so it is launched via
- * `bookingLauncherFactory` (camoufox anti-detect Firefox, with a plain
- * Playwright fallback) directly instead of through Crawlee, which cannot
- * accept a custom-launched browser.
+ * Adapters carrying a `launchBrowser` capability (anti-detect browsers
+ * Crawlee cannot accept, e.g. Booking behind DataDome) are launched
+ * directly by their own launcher instead of through Crawlee.
  */
 export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 	const listings: Listing[] = [];
@@ -43,12 +41,11 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 		: (adapter.maxRequestsPerCrawl ?? 100);
 
 	if (adapter.kind === "playwright") {
-		// Booking is DataDome-protected: launch via bookingLauncherFactory
-		// (camoufox anti-detect Firefox, with a plain Playwright fallback)
-		// directly — Crawlee cannot accept a custom-launched browser. The
-		// adapter's extractListings() drives pagination/load-more itself.
-		if (adapter.id === "booking") {
-			const browser = await bookingLauncherFactory(true);
+		// Custom-launch adapters (anti-detect browser) drive their own browser;
+		// the adapter's extractListings() drives pagination/load-more itself.
+		if (typeof (adapter as CustomLaunchAdapter).launchBrowser === "function") {
+			const custom = adapter as CustomLaunchAdapter;
+			const browser = await custom.launchBrowser();
 			try {
 				// viewport:null keeps camoufox's injected fingerprint window size
 				// instead of overriding it (Booking fingerprints viewports).

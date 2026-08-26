@@ -31,14 +31,3 @@ export const adapters: SiteAdapter[] = [
 	quotesAdapter,
 	booksAdapter,
 ];
-
-/** Look up an adapter by its id. */
-export function getAdapter(id: string): SiteAdapter {
-	const adapter = adapters.find((a) => a.id === id);
-	if (!adapter) {
-		throw new Error(
-			`Unknown site "${id}". Available: ${adapters.map((a) => a.id).join(", ")}`,
-		);
-	}
-	return adapter;
-}

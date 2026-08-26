@@ -129,4 +129,17 @@ export interface PlaywrightAdapter extends AdapterBase {
 	): Promise<Listing[]>;
 }
 
-export type SiteAdapter = CheerioAdapter | PlaywrightAdapter;
+/**
+ * A Playwright adapter that needs a custom browser launcher (anti-detect
+ * browsers Crawlee cannot accept). The crawler detects this capability
+ * instead of hard-coding adapter ids.
+ */
+export interface CustomLaunchAdapter extends PlaywrightAdapter {
+	/** Launches the browser used for this adapter's crawl. Caller closes it. */
+	launchBrowser(): Promise<import("playwright").Browser>;
+}
+
+export type SiteAdapter =
+	| CheerioAdapter
+	| PlaywrightAdapter
+	| CustomLaunchAdapter;

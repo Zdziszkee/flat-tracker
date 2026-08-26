@@ -14,7 +14,7 @@
  *   calendar (which runs on its own daily task, not inside `refreshAll`).
  */
 
-export type SourceKind = "portal" | "rcn" | "geocode" | "airbnb-calendar";
+type SourceKind = "portal" | "rcn" | "geocode" | "airbnb-calendar";
 
 export interface SourceDescriptor {
 	id: string;
@@ -100,8 +100,3 @@ export const sourceDescriptors: SourceDescriptor[] = [
 	...PORTAL_SOURCES,
 	...PIPELINE_SOURCES,
 ];
-
-/** Human name for a source id, falling back to the raw id. */
-export function sourceName(id: string): string {
-	return sourceDescriptors.find((s) => s.id === id)?.name ?? id;
-}

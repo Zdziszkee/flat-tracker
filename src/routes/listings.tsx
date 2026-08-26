@@ -105,9 +105,7 @@ function ListingsPage() {
 						onChange={(e) => setSource(e.target.value)}
 						className="rounded border px-2 py-1"
 					>
-						<option value="all">
-							Wszystkie ({daysRows.length})
-						</option>
+						<option value="all">Wszystkie ({daysRows.length})</option>
 						{sourceOptions.map((s) => (
 							<option key={s} value={s}>
 								{SOURCE_LABELS[s] ?? s} ({countsBySource.get(s) ?? 0})

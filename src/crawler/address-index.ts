@@ -30,12 +30,12 @@ export function normStreet(s: string): string {
 const STREET_PREFIX_RE =
 	/^(?:ul\.?|al\.?|aleja|os\.?|osiedle|pl\.?|plac|rynek|bulwar|rondo)\s+/iu;
 
-export function stripStreetPrefix(s: string): string {
+function stripStreetPrefix(s: string): string {
 	return s.replace(STREET_PREFIX_RE, "").trim();
 }
 
 /** Split "ul. Jakuba Bojki 12" into {street, number}. */
-export function parseAddress(address: string): {
+function parseAddress(address: string): {
 	street: string;
 	number?: string;
 } {

@@ -16,36 +16,6 @@ export function parseLdJson(html: string): unknown[] {
 	return blocks;
 }
 
-/** Find a node anywhere in the parsed JSON (depth-first) matching a type. */
-export function findLdNode(
-	nodes: unknown[],
-	pred: (n: Record<string, unknown>) => boolean,
-): Record<string, unknown> | null {
-	const visit = (n: unknown): Record<string, unknown> | null => {
-		if (Array.isArray(n)) {
-			for (const item of n) {
-				const found = visit(item);
-				if (found) return found;
-			}
-			return null;
-		}
-		if (n && typeof n === "object") {
-			const rec = n as Record<string, unknown>;
-			if (pred(rec)) return rec;
-			for (const v of Object.values(rec)) {
-				const found = visit(v);
-				if (found) return found;
-			}
-		}
-		return null;
-	};
-	for (const node of nodes) {
-		const found = visit(node);
-		if (found) return found;
-	}
-	return null;
-}
-
 /** Find all nodes matching a type anywhere in the parsed JSON. */
 export function findLdNodes(
 	nodes: unknown[],

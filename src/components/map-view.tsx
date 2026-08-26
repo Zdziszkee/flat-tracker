@@ -6,7 +6,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 
 import { env } from "#/env";
 
-export interface ApiListing {
+interface ApiListing {
 	id: number;
 	source: string;
 	externalId: string;

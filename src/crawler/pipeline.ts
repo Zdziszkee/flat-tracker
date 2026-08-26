@@ -18,7 +18,7 @@ export class CrawlError extends Data.TaggedError("CrawlError")<{
 }> {}
 
 /** Effect Schema for the output of a crawl run. */
-export const ListingSchema = Schema.Struct({
+const ListingSchema = Schema.Struct({
 	source: Schema.String,
 	externalId: Schema.String,
 	url: Schema.String,
@@ -56,7 +56,7 @@ export const ListingSchema = Schema.Struct({
 	utilities: Schema.optional(Schema.Union(Schema.String, Schema.Null)),
 });
 
-export const ListingArraySchema = Schema.Array(ListingSchema);
+const ListingArraySchema = Schema.Array(ListingSchema);
 
 export interface CrawlReport {
 	site: string;
@@ -70,7 +70,7 @@ export interface CrawlReport {
 }
 
 /** Crawl one site, persist the listings, and report. */
-export const runCrawl = (
+const runCrawl = (
 	adapter: SiteAdapter,
 	saveToDb: boolean,
 ): Effect.Effect<CrawlReport, CrawlError> =>

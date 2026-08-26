@@ -38,7 +38,7 @@ interface OlxAd {
  * OLX embeds the full page state as a JSON string in
  * `window.__PRERENDERED_STATE__` inside the HTML source.
  */
-export function parseOlxHtml(html: string): Record<string, unknown> {
+function parseOlxHtml(html: string): Record<string, unknown> {
 	const match = html.match(/window\.__PRERENDERED_STATE__=\s*"(\{.*?\})";/s);
 	if (!match) throw new Error("__PRERENDERED_STATE__ not found on page");
 	return JSON.parse(JSON.parse(`"${match[1]}"`)) as Record<string, unknown>;

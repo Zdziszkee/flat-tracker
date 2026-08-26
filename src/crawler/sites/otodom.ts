@@ -61,7 +61,7 @@ const ROOMS: Record<string, number> = {
 };
 
 /** Parse the JSON payload embedded in every otodom page. */
-export function parseOtodomHtml(html: string): NextData {
+function parseOtodomHtml(html: string): NextData {
 	const raw = html.match(
 		/<script id="__NEXT_DATA__" type="application\/json"[^>]*>([\s\S]*?)<\/script>/,
 	)?.[1];
@@ -88,7 +88,7 @@ function attrStr(
 	return null;
 }
 
-export function isOtodomDetailUrl(url: string): boolean {
+function isOtodomDetailUrl(url: string): boolean {
 	return url.includes("/oferta/");
 }
 

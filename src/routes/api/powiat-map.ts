@@ -141,8 +141,8 @@ export const Route = createFileRoute("/api/powiat-map")({
 					.all();
 
 				const isPlot = (r: { areaM2: number | null; title: string | null }) =>
-					(r.areaM2 != null && r.areaM2 > 500) ||
-					(r.title != null && r.title.toLowerCase().includes("działka"));
+					(r.areaM2 ?? 0) > 500 ||
+					(r.title?.toLowerCase().includes("działka") ?? false);
 
 				for (const r of rows) {
 					let name: string | null = null;

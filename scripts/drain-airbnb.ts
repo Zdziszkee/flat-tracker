@@ -7,11 +7,15 @@
  *
  * Usage: AIRBNB_MAX_REQUESTS=4000 npx tsx scripts/drain-airbnb.ts [budget]
  */
-import { crawlSite } from "../src/crawler/crawler.ts";
-import { airbnbAdapter } from "../src/crawler/sites/airbnb.ts";
+import "dotenv/config";
 
 const budget = Number(process.argv[2] ?? 4000);
+// Must precede the adapter import: airbnb.ts reads AIRBNB_MAX_REQUESTS at
+// module-init time.
 process.env.AIRBNB_MAX_REQUESTS = String(budget);
+
+const { crawlSite } = await import("../src/crawler/crawler.ts");
+const { airbnbAdapter } = await import("../src/crawler/sites/airbnb.ts");
 
 console.log(`drain-airbnb: budget=${budget} requests per run`);
 const t0 = Date.now();

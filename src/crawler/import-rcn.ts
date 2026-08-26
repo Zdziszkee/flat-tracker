@@ -194,7 +194,7 @@ interface ParsedGml {
 	adresy: Map<string, { ulica: string; numer: string }>;
 }
 
-export function parseGml(filePath: string): Promise<ParsedGml> {
+function parseGml(filePath: string): Promise<ParsedGml> {
 	return new Promise((resolve, reject) => {
 		const parser = new SaxesParser({ xmlns: false });
 

@@ -8,4 +8,7 @@ import * as schema from "./schema.ts";
 // `bun run dev`), so better-sqlite3 is the correct driver here.
 config({ path: [".env.local", ".env"] });
 
-export const db = drizzle(process.env.DATABASE_URL!, { schema });
+const url = process.env.DATABASE_URL;
+if (!url) throw new Error("DATABASE_URL is not set (check .env.local)");
+
+export const db = drizzle(url, { schema });

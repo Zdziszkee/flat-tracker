@@ -7,7 +7,7 @@
  * `listings.utilities`, then estimate missing values from similar listings.
  */
 
-export interface UtilitiesInfo {
+interface UtilitiesInfo {
 	czynsz: number | null;
 	ogrzewanie: number | null;
 	prad: number | null;

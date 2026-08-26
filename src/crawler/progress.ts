@@ -8,7 +8,7 @@
  * Durable "when was each source last refreshed" lives in `crawl_runs`.
  */
 
-export type SourceRunState = "pending" | "running" | "ok" | "failed";
+type SourceRunState = "pending" | "running" | "ok" | "failed";
 
 export interface SourceProgress {
 	source: string;
