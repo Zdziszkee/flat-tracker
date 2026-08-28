@@ -1,35 +1,94 @@
-import { barY, defineChart, lineY } from "@tanstack/charts";
-import { geoShape } from "@tanstack/charts/geo";
+import { barY, defineChart, dot, lineY } from "@tanstack/charts";
 import { Chart } from "@tanstack/charts/react";
 import { scaleBand } from "@tanstack/charts/scales/band";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { geoMercator } from "d3-geo";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
-import { malopolskaPowiats } from "#/data/malopolska-powiats";
+/**
+ * Analityka rynku — 19 wykresów: najem (histogramy czynszu, opłat i
+ * kosztu łącznego), transakcje RCN/GUGiK (trend, wolumen, pokoje,
+ * pierwotny vs wtórny), podaż ofert, rentowność LT i najem
+ * krótkoterminowy (ceny, obłożenie, sezonowość, dzień tygodnia).
+ */
 
-interface InvestmentAnalytics {
-	salesByDistrict: Array<{
-		district: string;
-		avgPriceM2: number | null;
-		count: number;
+interface HistogramBucket {
+	label: string;
+	n: number;
+}
+
+interface MarketCharts {
+	priceTrend: Array<{ month: string; avgM2: number; tx: number }>;
+	yoyByPowiat: Array<{
+		powiat: string;
+		growthPct: number;
+		recent: number | null;
+		prior: number | null;
+		tx: number;
 	}>;
-	yieldByDistrict: Array<{
-		district: string;
-		yieldPct: number | null;
-		saleAvgM2: number;
-		rentAvgM2: number;
+	txVolume: Array<{ month: string; tx: number }>;
+	primaryVsSecondary: Array<{
+		powiat: string;
+		wtorny: number;
+		pierwotny: number;
+	}>;
+	offerVsTxGap: Array<{
+		month: string;
+		askM2: number;
+		txM2: number;
+		gapPct: number;
+	}>;
+	grossYieldByCity: Array<{
+		city: string;
+		saleM2: number;
+		rentM2: number;
+		yieldPct: number;
 		saleCount: number;
 		rentCount: number;
 	}>;
-	monthlyTrend: Array<{
-		month: string;
-		avgNightly: number | null;
-		count: number;
+	strOccupancyByCity: Array<{
+		city: string;
+		occupancy: number;
+		n: number;
 	}>;
-	bySource: Array<{ source: string; avgNightly: number | null; count: number }>;
+	strPriceByMonth: Array<{
+		month: string;
+		source: string;
+		avgPrice: number;
+	}>;
+	occupancyByMonth: Array<{ month: string; occupancy: number }>;
+	weekdayPremium: Array<{
+		weekday: number;
+		avgPrice: number;
+		bookedShare: number;
+	}>;
+	occupancyVsYield: Array<{
+		city: string;
+		yieldPct: number;
+		occupancy: number;
+	}>;
+	areaSegments: Array<{ label: string; avgM2: number; n: number }>;
+	newSupply: Array<{ month: string; segment: string; n: number }>;
+	nightlyByCity: Array<{
+		city: string;
+		source: string;
+		avgNightly: number;
+		n: number;
+	}>;
+	priceDropsByCity: Array<{
+		city: string;
+		dropped: number;
+		total: number;
+		dropPct: number;
+	}>;
+	rentHistogram: HistogramBucket[];
+	rentMeta: { avg: number; median: number };
+	oplatyHistogram: HistogramBucket[];
+	oplatyMeta: { avg: number; median: number };
+	totalHistogram: HistogramBucket[];
+	totalMeta: { avg: number; median: number };
+	txByRooms: Array<{ label: string; avgM2: number; n: number }>;
 }
 
 interface ValuationRow {
@@ -40,80 +99,24 @@ interface ValuationRow {
 	fairPriceM2: number;
 	overUnderPct: number;
 	paybackYears: number;
-	priceToRent: number;
-	tenYearReturnPct: number;
 	valueScore: number;
-	saleCount: number;
-	rentCount: number;
 }
 
-interface MarketInsights {
-	summary: {
-		saleCount: number;
-		saleAvgM2: number | null;
-		rentCount: number;
-		rentAvgM2: number | null;
-		rcnTxCount: number;
-		rcnAvgM2: number | null;
-		gapPct: number | null;
+const DOW = ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"];
+
+function bandX(label: string) {
+	return {
+		scale: () => scaleBand<string>().padding(0.25),
+		axis: { label },
 	};
-	priceByRooms: Array<{
-		label: string;
-		avgM2: number | null;
-		avgPrice: number | null;
-		count: number;
-	}>;
-	priceHistogram: Array<{ label: string; count: number }>;
-	priceDrops: { droppedCount: number; avgDropPct: number | null };
-	occupancyByMonth: Array<{ month: string; occupancyPct: number }>;
-	rcnByMarket: Array<{ market: string; avgM2: number | null; count: number }>;
-	rcnYearly: Array<{ year: number; avgM2: number | null; count: number }>;
 }
-
-function fmt(n: number | null | undefined, digits = 0): string {
-	if (n == null) return "";
-	return new Intl.NumberFormat("pl-PL", {
-		maximumFractionDigits: digits,
-	}).format(n);
-}
-
-type DistrictMetricKey =
-	| "saleAvgM2"
-	| "saleCount"
-	| "rentAvgM2"
-	| "yieldPct"
-	| "rcnAvgM2";
-
-interface DistrictMetric {
-	name: string;
-	saleCount: number;
-	saleAvgM2: number | null;
-	rentCount: number;
-	rentAvgM2: number | null;
-	yieldPct: number | null;
-	rcnCount: number;
-	rcnAvgM2: number | null;
-}
-
-const DISTRICT_METRICS: Array<{
-	key: DistrictMetricKey;
-	label: string;
-	unit: string;
-}> = [
-	{ key: "saleAvgM2", label: "Cena sprzedaży", unit: "zł/m²" },
-	{ key: "saleCount", label: "Oferty sprzedaży", unit: "szt." },
-	{ key: "rentAvgM2", label: "Czynsz", unit: "zł/m²" },
-	{ key: "yieldPct", label: "Rentowność", unit: "%" },
-	{ key: "rcnAvgM2", label: "Transakcje RCN", unit: "zł/m²" },
-];
-
-/** Sequential light-blue -> dark-blue ramp for choropleth fills. */
-function seqColor(t: number): string {
-	const c = Math.max(0, Math.min(1, t));
-	const r = Math.round(224 + (30 - 224) * c);
-	const g = Math.round(242 + (58 - 242) * c);
-	const b = Math.round(254 + (138 - 254) * c);
-	return `rgb(${r},${g},${b})`;
+function linY(label: string) {
+	return {
+		scale: scaleLinear,
+		nice: true,
+		grid: true,
+		axis: { label },
+	};
 }
 
 export const Route = createFileRoute("/analytics")({
@@ -121,262 +124,476 @@ export const Route = createFileRoute("/analytics")({
 });
 
 function AnalyticsPage() {
-	const { data, isLoading } = useQuery<InvestmentAnalytics>({
-		queryKey: ["investment-analytics"],
-		queryFn: () => fetch("/api/investment-analytics").then((r) => r.json()),
+	const { data, isLoading, error } = useQuery<MarketCharts>({
+		queryKey: ["market-charts"],
+		queryFn: () => fetch("/api/market-charts").then((r) => r.json()),
+		staleTime: 5 * 60 * 1000,
 	});
 	const { data: valuation } = useQuery<{ rows: ValuationRow[] }>({
 		queryKey: ["valuation"],
 		queryFn: () => fetch("/api/valuation").then((r) => r.json()),
 	});
-	const { data: insights } = useQuery<MarketInsights>({
-		queryKey: ["market-insights"],
-		queryFn: () => fetch("/api/market-insights").then((r) => r.json()),
-	});
-	const { data: districtMap } = useQuery<{ features: DistrictMetric[] }>({
-		queryKey: ["powiat-map"],
-		queryFn: () => fetch("/api/powiat-map").then((r) => r.json()),
-	});
-	const [metric, setMetric] = useState<DistrictMetricKey>("saleAvgM2");
 
-	const choropleth = useMemo(() => {
-		const byName = new Map(
-			(districtMap?.features ?? []).map((f) => [f.name, f]),
-		);
-		const features = malopolskaPowiats.map((f) => {
-			const m = byName.get(f.properties.name);
-			return {
-				type: "Feature" as const,
-				properties: {
-					name: f.properties.name,
-					saleCount: m?.saleCount ?? 0,
-					saleAvgM2: m?.saleAvgM2 ?? null,
-					rentCount: m?.rentCount ?? 0,
-					rentAvgM2: m?.rentAvgM2 ?? null,
-					yieldPct: m?.yieldPct ?? null,
-					rcnAvgM2: m?.rcnAvgM2 ?? null,
-				},
-				geometry: f.geometry,
-			};
-		});
-		const values = features.flatMap((f) => {
-			const v = f.properties[metric];
-			return typeof v === "number" && Number.isFinite(v) ? [v] : [];
-		});
-		const min = values.length ? Math.min(...values) : 0;
-		const max = values.length ? Math.max(...values) : 1;
-		const span = max - min || 1;
-		return {
-			definition: defineChart({
-				marks: [
-					geoShape(features, {
-						key: (f) => f.properties.name,
-						projection: { type: () => geoMercator(), fit: "data" },
-						fill: (f) => {
-							const v = f.properties[metric];
-							return typeof v === "number" && Number.isFinite(v)
-								? seqColor((v - min) / span)
-								: "#e5e7eb";
-						},
-						stroke: "#ffffff",
-						strokeWidth: 0.5,
-					}),
-				],
-				margin: 8,
-			}),
-			min,
-			max,
-		};
-	}, [districtMap, metric]);
+	const charts = useMemo<{ [key: string]: unknown }>(() => {
+		if (!data) return {};
+		const c: { [key: string]: unknown } = {};
 
-	const rcnMarketChart = useMemo(() => {
-		const rows = (insights?.rcnByMarket ?? []).filter((r) => r.avgM2 != null);
-		return defineChart({
-			marks: [barY(rows, { x: "market", y: "avgM2", fill: "#7c3aed" })],
-			x: {
-				scale: () => scaleBand<string>().padding(0.3),
-				axis: { label: "Rynek" },
-			},
+		// 1. Liczba ofert wg przedziału czynszu (histogram najmu LT)
+		c.rentHistogram = defineChart({
+			marks: [
+				barY(data.rentHistogram, { x: "label", y: "n", fill: "#2563eb" }),
+			],
+			x: bandX("Czynsz mies. (zł)"),
 			y: {
 				scale: scaleLinear,
 				nice: true,
 				grid: true,
-				axis: { label: "zł/m² transakcyjna" },
+				axis: { label: "liczba ofert" },
 			},
 		});
-	}, [insights]);
 
-	const rcnYearlyChart = useMemo(() => {
-		const rows = (insights?.rcnYearly ?? [])
-			.filter((r) => r.avgM2 != null)
-			.map((r) => ({ ...r, year: String(r.year) }));
-		return defineChart({
+		// 2. Liczba ofert wg przedziału opłat (czynsz adm.)
+		c.oplatyHistogram = defineChart({
 			marks: [
-				lineY(rows, {
-					x: "year",
+				barY(data.oplatyHistogram, { x: "label", y: "n", fill: "#f59e0b" }),
+			],
+			x: bandX("Czynsz adm. (zł)"),
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "liczba ofert" },
+			},
+		});
+
+		// 3. Liczba ofert wg kosztu łącznego (czynsz + opłaty)
+		c.totalHistogram = defineChart({
+			marks: [
+				barY(data.totalHistogram, { x: "label", y: "n", fill: "#16a34a" }),
+			],
+			x: bandX("Czynsz + opłaty (zł/mies.)"),
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "liczba ofert" },
+			},
+		});
+
+		// 4. Trend cen transakcyjnych
+		c.priceTrend = defineChart({
+			marks: [
+				lineY(data.priceTrend, {
+					x: "month",
 					y: "avgM2",
 					stroke: "#7c3aed",
 					strokeWidth: 2,
-					points: true,
 				}),
 			],
-			x: {
-				scale: () => scaleBand<string>().padding(0.2),
-				axis: { label: "Rok" },
-			},
-			y: {
-				scale: scaleLinear,
-				nice: true,
-				grid: true,
-				axis: { label: "zł/m² transakcyjna" },
-			},
+			x: bandX("Miesiąc"),
+			y: linY("zł/m² (transakcje)"),
 		});
-	}, [insights]);
 
-	const roomsChart = useMemo(() => {
-		const rows = (insights?.priceByRooms ?? []).filter((r) => r.avgM2 != null);
-		return defineChart({
-			marks: [barY(rows, { x: "label", y: "avgM2", fill: "#0891b2" })],
-			x: {
-				scale: () => scaleBand<string>().padding(0.2),
-				axis: { label: "Liczba pokoi" },
-			},
-			y: {
-				scale: scaleLinear,
-				nice: true,
-				grid: true,
-				axis: { label: "zł/m²" },
-			},
+		// 5. Wolumen transakcji miesięcznie
+		c.txVolume = defineChart({
+			marks: [barY(data.txVolume, { x: "month", y: "tx", fill: "#2563eb" })],
+			x: bandX("Miesiąc"),
+			y: linY("liczba transakcji"),
 		});
-	}, [insights]);
 
-	const histChart = useMemo(() => {
-		const rows = insights?.priceHistogram ?? [];
-		return defineChart({
-			marks: [barY(rows, { x: "label", y: "count", fill: "#f97316" })],
-			x: {
-				scale: () => scaleBand<string>().padding(0.1),
-				axis: { label: "Cena zł/m²" },
-			},
-			y: {
-				scale: scaleLinear,
-				nice: true,
-				grid: true,
-				axis: { label: "Liczba ofert" },
-			},
-		});
-	}, [insights]);
-
-	const occupancyChart = useMemo(() => {
-		const rows = insights?.occupancyByMonth ?? [];
-		return defineChart({
-			marks: [barY(rows, { x: "month", y: "occupancyPct", fill: "#14b8a6" })],
-			x: {
-				scale: () => scaleBand<string>().padding(0.2),
-				axis: { label: "Miesiąc" },
-			},
-			y: {
-				scale: scaleLinear,
-				nice: true,
-				grid: true,
-				axis: { label: "Obłożenie %" },
-			},
-		});
-	}, [insights]);
-
-	const yieldChart = useMemo(() => {
-		const rows = (data?.yieldByDistrict ?? [])
-			.filter((r) => r.yieldPct != null)
-			.slice(0, 15);
-		return defineChart({
-			marks: [barY(rows, { x: "district", y: "yieldPct", fill: "#059669" })],
-			x: {
-				scale: () => scaleBand<string>().padding(0.2),
-				axis: { label: "Dzielnica" },
-			},
-			y: {
-				scale: scaleLinear,
-				nice: true,
-				grid: true,
-				axis: { label: "Rentowność %" },
-			},
-		});
-	}, [data]);
-
-	const saleChart = useMemo(() => {
-		const rows = (data?.salesByDistrict ?? [])
-			.filter((r) => r.avgPriceM2 != null)
-			.slice(0, 12);
-		return defineChart({
-			marks: [barY(rows, { x: "district", y: "avgPriceM2", fill: "#2563eb" })],
-			x: {
-				scale: () => scaleBand<string>().padding(0.2),
-				axis: { label: "Dzielnica" },
-			},
-			y: {
-				scale: scaleLinear,
-				nice: true,
-				grid: true,
-				axis: { label: "zł/m²" },
-			},
-		});
-	}, [data]);
-
-	const sourceChart = useMemo(() => {
-		const rows = (data?.bySource ?? []).filter((r) => r.avgNightly != null);
-		return defineChart({
-			marks: [barY(rows, { x: "source", y: "avgNightly", fill: "#10b981" })],
-			x: {
-				scale: () => scaleBand<string>().padding(0.2),
-				axis: { label: "Źródło" },
-			},
-			y: {
-				scale: scaleLinear,
-				nice: true,
-				grid: true,
-				axis: { label: "zł" },
-			},
-		});
-	}, [data]);
-
-	const trendChart = useMemo(() => {
-		const rows = (data?.monthlyTrend ?? []).filter((r) => r.avgNightly != null);
-		return defineChart({
+		// 6. Nowe oferty sprzedaż vs najem vs STR miesięcznie
+		const supplySale = data.newSupply.filter((r) => r.segment === "sprzedaż");
+		const supplyRent = data.newSupply.filter((r) => r.segment === "najem");
+		const supplyStr = data.newSupply.filter((r) => r.segment === "STR");
+		c.newSupply = defineChart({
 			marks: [
-				lineY(rows, {
+				lineY(supplySale, {
 					x: "month",
-					y: "avgNightly",
-					stroke: "#f59e0b",
+					y: "n",
+					stroke: "#2563eb",
+					strokeWidth: 2,
+				}),
+				lineY(supplyRent, {
+					x: "month",
+					y: "n",
+					stroke: "#059669",
+					strokeWidth: 2,
+				}),
+				lineY(supplyStr, {
+					x: "month",
+					y: "n",
+					stroke: "#ff385c",
+					strokeWidth: 1.5,
+				}),
+			],
+			x: bandX("Miesiąc"),
+			y: linY("nowe oferty"),
+		});
+
+		// 7. Wzrost cen transakcyjnych r/r wg powiatu
+		const yoySorted = [...data.yoyByPowiat].sort(
+			(a, b) => (b.growthPct ?? 0) - (a.growthPct ?? 0),
+		);
+		c.yoyByPowiat = defineChart({
+			marks: [
+				barY(yoySorted, {
+					x: "powiat",
+					y: "growthPct",
+					fill: (d) => ((d.growthPct ?? 0) >= 0 ? "#16a34a" : "#dc2626"),
+				}),
+			],
+			x: bandX("Powiat"),
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "wzrost % r/r" },
+			},
+		});
+
+		// 8. Rentowność najmu LT wg miasta
+		const yieldSorted = [...data.grossYieldByCity].sort(
+			(a, b) => b.yieldPct - a.yieldPct,
+		);
+		c.grossYield = defineChart({
+			marks: [
+				barY(yieldSorted, { x: "city", y: "yieldPct", fill: "#059669" }),
+			],
+			x: bandX("Miasto"),
+			y: linY("rentowność brutto %"),
+		});
+
+		// 9. Luka oferta vs transakcja
+		c.offerVsTxGap = defineChart({
+			marks: [
+				lineY(data.offerVsTxGap, {
+					x: "month",
+					y: "askM2",
+					stroke: "#2563eb",
+					strokeWidth: 2,
+				}),
+				lineY(data.offerVsTxGap, {
+					x: "month",
+					y: "txM2",
+					stroke: "#7c3aed",
+					strokeWidth: 2,
+				}),
+			],
+			x: bandX("Miesiąc"),
+			y: linY("zł/m²"),
+		});
+
+		// 10. Pierwotny vs wtórny wg powiatu
+		c.primaryVsSecondary = defineChart({
+			marks: [
+				barY(data.primaryVsSecondary, {
+					x: "powiat",
+					y: "wtorny",
+					fill: "#64748b",
+				}),
+				barY(data.primaryVsSecondary, {
+					x: "powiat",
+					y: "pierwotny",
+					fill: "#f97316",
+				}),
+			],
+			x: bandX("Powiat"),
+			y: linY("zł/m²"),
+		});
+
+		// 11. Cena transakcyjna wg liczby pokoi
+		c.txByRooms = defineChart({
+			marks: [
+				barY(data.txByRooms, { x: "label", y: "avgM2", fill: "#0891b2" }),
+			],
+			x: bandX("Liczba pokoi"),
+			y: linY("zł/m²"),
+		});
+
+		// 12. Cena ofertowa zł/m² wg metrażu
+		c.areaSegments = defineChart({
+			marks: [
+				barY(data.areaSegments, { x: "label", y: "avgM2", fill: "#0891b2" }),
+			],
+			x: bandX("Metraż"),
+			y: linY("zł/m²"),
+		});
+
+		// 13. STR cena nocna wg miesiąca (Airbnb vs Booking)
+		const abMonth = data.strPriceByMonth.filter((r) => r.source === "airbnb");
+		const bkMonth = data.strPriceByMonth.filter((r) => r.source === "booking");
+		c.strPriceByMonth = defineChart({
+			marks: [
+				lineY(abMonth, {
+					x: "month",
+					y: "avgPrice",
+					stroke: "#ff385c",
+					strokeWidth: 2,
+					points: true,
+				}),
+				lineY(bkMonth, {
+					x: "month",
+					y: "avgPrice",
+					stroke: "#003580",
 					strokeWidth: 2,
 					points: true,
 				}),
 			],
-			x: {
-				scale: () => scaleBand<string>().padding(0.2),
-				axis: { label: "Miesiąc" },
-			},
+			x: bandX("Miesiąc"),
+			y: linY("śr. zł/noc"),
+		});
+
+		// 14. STR obłożenie wg miesiąca
+		c.occupancyByMonth = defineChart({
+			marks: [
+				barY(data.occupancyByMonth, {
+					x: "month",
+					y: "occupancy",
+					fill: "#14b8a6",
+				}),
+			],
+			x: bandX("Miesiąc"),
 			y: {
 				scale: scaleLinear,
 				nice: true,
 				grid: true,
-				axis: { label: "śr. zł/noc" },
+				axis: { label: "obłożenie (0-1)" },
 			},
 		});
+
+		// 15. Premia weekendowa — cena wg dnia tygodnia check-inu
+		const dowRows = data.weekdayPremium.map((r) => ({
+			...r,
+			day: DOW[r.weekday] ?? String(r.weekday),
+		}));
+		c.weekdayPremium = defineChart({
+			marks: [barY(dowRows, { x: "day", y: "avgPrice", fill: "#f59e0b" })],
+			x: bandX("Dzień tygodnia (check-in)"),
+			y: linY("śr. zł/noc"),
+		});
+
+		// 16. STR obłożenie wg miasta
+		const occSorted = [...data.strOccupancyByCity].sort(
+			(a, b) => (b.occupancy ?? 0) - (a.occupancy ?? 0),
+		);
+		c.strOccupancy = defineChart({
+			marks: [
+				barY(occSorted, { x: "city", y: "occupancy", fill: "#0d9488" }),
+			],
+			x: bandX("Miasto"),
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "obłożenie (0-1)" },
+			},
+		});
+
+		// 17. Obłożenie STR vs rentowność LT (scatter)
+		const occMap = new Map(
+			data.strOccupancyByCity.map((r) => [r.city, r.occupancy]),
+		);
+		const scatterRows = data.grossYieldByCity
+			.filter((r) => occMap.has(r.city))
+			.map((r) => ({
+				city: r.city,
+				yieldPct: r.yieldPct,
+				occupancy: (occMap.get(r.city) ?? 0) * 100,
+			}));
+		c.occupancyVsYield = defineChart({
+			marks: [
+				dot(scatterRows, {
+					x: "occupancy",
+					y: "yieldPct",
+					r: 6,
+					fill: "#8b5cf6",
+				}),
+			],
+			x: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "obłożenie STR %" },
+			},
+			y: linY("rentowność LT %"),
+		});
+
+		// 18. Cena nocna wg miasta (Airbnb vs Booking)
+		const nightlyAb = data.nightlyByCity.filter((r) => r.source === "airbnb");
+		const nightlyBk = data.nightlyByCity.filter((r) => r.source === "booking");
+		const cityOrder = [
+			...new Set([...nightlyAb, ...nightlyBk].map((r) => r.city)),
+		];
+		c.nightlyByCity = defineChart({
+			marks: [
+				lineY(
+					cityOrder.map((city) => ({
+						city,
+						avg: nightlyAb.find((r) => r.city === city)?.avgNightly ?? null,
+					})),
+					{ x: "city", y: "avg", stroke: "#ff385c", strokeWidth: 2, points: true },
+				),
+				lineY(
+					cityOrder.map((city) => ({
+						city,
+						avg: nightlyBk.find((r) => r.city === city)?.avgNightly ?? null,
+					})),
+					{ x: "city", y: "avg", stroke: "#003580", strokeWidth: 2, points: true },
+				),
+			],
+			x: bandX("Miasto"),
+			y: linY("śr. zł/noc"),
+		});
+
+		// 19. % ofert z obniżką ceny wg miasta (ostatnie 30 dni)
+		c.priceDrops = defineChart({
+			marks: [
+				barY(data.priceDropsByCity, {
+					x: "city",
+					y: "dropPct",
+					fill: "#dc2626",
+				}),
+			],
+			x: bandX("Miasto"),
+			y: {
+				scale: scaleLinear,
+				nice: true,
+				grid: true,
+				axis: { label: "% ofert z obniżką" },
+			},
+		});
+
+		return c;
 	}, [data]);
+
+	const chartDefs: Array<{
+		title: string;
+		subtitle?: string;
+		key: string;
+		height?: number;
+	}> = [
+		{
+			title: "1 · Liczba ofert wg przedziału czynszu",
+			subtitle: `histogram najmu LT — mediana ${data?.rentMeta.median ?? 0} zł, średnia ${data?.rentMeta.avg ?? 0} zł`,
+			key: "rentHistogram",
+		},
+		{
+			title: "2 · Liczba ofert wg przedziału opłat (czynsz adm.)",
+			subtitle: `histogram opłat — mediana ${data?.oplatyMeta.median ?? 0} zł, średnia ${data?.oplatyMeta.avg ?? 0} zł`,
+			key: "oplatyHistogram",
+		},
+		{
+			title: "3 · Liczba ofert wg kosztu łącznego (czynsz + opłaty)",
+			subtitle: `histogram kosztu całkowitego — mediana ${data?.totalMeta.median ?? 0} zł, średnia ${data?.totalMeta.avg ?? 0} zł`,
+			key: "totalHistogram",
+		},
+		{
+			title: "4 · Trend cen transakcyjnych (RCN + GUGiK, 36 mies.)",
+			subtitle: "avg zł/m² — gdzie rynek zmierza",
+			key: "priceTrend",
+		},
+		{
+			title: "5 · Wolumen transakcji miesięcznie",
+			subtitle: "popyt — wolumen zwykle wyprzedza ceny",
+			key: "txVolume",
+		},
+		{
+			title: "6 · Nowe oferty miesięcznie",
+			subtitle: "niebieska = sprzedaż, zielona = najem LT, czerwona = STR",
+			key: "newSupply",
+		},
+		{
+			title: "7 · Wzrost cen transakcyjnych r/r wg powiatu",
+			subtitle: "średnia 12 mies. vs poprzednie 12 (min. 10 transakcji na okno)",
+			key: "yoyByPowiat",
+		},
+		{
+			title: "8 · Rentowność najmu długoterminowego wg miasta",
+			subtitle: "czynsz roczny / cena sprzedaży",
+			key: "grossYield",
+		},
+		{
+			title: "9 · Cena ofertowa vs transakcyjna",
+			subtitle: "niebieska = oferty, fioletowa = transakcje — luka = margines negocjacji",
+			key: "offerVsTxGap",
+		},
+		{
+			title: "10 · Pierwotny vs wtórny wg powiatu",
+			subtitle: "pomarańczowy = pierwotny — premium nowej podaży",
+			key: "primaryVsSecondary",
+		},
+		{
+			title: "11 · Cena transakcyjna wg liczby pokoi",
+			subtitle: "zł/m² — które typy mieszkań są cenione najwyżej",
+			key: "txByRooms",
+		},
+		{
+			title: "12 · Cena ofertowa zł/m² wg metrażu",
+			subtitle: "kawalerki zwykle najdroższe za m²",
+			key: "areaSegments",
+		},
+		{
+			title: "13 · STR — cena nocna wg miesiąca",
+			subtitle: "czerwona = Airbnb, granatowa = Booking — sezonowość",
+			key: "strPriceByMonth",
+		},
+		{
+			title: "14 · STR — obłożenie wg miesiąca",
+			subtitle: "rezerwacje (bez blokad właścicieli) — szczyty popytu",
+			key: "occupancyByMonth",
+		},
+		{
+			title: "15 · STR — cena nocna wg dnia tygodnia",
+			subtitle: "premia Pt/So = rynek weekendowy; płasko = najem pracowniczy",
+			key: "weekdayPremium",
+		},
+		{
+			title: "16 · STR — obłożenie wg miasta",
+			subtitle: "gdzie kalendarze są najpełniej zajęte",
+			key: "strOccupancy",
+		},
+		{
+			title: "17 · Obłożenie STR vs rentowność LT",
+			subtitle: "prawy górny róg = najlepsze miejsca pod najem inwestycyjny",
+			key: "occupancyVsYield",
+			height: 300,
+		},
+		{
+			title: "18 · Cena nocna wg miasta (Airbnb vs Booking)",
+			subtitle: "czerwona = Airbnb, granatowa = Booking",
+			key: "nightlyByCity",
+		},
+		{
+			title: "19 · % ofert z obniżką ceny (30 dni) wg miasta",
+			subtitle:
+				"udział ogłoszeń, których cena spadła w ciągu ostatnich 30 dni — rośnie z historią snapshots",
+			key: "priceDrops",
+		},
+	];
 
 	if (isLoading) {
 		return <div className="p-6 text-sm text-gray-500">Ładowanie...</div>;
 	}
+	if (error || !data) {
+		return (
+			<div className="p-6 text-sm text-red-600">
+				Nie udało się pobrać danych: {String(error)}
+			</div>
+		);
+	}
 
 	return (
-		<div className="p-6">
+		<div className="min-h-screen bg-gray-50 p-4">
 			<div className="mb-4 flex items-center justify-between">
 				<h1 className="text-xl font-semibold">
-					Analityka inwestycyjna · Małopolska
+					Analityka rynku · Małopolska
 				</h1>
 				<div className="flex items-center gap-3 text-sm">
 					<Link to="/map" className="text-blue-600 underline">
 						Mapa
+					</Link>
+					<Link to="/listings" className="text-blue-600 underline">
+						Listings
 					</Link>
 					<Link to="/sources" className="text-blue-600 underline">
 						Data sources
@@ -384,291 +601,68 @@ function AnalyticsPage() {
 				</div>
 			</div>
 
-			<div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-				<div className="rounded border p-2 lg:col-span-2">
-					<div className="flex flex-wrap items-center justify-between gap-2 px-2 py-1">
-						<h2 className="text-sm font-semibold text-gray-600">
-							Małopolska — powiaty (heatmapa)
-						</h2>
-						<div className="flex flex-wrap gap-1">
-							{DISTRICT_METRICS.map((m) => (
-								<button
-									key={m.key}
-									type="button"
-									onClick={() => setMetric(m.key)}
-									className={`rounded px-2 py-1 text-xs ${
-										metric === m.key
-											? "bg-blue-600 text-white"
-											: "bg-gray-100 text-gray-600 hover:bg-gray-200"
-									}`}
-								>
-									{m.label}
-								</button>
-							))}
+			<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+				{chartDefs.map((cd) => {
+					const def = charts[cd.key];
+					if (!def) return null;
+					const height = cd.height ?? 280;
+					return (
+						<div key={cd.key} className="rounded border bg-white p-2">
+							<h2 className="px-2 py-1 text-sm font-semibold text-gray-700">
+								{cd.title}
+							</h2>
+							{cd.subtitle && (
+								<p className="px-2 pb-1 text-xs text-gray-500">{cd.subtitle}</p>
+							)}
+							<div style={{ height }}>
+								<Chart
+									definition={def as never}
+									height={height - 14}
+									ariaLabel={cd.title}
+								/>
+							</div>
 						</div>
-					</div>
-					<div className="h-96">
-						<Chart
-							definition={choropleth.definition}
-							height={380}
-							ariaLabel="Mapa powiatów Małopolski"
-						/>
-					</div>
-					<div className="flex items-center gap-2 px-2 pt-1 text-xs text-gray-500">
-						<span>
-							{fmt(choropleth.min)}{" "}
-							{DISTRICT_METRICS.find((m) => m.key === metric)?.unit}
-						</span>
-						<div
-							className="h-2 flex-1 rounded"
-							style={{
-								background:
-									"linear-gradient(to right, rgb(224,242,254), rgb(30,58,138))",
-							}}
-						/>
-						<span>
-							{fmt(choropleth.max)}{" "}
-							{DISTRICT_METRICS.find((m) => m.key === metric)?.unit}
-						</span>
-					</div>
-				</div>
-				<div className="overflow-x-auto rounded border">
-					<h2 className="px-3 py-2 text-sm font-semibold text-gray-600">
-						Powiaty wg: {DISTRICT_METRICS.find((m) => m.key === metric)?.label}
-					</h2>
-					<table className="w-full text-sm">
-						<thead className="bg-gray-50 text-left">
-							<tr>
-								<th className="px-3 py-1.5">Dzielnica</th>
-								<th className="px-3 py-1.5 text-right">Wartość</th>
-							</tr>
-						</thead>
-						<tbody>
-							{[...(districtMap?.features ?? [])]
-								.map((f) => ({
-									name: f.name,
-									value: f[metric] as number | null,
-								}))
-								.sort(
-									(a, b) =>
-										(b.value ?? Number.NEGATIVE_INFINITY) -
-										(a.value ?? Number.NEGATIVE_INFINITY),
-								)
-								.map((r) => (
-									<tr key={r.name} className="border-t hover:bg-gray-50">
-										<td className="px-3 py-1">{r.name}</td>
-										<td className="px-3 py-1 text-right">
-											{fmt(r.value, metric === "saleCount" ? 0 : 1)}
-										</td>
-									</tr>
-								))}
-						</tbody>
-					</table>
-				</div>
+					);
+				})}
 			</div>
 
-			<div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
-				{[
-					{
-						label: "Oferty sprzedaży",
-						value: `${fmt(insights?.summary.saleCount)}`,
-						sub: `${fmt(insights?.summary.saleAvgM2)} zł/m²`,
-					},
-					{
-						label: "Najem długoterm.",
-						value: `${fmt(insights?.summary.rentCount)}`,
-						sub: `${fmt(insights?.summary.rentAvgM2)} zł/m²`,
-					},
-					{
-						label: "Transakcje RCN (2 lata)",
-						value: `${fmt(insights?.summary.rcnTxCount)}`,
-						sub: `${fmt(insights?.summary.rcnAvgM2)} zł/m²`,
-					},
-					{
-						label: "Oferta vs transakcja",
-						value: `${fmt(insights?.summary.gapPct, 1)}%`,
-						sub: "przewartościowanie",
-					},
-					{
-						label: "Obniżki cen",
-						value: `${fmt(insights?.priceDrops.droppedCount)}`,
-						sub:
-							insights?.priceDrops.avgDropPct != null
-								? `śr. -${fmt(insights.priceDrops.avgDropPct, 1)}%`
-								: "brak danych",
-					},
-				].map((m) => (
-					<div key={m.label} className="rounded border bg-gray-50 p-3">
-						<div className="text-xs text-gray-500">{m.label}</div>
-						<div className="mt-1 text-lg font-semibold">{m.value}</div>
-						<div className="text-xs text-gray-500">{m.sub}</div>
-					</div>
-				))}
-			</div>
-
-			<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-				<div className="rounded border p-2">
-					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
-						Rynek transakcyjny RCN · pierwotny vs wtórny
-					</h2>
-					<div className="h-64">
-						<Chart
-							definition={rcnMarketChart}
-							height={250}
-							ariaLabel="RCN pierwotny vs wtórny"
-						/>
-					</div>
-				</div>
-				<div className="rounded border p-2">
-					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
-						Trend cen transakcyjnych zł/m² (RCN)
-					</h2>
-					<div className="h-64">
-						<Chart
-							definition={rcnYearlyChart}
-							height={250}
-							ariaLabel="Trend cen transakcyjnych"
-						/>
-					</div>
-				</div>
-				<div className="rounded border p-2">
-					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
-						Cena ofertowa zł/m² wg liczby pokoi
-					</h2>
-					<div className="h-64">
-						<Chart
-							definition={roomsChart}
-							height={250}
-							ariaLabel="Cena wg pokoi"
-						/>
-					</div>
-				</div>
-				<div className="rounded border p-2">
-					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
-						Rozkład cen ofertowych zł/m²
-					</h2>
-					<div className="h-64">
-						<Chart
-							definition={histChart}
-							height={250}
-							ariaLabel="Rozkład cen zł/m²"
-						/>
-					</div>
-				</div>
-				<div className="rounded border p-2">
-					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
-						Obłożenie najmu krótkoterminowego wg miesiąca
-					</h2>
-					<div className="h-64">
-						<Chart
-							definition={occupancyChart}
-							height={250}
-							ariaLabel="Obłożenie wg dzielnicy"
-						/>
-					</div>
-				</div>
-			</div>
-
-			<div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-				<div className="rounded border p-2">
-					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
-						Rentowność najmu długoterminowego wg dzielnicy
-					</h2>
-					<div className="h-80">
-						<Chart
-							definition={yieldChart}
-							height={300}
-							ariaLabel="Rentowność wg dzielnicy"
-						/>
-					</div>
-				</div>
-				<div className="rounded border p-2">
-					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
-						Cena sprzedaży zł/m² wg dzielnicy
-					</h2>
-					<div className="h-80">
-						<Chart
-							definition={saleChart}
-							height={300}
-							ariaLabel="Cena sprzedaży wg dzielnicy"
-						/>
-					</div>
-				</div>
-				<div className="rounded border p-2">
-					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
-						Średnia cena najmu wg źródła
-					</h2>
-					<div className="h-72">
-						<Chart
-							definition={sourceChart}
-							height={280}
-							ariaLabel="Cena najmu wg źródła"
-						/>
-					</div>
-				</div>
-				<div className="rounded border p-2">
-					<h2 className="px-2 py-1 text-sm font-semibold text-gray-600">
-						Trend cen najmu krótkoterminowego
-					</h2>
-					<div className="h-72">
-						<Chart
-							definition={trendChart}
-							height={280}
-							ariaLabel="Trend cen najmu"
-						/>
-					</div>
-				</div>
-			</div>
-
-			<div className="mt-4 overflow-x-auto rounded border">
+			<div className="mt-4 overflow-x-auto rounded border bg-white">
 				<h2 className="px-3 py-2 text-sm font-semibold text-gray-600">
-					Top 15 okazje — przewartościowane vs niedowartościowane
+					Okazje — dzielnice przewartościowane vs niedowartościowane
 				</h2>
 				<table className="w-full text-sm">
 					<thead className="bg-gray-50 text-left">
 						<tr>
 							<th className="px-3 py-2">Dzielnica</th>
-							<th className="px-3 py-2 text-right">Wynik</th>
 							<th className="px-3 py-2 text-right">Cena zł/m²</th>
-							<th className="px-3 py-2 text-right">Ofert sprz.</th>
 							<th className="px-3 py-2 text-right">Czynsz zł/m²</th>
-							<th className="px-3 py-2 text-right">Ofert najmu</th>
 							<th className="px-3 py-2 text-right">Rentowność</th>
 							<th className="px-3 py-2 text-right">Wartość godziwa</th>
 							<th className="px-3 py-2 text-right">Przewart.</th>
 							<th className="px-3 py-2 text-right">Zwrot (lata)</th>
-							<th className="px-3 py-2 text-right">Zwrot 10 lat</th>
 						</tr>
 					</thead>
 					<tbody>
 						{(valuation?.rows ?? []).map((r) => (
 							<tr key={r.district} className="border-t hover:bg-gray-50">
 								<td className="px-3 py-1.5">{r.district}</td>
-								<td className="px-3 py-1.5 text-right font-medium">
-									{fmt(r.valueScore, 1)}
-								</td>
-								<td className="px-3 py-1.5 text-right">{fmt(r.saleAvgM2)}</td>
-								<td className="px-3 py-1.5 text-right text-gray-500">
-									{r.saleCount}
+								<td className="px-3 py-1.5 text-right">
+									{Math.round(r.saleAvgM2).toLocaleString("pl-PL")}
 								</td>
 								<td className="px-3 py-1.5 text-right">
-									{fmt(r.rentAvgM2, 1)}
-								</td>
-								<td className="px-3 py-1.5 text-right text-gray-500">
-									{r.rentCount}
+									{r.rentAvgM2.toFixed(1)}
 								</td>
 								<td className="px-3 py-1.5 text-right">
-									{fmt(r.grossYieldPct, 1)}%
-								</td>
-								<td className="px-3 py-1.5 text-right">{fmt(r.fairPriceM2)}</td>
-								<td className="px-3 py-1.5 text-right">
-									{fmt(r.overUnderPct, 1)}%
+									{r.grossYieldPct.toFixed(1)}%
 								</td>
 								<td className="px-3 py-1.5 text-right">
-									{fmt(r.paybackYears, 1)}
+									{Math.round(r.fairPriceM2).toLocaleString("pl-PL")}
 								</td>
 								<td className="px-3 py-1.5 text-right">
-									{fmt(r.tenYearReturnPct, 1)}%
+									{r.overUnderPct.toFixed(1)}%
+								</td>
+								<td className="px-3 py-1.5 text-right">
+									{r.paybackYears.toFixed(1)}
 								</td>
 							</tr>
 						))}
@@ -676,34 +670,13 @@ function AnalyticsPage() {
 				</table>
 			</div>
 
-			<div className="mt-4 overflow-x-auto rounded border">
-				<table className="w-full text-sm">
-					<thead className="bg-gray-50 text-left">
-						<tr>
-							<th className="px-3 py-2">Dzielnica</th>
-							<th className="px-3 py-2 text-right">Rentowność</th>
-							<th className="px-3 py-2 text-right">Cena sprzedaży zł/m²</th>
-							<th className="px-3 py-2 text-right">Czynsz zł/m²</th>
-							<th className="px-3 py-2 text-right">Oferty sprzedaży</th>
-							<th className="px-3 py-2 text-right">Oferty najmu</th>
-						</tr>
-					</thead>
-					<tbody>
-						{(data?.yieldByDistrict ?? []).map((r) => (
-							<tr key={r.district} className="border-t hover:bg-gray-50">
-								<td className="px-3 py-1.5">{r.district}</td>
-								<td className="px-3 py-1.5 text-right font-medium">
-									{fmt(r.yieldPct, 1)}%
-								</td>
-								<td className="px-3 py-1.5 text-right">{fmt(r.saleAvgM2)}</td>
-								<td className="px-3 py-1.5 text-right">{fmt(r.rentAvgM2)}</td>
-								<td className="px-3 py-1.5 text-right">{r.saleCount}</td>
-								<td className="px-3 py-1.5 text-right">{r.rentCount}</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			</div>
+			<p className="mt-4 rounded border bg-white p-3 text-xs text-gray-500">
+				Źródła: transakcje RCN Kraków + GUGiK (1.3 mln, aktualizacja dzienna),
+				oferty otodom/olx (sprzedaż + najem LT, odświeżanie godzinowe),
+				Airbnb/Booking (ceny nocne, kalendarze dostępności — codziennie).
+				Obłożenie = sklasyfikowane rezerwacje; blokady właścicieli liczone
+				osobno i wykluczone ze współczynnika.
+			</p>
 		</div>
 	);
 }

@@ -121,6 +121,9 @@ const MALOPOLSKA_LIST_URL =
 
 interface OlxAdapterOptions {
 	id: string;
+	/** Listing.source value; defaults to `id`. Rentals share "olx" so the
+	 *  najem/sprzedaż dropdown is the only rental/sale filter. */
+	sourceId?: string;
 	name: string;
 	offerType: "sale" | "long_term_rental";
 	pricePeriod: "monthly" | null;
@@ -151,7 +154,7 @@ function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 			: null;
 
 		return {
-			source: opts.id,
+			source: opts.sourceId ?? opts.id,
 			externalId: String(ad.id),
 			url,
 			title: ad.title ?? "OLX listing",
@@ -252,6 +255,7 @@ export const olxAdapter: CheerioAdapter = makeOlxAdapter({
 /** Long-term rental flats, houses and plots across Małopolska. */
 export const olxRentAdapter: CheerioAdapter = makeOlxAdapter({
 	id: "olx-rent",
+	sourceId: "olx",
 	name: "OLX - Małopolska long-term rentals",
 	offerType: "long_term_rental",
 	pricePeriod: "monthly",

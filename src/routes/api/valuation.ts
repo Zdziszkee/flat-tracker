@@ -40,7 +40,7 @@ export const Route = createFileRoute("/api/valuation")({
 					})
 					.from(listings)
 					.where(
-						sql`${listings.source} = 'olx-rent' and ${listings.price} is not null and ${listings.areaM2} between 10 and 200 and ${listings.district} is not null and ${listings.district} != ''`,
+						sql`${listings.offerType} = 'long_term_rental' and ${listings.price} is not null and ${listings.areaM2} between 10 and 200 and ${listings.district} is not null and ${listings.district} != ''`,
 					)
 					.groupBy(listings.district)
 					.all();

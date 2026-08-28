@@ -66,6 +66,8 @@ export interface RefreshSummary {
 	pruned: number;
 	/** NEW transactions inserted by the RCN diff (0 when the registry is unchanged). */
 	rcnNew: number;
+	/** NEW transactions from GUGiK per-powiat GeoPackages (region minus Kraków). */
+	gugikNew: number;
 	/** Listings anchored on the map this run (local index + Nominatim). */
 	geocoded: number;
 	startedAt: string;
@@ -109,6 +111,7 @@ export async function refreshAll(
 			sites: [],
 			pruned: 0,
 			rcnNew: 0,
+			gugikNew: 0,
 			geocoded: 0,
 			startedAt: new Date().toISOString(),
 			elapsedSeconds: 0,
@@ -118,7 +121,12 @@ export async function refreshAll(
 	// Begin the live-progress registry synchronously so a concurrent caller
 	// (hourly task / dev boot / /api/refresh) sees the run immediately.
 	const siteAdapters = adapters.filter((base) => !DEMO_SITES.has(base.id));
-	beginRefresh([...siteAdapters.map((a) => a.id), "geocoding", "rcn-import"]);
+	beginRefresh([
+		...siteAdapters.map((a) => a.id),
+		"geocoding",
+		"rcn-import",
+		"building-assign",
+	]);
 
 	const sinceDays = opts.sinceDays ?? DEFAULT_SINCE_DAYS;
 	const firstPageOnly = opts.firstPageOnly ?? true;
@@ -331,6 +339,16 @@ export async function refreshAll(
 			});
 		}
 		const rcnNew = opts.includeRcn === false ? 0 : await importRcn();
+
+		// Region-wide price history (all małopolska powiaty except Kraków,
+		// which the richer RCN zip above covers): GUGiK "Usługa Transakcje"
+		// per-powiat GeoPackages, cadence-gated inside the importer.
+		let gugikNew = 0;
+		if (opts.includeRcn !== false) {
+			const { importRcnGugik } = await import("./import-rcn-gugik.ts");
+			gugikNew = await importRcnGugik();
+		}
+
 		if (opts.includeRcn !== false) {
 			await recordCrawlRun({
 				source: "rcn-import",
@@ -347,10 +365,41 @@ export async function refreshAll(
 			});
 		}
 
+		// New RCN rows land unbound: bind transactions -> buildings (and
+		// backfill building addresses) right away so the daily registry diff
+		// shows up colored on the map without a manual assign-buildings run.
+		if (opts.includeRcn !== false && rcnNew + gugikNew > 0) {
+			const { assignBuildings } = await import("./assign-buildings.ts");
+			setPhase("building-assign");
+			setSourceProgress("building-assign", {
+				state: "running",
+				startedAt: new Date().toISOString(),
+			});
+			try {
+				const a = await assignBuildings();
+				console.log(
+					`[refresh] building assignment after RCN diff: ${a.listings} listings, ${a.transactions} transactions, ${a.addressBackfilled} addresses`,
+				);
+				setSourceProgress("building-assign", {
+					state: "ok",
+					finishedAt: new Date().toISOString(),
+					newCount: a.transactions,
+					updatedCount: a.listings,
+				});
+			} catch (err) {
+				setSourceProgress("building-assign", {
+					state: "failed",
+					error: String(err),
+				});
+				console.error("[refresh] building assignment failed:", err);
+			}
+		}
+
 		return {
 			sites,
 			pruned,
 			rcnNew,
+			gugikNew,
 			geocoded,
 			startedAt: new Date(started).toISOString(),
 			elapsedSeconds: (Date.now() - started) / 1000,

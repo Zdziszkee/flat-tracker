@@ -36,10 +36,15 @@ function buildingHeight(tagsJson: string | null): number {
 	return 12;
 }
 
+// Memoized per process, but with a TTL: building assignments and RCN
+// imports land while the dev/prod server keeps running, and a permanent
+// cache would serve a stale txCount map (missing amber buildings).
+const CACHE_TTL_MS = 5 * 60 * 1000;
 let cache: CachedFeature[] | null = null;
+let cacheAt = 0;
 
 async function getFeatures(): Promise<CachedFeature[]> {
-	if (cache) return cache;
+	if (cache && Date.now() - cacheAt < CACHE_TTL_MS) return cache;
 
 	// Count transactions per building in one pass, then join.
 	const txRows = await db
@@ -69,7 +74,7 @@ async function getFeatures(): Promise<CachedFeature[]> {
 			address: r.address,
 			txCount: txByBuilding.get(r.id) ?? 0,
 			height: buildingHeight(r.tags),
-			// The stored geometry is a ring of {lat, lon}; wrap it into a
+			// The stored geometry is a ring of {lat, lng}; wrap it into a
 			// GeoJSON Polygon ([lng, lat] coordinate order).
 			geometry: {
 				type: "Polygon" as const,
@@ -77,13 +82,14 @@ async function getFeatures(): Promise<CachedFeature[]> {
 					(
 						JSON.parse(r.geometry as string) as Array<{
 							lat: number;
-							lon: number;
+							lng: number;
 						}>
-					).map((p) => [p.lon, p.lat]),
+					).map((p) => [p.lng, p.lat]),
 				],
 			},
 		}))
 		.filter((f) => f.txCount > 0);
+	cacheAt = Date.now();
 	return cache;
 }
 

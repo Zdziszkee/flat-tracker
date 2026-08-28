@@ -13,6 +13,9 @@ const refreshTask = fileURLToPath(
 const airbnbCalendarTask = fileURLToPath(
 	new URL("./server/tasks/airbnb-calendar.ts", import.meta.url),
 );
+const bookingCalendarTask = fileURLToPath(
+	new URL("./server/tasks/booking-calendar.ts", import.meta.url),
+);
 const refreshPlugin = fileURLToPath(
 	new URL("./server/plugins/refresh-on-start.ts", import.meta.url),
 );
@@ -60,12 +63,18 @@ const config = defineConfig({
 					description:
 						"Import Airbnb availability calendars and fold monthly prices",
 				},
+				"booking-calendar": {
+					handler: bookingCalendarTask,
+					description:
+						"Import Booking.com availability calendars and fold occupancy stats",
+				},
 			},
 			// Hourly data refresh (same program as `npm run crawl:all`, which
 			// does an incremental RCN diff check before any 2 GB download).
 			scheduledTasks: {
 				"0 * * * *": "refresh",
 				"0 3 * * *": "airbnb-calendar",
+				"30 3 * * *": "booking-calendar",
 			},
 		}),
 		tailwindcss(),

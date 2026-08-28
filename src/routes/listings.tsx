@@ -5,6 +5,7 @@ import { useState } from "react";
 interface Row {
 	id: number;
 	source: string;
+	offerType: string;
 	title: string;
 	price: number | null;
 	pricePerM2: number | null;
@@ -48,11 +49,122 @@ const SOURCE_LABELS: Record<string, string> = {
 	"nieruchomosci-online": "Nieruchomosci-online",
 	rynekpierwotny: "Rynekpierwotny",
 	"licytacje-komornik": "Licytacje komornicze",
-	"olx-rent": "OLX wynajem",
-	"otodom-rent": "Otodom wynajem",
 	airbnb: "Airbnb",
 	booking: "Booking",
 };
+
+interface OfferValuation {
+	offer: { id: number; price: number | null; pricePerM2: number | null; areaM2: number | null; offerType: string };
+	comps: {
+		building: { avgM2: number; n: number } | null;
+		area: { avgM2: number; n: number } | null;
+		rcn: { avgM2: number; n: number } | null;
+		fairM2: number | null;
+	};
+	overUnderPct: number | null;
+	rating: { label: string; tone: string } | null;
+	lt: {
+		rentAvg: number;
+		czynszAvg: number;
+		n: number;
+		netMonthly: number;
+		netYearly: number;
+		netYieldPct: number | null;
+	} | null;
+	str: {
+		nightlyAvg: number;
+		occupancy: number;
+		n: number;
+		netMonthly: number;
+		netYearly: number;
+		netYieldPct: number | null;
+	} | null;
+}
+
+function ValuationPanel({ id }: { id: number }) {
+	const { data, isLoading } = useQuery<OfferValuation>({
+		queryKey: ["valuation-offer", id],
+		queryFn: () => fetch(`/api/valuation/offer?id=${id}`).then((r) => r.json()),
+	});
+	if (isLoading) {
+		return <div className="px-6 py-3 text-xs text-gray-500">Liczenie wyceny…</div>;
+	}
+	if (!data || !data.offer) {
+		return <div className="px-6 py-3 text-xs text-gray-500">Brak danych do wyceny.</div>;
+	}
+	const c = data.comps;
+	const compRow = (label: string, v: { avgM2: number; n: number } | null) =>
+		v ? (
+			<div className="flex justify-between">
+				<span className="text-gray-500">{label}</span>
+				<span>
+					{Math.round(v.avgM2).toLocaleString("pl-PL")} zł/m²
+					<span className="text-gray-400"> ({v.n})</span>
+				</span>
+			</div>
+		) : null;
+	return (
+		<div className="space-y-2 bg-gray-50 px-6 py-3 text-xs">
+			<div className="flex items-center gap-2">
+				<span className="font-medium">Wycena:</span>
+				{c.fairM2 != null && (
+					<span>
+						wartość godziwa <b>{c.fairM2.toLocaleString("pl-PL")} zł/m²</b>
+						{data.offer.pricePerM2 != null && (
+							<span className="text-gray-500">
+								{" "}
+								(oferta {Math.round(data.offer.pricePerM2).toLocaleString("pl-PL")})
+							</span>
+						)}
+					</span>
+				)}
+				{data.rating && (
+					<span className={`rounded px-1.5 py-0.5 font-medium ${data.rating.tone} bg-white`}>
+						{data.rating.label}
+						{data.overUnderPct != null && ` ${data.overUnderPct > 0 ? "+" : ""}${data.overUnderPct}%`}
+					</span>
+				)}
+			</div>
+			<div className="space-y-0.5">
+				{compRow("To samo budynku", c.building)}
+				{compRow("Okolica", c.area)}
+				{compRow("Transakcje RCN (1 km, 24 mies.)", c.rcn)}
+			</div>
+			<div className="grid grid-cols-2 gap-2 border-t pt-2">
+				{data.lt && (
+					<div>
+						<div className="font-medium text-emerald-700">Najem długoterminowy (netto)</div>
+						<div className="text-gray-600">
+							{data.lt.rentAvg.toLocaleString("pl-PL")} zł − {data.lt.czynszAvg.toLocaleString("pl-PL")} opłaty =
+							<b> {data.lt.netMonthly.toLocaleString("pl-PL")} zł/mies.</b>
+						</div>
+						<div className="text-gray-500">
+							rocznie netto {data.lt.netYearly.toLocaleString("pl-PL")} zł · ROI{" "}
+							<b>{data.lt.netYieldPct?.toFixed(1) ?? "—"}%</b> ({data.lt.n} porównań)
+						</div>
+					</div>
+				)}
+				{data.str && (
+					<div>
+						<div className="font-medium text-rose-700">Najem krótkoterminowy (netto, szac.)</div>
+						<div className="text-gray-600">
+							{data.str.nightlyAvg.toLocaleString("pl-PL")} zł/noc ×{" "}
+							{(data.str.occupancy * 100).toFixed(0)}% obłożenia =
+							<b> {data.str.netMonthly.toLocaleString("pl-PL")} zł/mies.</b>
+						</div>
+						<div className="text-gray-500">
+							rocznie netto {data.str.netYearly.toLocaleString("pl-PL")} zł · ROI{" "}
+							<b>{data.str.netYieldPct?.toFixed(1) ?? "—"}%</b> ({data.str.n} porównań)
+						</div>
+					</div>
+				)}
+				{!data.lt && !data.str && (
+					<div className="text-gray-500">Brak porównywalnych najmów w okolicy.</div>
+				)}
+			</div>
+		</div>
+	);
+}
 
 function addedWithin(listedAt: string | null, days: DaysFilter): boolean {
 	if (days === 0) return true;
@@ -72,6 +184,7 @@ export const Route = createFileRoute("/listings")({
 function ListingsPage() {
 	const [source, setSource] = useState("all");
 	const [days, setDays] = useState<DaysFilter>(0);
+	const [expanded, setExpanded] = useState<number | null>(null);
 	const { data, isLoading } = useQuery<ListingsResponse>({
 		queryKey: ["listings"],
 		queryFn: () => fetch("/api/listings").then((r) => r.json()),
@@ -144,21 +257,32 @@ function ListingsPage() {
 							<th className="px-3 py-2 text-right">Pokoje</th>
 							<th className="px-3 py-2">Dzielnica</th>
 							<th className="px-3 py-2">Data dodania</th>
+							<th className="px-2 py-2" aria-label="wycena" />
 						</tr>
 					</thead>
 					<tbody>
 						{isLoading && (
 							<tr>
-								<td colSpan={8} className="px-3 py-6 text-center text-gray-500">
+								<td colSpan={9} className="px-3 py-6 text-center text-gray-500">
 									Ładowanie...
 								</td>
 							</tr>
 						)}
 						{!isLoading &&
 							rows.map((r) => (
+							<>
 								<tr
 									key={`${r.source}-${r.id}`}
-									className="border-t hover:bg-gray-50"
+									className={`border-t ${r.offerType === "sale" || r.offerType === "long_term_rental" ? "cursor-pointer hover:bg-gray-50" : ""}`}
+									onClick={() => {
+										if (
+											r.offerType !== "sale" &&
+											r.offerType !== "long_term_rental"
+										) {
+											return;
+										}
+										setExpanded(expanded === r.id ? null : r.id);
+									}}
 								>
 									<td className="px-3 py-1.5">
 										<span
@@ -191,7 +315,23 @@ function ListingsPage() {
 									<td className="px-3 py-1.5 text-right">{r.rooms ?? ""}</td>
 									<td className="px-3 py-1.5">{r.district ?? ""}</td>
 									<td className="px-3 py-1.5 text-gray-500">{addedLabel(r)}</td>
+									<td className="px-2 py-1.5 text-center text-gray-400">
+										{r.offerType === "sale" ||
+										r.offerType === "long_term_rental"
+											? expanded === r.id
+												? "▾"
+												: "▸"
+											: ""}
+									</td>
 								</tr>
+								{expanded === r.id && (
+									<tr key={`${r.source}-${r.id}-x`}>
+										<td colSpan={9} className="border-t bg-gray-50 p-0">
+											<ValuationPanel id={r.id} />
+										</td>
+									</tr>
+								)}
+							</>
 							))}
 					</tbody>
 				</table>

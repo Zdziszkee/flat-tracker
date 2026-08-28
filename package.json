@@ -20,7 +20,9 @@
     "db:studio": "drizzle-kit studio",
     "crawl:airbnb-calendar": "tsx src/crawler/airbnb-calendar.ts",
     "assign-buildings": "tsx src/crawler/assign-buildings.ts",
+    "import:egib": "tsx src/crawler/import-egib.ts",
     "geocode-addresses": "tsx src/crawler/geocode-addresses.ts",
+    "import:rcn-gugik": "tsx src/crawler/import-rcn-gugik.ts",
     "estimate-utilities": "tsx src/crawler/estimate-utilities.ts",
     "build-street-lexicon": "tsx scripts/build-street-lexicon.ts"
   },

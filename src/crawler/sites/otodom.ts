@@ -124,6 +124,9 @@ function isRealListing(item: OtodomListItem): boolean {
 
 interface OtodomAdapterOptions {
 	id: string;
+	/** Listing.source value; rentals share "otodom" so the najem/sprzedaż
+	 *  dropdown is the only rental/sale filter. */
+	sourceId?: string;
 	name: string;
 	/** Search-list base URL (no page/days params) for the region + transaction. */
 	listBase: string;
@@ -136,7 +139,7 @@ interface OtodomAdapterOptions {
 function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 	function listItemToListing(item: OtodomListItem): Listing {
 		return {
-			source: opts.id,
+			source: opts.sourceId ?? opts.id,
 			externalId: String(item.id),
 			url: `https://www.otodom.pl/pl/oferta/${item.slug}`,
 			title: item.title ?? "Otodom listing",
@@ -167,7 +170,7 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 		const price = detail.price?.[opts.priceKey]?.value ?? null;
 
 		return {
-			source: opts.id,
+			source: opts.sourceId ?? opts.id,
 			externalId: String(detail.id ?? ""),
 			url,
 			title: detail.title ?? "Otodom listing",
@@ -309,6 +312,7 @@ export const otodomAdapter: CheerioAdapter = makeOtodomAdapter({
 /** Long-term rental flats across Małopolska. */
 export const otodomRentAdapter: CheerioAdapter = makeOtodomAdapter({
 	id: "otodom-rent",
+	sourceId: "otodom",
 	name: "Otodom - Małopolska long-term rentals",
 	listBase: RENT_LIST_BASE,
 	offerType: "long_term_rental",

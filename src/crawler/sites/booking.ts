@@ -171,6 +171,59 @@ async function harvestEmbeddedCache(
 }
 
 /**
+ * Region-wide search (whole małopolskie voivodeship). Used as the DELTA
+ * PROBE: its first batch is the market fingerprint — when every card on
+ * it is already stored, the whole region is unchanged and the per-city
+ * drains are skipped entirely.
+ */
+function regionSearchUrl(): string {
+	const { checkin, checkout } = stayDates();
+	return (
+		"https://www.booking.com/searchresults.pl.html?" +
+		new URLSearchParams({
+			ss: "małopolskie",
+			ssne: "małopolskie",
+			ssne_untouched: "małopolskie",
+			dest_id: "1307",
+			dest_type: "region",
+			group_adults: "2",
+			no_rooms: "1",
+			group_children: "0",
+			checkin,
+			checkout,
+			lang: "pl",
+			sb: "1",
+			src: "region",
+			src_elem: "sb",
+		}).toString()
+	);
+}
+
+/**
+ * Delta mode: skip the (expensive, DataDome-provoking) per-city drains
+ * when the region search's first batch shows nothing new. Disable with
+ * BOOKING_DELTA=0.
+ */
+const BOOKING_DELTA = (process.env.BOOKING_DELTA ?? "1") !== "0";
+
+/** Every booking externalId already stored — the delta fingerprint. */
+async function knownBookingIds(): Promise<Set<string> | null> {
+	if (!BOOKING_DELTA) return null;
+	try {
+		const { db } = await import("../../db/index.ts");
+		const { listings } = await import("../../db/schema.ts");
+		const { eq } = await import("drizzle-orm");
+		const rows = await db
+			.select({ externalId: listings.externalId })
+			.from(listings)
+			.where(eq(listings.source, "booking"));
+		return new Set(rows.map((r) => r.externalId));
+	} catch {
+		return null;
+	}
+}
+
+/**
  * DataDome-protected: needs the camoufox anti-detect launcher, which Crawlee
  * cannot accept — exposed as a capability the crawler detects and calls.
  */
@@ -179,7 +232,9 @@ export const bookingAdapter: CustomLaunchAdapter = {
 	name: "Booking - Małopolska short-term rentals",
 	kind: "playwright",
 	launchBrowser: () => bookingLauncherFactory(true),
-	startUrls: BOOKING_CITIES.map((city) => citySearchUrl(city)),
+	// crawler.ts goto()s this once and hands the loaded page to
+	// extractListings — the region probe reuses that navigation.
+	startUrls: [regionSearchUrl()],
 	maxRequestsPerCrawl: 1,
 	listingSelector: '[data-testid="property-card"]',
 
@@ -188,7 +243,111 @@ export const bookingAdapter: CustomLaunchAdapter = {
 		opts?: { firstPageOnly?: boolean },
 	): Promise<Listing[]> {
 		const firstPageOnly = opts?.firstPageOnly === true;
-		const all: Listing[] = [];
+
+		// ---- Delta probe: first batch of the region-wide search --------
+		// crawler.ts already navigated here and waited for cards.
+		const regionSeen = new Set<string>();
+		const regionGeo = new Map<string, GeoFacts>();
+		await harvestEmbeddedCache(page, regionGeo);
+		const regionBatch: Listing[] = [];
+		const cards = await page.evaluate(() => {
+			const els = Array.from(
+				document.querySelectorAll<HTMLElement>('[data-testid="property-card"]'),
+			);
+			return els.map((card) => {
+				const title =
+					card.querySelector<HTMLElement>('[data-testid="title"]')?.innerText ??
+					null;
+				const link = card.querySelector<HTMLAnchorElement>(
+					'a[data-testid="title-link"], a[href*="booking.com/hotel"]',
+				);
+				const priceEl = card.querySelector<HTMLElement>(
+					'[data-testid="price-and-discounted-price"]',
+				);
+				const priceText = priceEl?.innerText ?? card.innerText;
+				const priceMatch = priceText.match(/([\d\s.,]+)\s*zł/i);
+				const price =
+					priceMatch &&
+					(() => {
+						const n = Number(
+							priceMatch[1].replace(/\s/g, "").replace(",", "."),
+						);
+						// Pinned window = exactly 7 nights; cards show the TOTAL
+						// for the stay — normalize to nightly (Airbnb-comparable).
+						return Number.isFinite(n) && n > 0
+							? Math.round((n / 7) * 100) / 100
+							: null;
+					})();
+				const ratingEl = card.querySelector<HTMLElement>(
+					'[data-testid="review-score"]',
+				);
+				const ratingMatch = (ratingEl?.innerText ?? "").match(/([\d,]+)/);
+				const href = link?.href ?? "";
+				const externalId = href.split("/hotel/")[1]?.split(".")[0] ?? href;
+				return { externalId, href, title, price, ratingMatch };
+			});
+		});
+		for (const c of cards) {
+			if (!c.externalId || regionSeen.has(c.externalId)) continue;
+			regionSeen.add(c.externalId);
+			const facts = regionGeo.get(c.externalId.replace(/^pl\//, ""));
+			regionBatch.push({
+				source: "booking",
+				externalId: c.externalId,
+				url: c.href || "https://www.booking.com",
+				title: c.title ?? "Booking listing",
+				price: c.price,
+				pricePerM2: null,
+				areaM2: null,
+				rooms: null,
+				floor: null,
+				district: null,
+				address:
+					facts?.address && facts?.city
+						? `${facts.address}, ${facts.city}`
+						: (facts?.address ?? facts?.city ?? null),
+				description: null,
+				heatingType: null,
+				propertyType: null,
+				features: null,
+				lat: facts?.lat ?? null,
+				lng: facts?.lng ?? null,
+				listedAt: null,
+				scrapedAt: new Date().toISOString(),
+				offerType: "short_term_rental" as const,
+				pricePeriod: "night" as const,
+				rating: c.ratingMatch
+					? Number(c.ratingMatch[1].replace(",", "."))
+					: (facts?.rating ?? null),
+				reviewsCount: facts?.reviewsCount ?? null,
+			});
+		}
+
+		// When the ENTIRE first batch is already stored, the region is
+		// unchanged: return the batch (the DB upsert refreshes prices and
+		// ratings for those rows) and skip all per-city drains — one browser
+		// session instead of 14, which is what used to poke the DataDome.
+		const known = await knownBookingIds();
+		if (
+			known &&
+			regionBatch.length > 0 &&
+			regionBatch.every((l) => known.has(l.externalId))
+		) {
+			console.log(
+				`booking: delta skip — region first batch of ` +
+					`${regionBatch.length} all known; skipping ${BOOKING_CITIES.length} city drains`,
+			);
+			return regionBatch;
+		}
+		const newOnFirstBatch = known
+			? regionBatch.filter((l) => !known.has(l.externalId)).length
+			: regionBatch.length;
+		console.log(
+			`booking: delta changed — ${newOnFirstBatch} new on region first ` +
+				`batch; draining ${BOOKING_CITIES.length} city shards`,
+		);
+
+		const all: Listing[] = [...regionBatch];
 		for (const city of BOOKING_CITIES) {
 			const shard = await drainCity(page, citySearchUrl(city), {
 				firstPageOnly,
@@ -279,7 +438,11 @@ async function drainCity(
 						const n = Number(
 							priceMatch[1].replace(/\s/g, "").replace(",", "."),
 						);
-						return Number.isFinite(n) && n > 0 ? n : null;
+						// Pinned window = exactly 7 nights; cards show the TOTAL
+						// for the stay — normalize to nightly (Airbnb-comparable).
+						return Number.isFinite(n) && n > 0
+							? Math.round((n / 7) * 100) / 100
+							: null;
 					})();
 				const ratingEl = card.querySelector<HTMLElement>(
 					'[data-testid="review-score"]',

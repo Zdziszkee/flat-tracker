@@ -1,27 +1,47 @@
-import { firefox } from "playwright-core";
+import { chromium } from "playwright-core";
 
-const browser = await firefox.launch({ headless: true, executablePath: "/home/zdziszkee/.cache/ms-playwright/firefox-1538/firefox/firefox" });
+// Usage: node scripts/mapshot.mjs [lng lat zoom] — defaults to Krowodrza.
+const [lng, lat, zoom] = process.argv.slice(2).map(Number) ?? [];
+
+const browser = await chromium.launch({ headless: true, executablePath: "/usr/bin/google-chrome" });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 await page.goto("http://localhost:3000/map", { waitUntil: "domcontentloaded" });
 await page.waitForFunction(() => {
   const m = window.__map;
-  return m && m.getSource("parcels") && m.isStyleLoaded();
+  return m && m.getLayer("3d-building") && m.getSource("parcels") && m.isStyleLoaded();
 }, { timeout: 45000 });
-// Kazimierz / Podgorze block, zoomed enough for dzialka ID labels
-await page.evaluate(() => {
+await page.evaluate(({ lng, lat, zoom }) => {
   const m = window.__map;
-  m.jumpTo({ center: [19.945, 50.0505], zoom: 15.6, pitch: 25, bearing: 0 });
-});
-await page.waitForTimeout(8000);
-const diag = await page.evaluate(() => {
+  m.jumpTo({ center: [lng, lat], zoom, pitch: 0, bearing: 0 });
+}, { lng: lng ?? 19.955, lat: lat ?? 50.09, zoom: zoom ?? 16.5 });
+await page.waitForTimeout(5000);
+await page.screenshot({ path: "/tmp/map-shot.png" });
+
+// Click the first rendered parcel to verify the popup.
+const target = await page.evaluate(() => {
   const m = window.__map;
-  const parcels = m.querySourceFeatures("parcels");
-  const labels = m.queryRenderedFeatures(undefined, { layers: ["parcel-labels"] }).length;
-  const blds = m.queryRenderedFeatures(undefined, { target: { featuresetId: "buildings", importId: "basemap" } });
-  // restore a realistic highlight count: only API ids (already applied on load)
-  const hi = blds.filter(f => f.state && f.state.highlight === true).length;
-  return { parcels: parcels.length, labelsRendered: labels, bldHi: hi, layers: m.getStyle().layers.map(l => l.id).filter(id => id.startsWith("parcel")) };
+  const parcels = m.queryRenderedFeatures(undefined, { layers: ["parcel-fill"] });
+  if (parcels.length === 0) return null;
+  const centroid = (f) => {
+    const ring = f.geometry.coordinates[0];
+    let x = 0, y = 0;
+    for (const c of ring) { x += c[0]; y += c[1]; }
+    return [x / ring.length, y / ring.length];
+  };
+  return m.project(centroid(parcels[0]));
 });
-console.log(JSON.stringify(diag));
-await page.screenshot({ path: "/tmp/map-geoportal.png" });
+if (target) {
+  const v = await page.evaluate(({ x, y }) => {
+    const r = document.querySelector(".mapboxgl-canvas-container").getBoundingClientRect();
+    return { x: x + r.left, y: y + r.top };
+  }, target);
+  await page.mouse.click(v.x, v.y);
+  await page.waitForTimeout(2500);
+  const popup = await page.evaluate(
+    () => document.querySelector(".mapboxgl-popup-content")?.textContent?.replace(/\s+/g, " ").slice(0, 140) ?? "NO POPUP",
+  );
+  console.log("parcel click ->", popup);
+  await page.screenshot({ path: "/tmp/map-shot-popup.png" });
+}
+console.log("done");
 await browser.close();

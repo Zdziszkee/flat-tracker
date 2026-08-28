@@ -205,10 +205,15 @@ export const osmBuildings = sqliteTable(
 );
 
 /**
- * Local index of cadastral parcels (działki) parsed from the RCN GML
- * export. One row per RCN_Dzialka with a polygon; used to bind
- * transactions to their true parcel (exact xlink ref, no fuzzy matching)
- * and to render a parcel grid on the map.
+ * Local index of cadastral parcels (działki). Two sources feed it:
+ * - 'rcn'  — RCN_Dzialka parsed from the Krakow RCN GML export (binds
+ *   transactions to their true parcel via exact xlink refs)
+ * - 'egib' — GUGiK KIEG zbiorcza WFS (ms:dzialki), filling the REST of
+ *   małopolska region-wide; the same registry-id format
+ *   (e.g. 126104_9.0090.101/6) lets both share one unique key, with RCN
+ *   rows taking precedence (imported first, egib uses INSERT OR IGNORE).
+ * Used to bind transactions to parcels and to render the parcel grid
+ * (geoportal podział gruntów style) on the map.
  */
 export const parcels = sqliteTable(
 	"parcels",
@@ -224,6 +229,12 @@ export const parcels = sqliteTable(
 		centroidLng: real().notNull(),
 		/** Exterior ring as JSON array of {lat, lng}. */
 		polygon: text().notNull(),
+		/** Where the row came from: 'rcn' (Krakow RCN) or 'egib' (KIEG WFS). */
+		source: text().notNull().default("rcn"),
+		/** Cadastral precinct (obręb) name, from the KIEG feed. */
+		obreb: text(),
+		/** Commune (gmina) name, from the KIEG feed. */
+		gmina: text(),
 	},
 	(t) => [
 		index("parcels_bbox_idx").on(
@@ -355,6 +366,26 @@ export const availabilityHistory = sqliteTable(
 );
 
 /**
+ * Per-parcel land metadata harvested from the GUGiK RCN GeoPackages:
+ * zoning/sposób użytkowania and ewidencyjna area (ha) for each działka
+ * seen in a transaction. Enriches the parcel popup (type, size in ar).
+ */
+export const parcelMeta = sqliteTable("parcel_meta", {
+	parcelId: text("parcel_id").primaryKey(),
+	/** Sposób użytkowania, e.g. "B", "R", "Ł" (budowlana/rolna/łąka). */
+	landUse: text("land_use"),
+	/** Przeznaczenie w MPZP (zoning plan label). */
+	zoning: text("zoning"),
+	/** Ewidencyjna area in hectares (1 ha = 100 ar = 10 000 m²). */
+	areaHa: real("area_ha"),
+	gmina: text(),
+	obreb: text(),
+	updatedAt: integer("updated_at", { mode: "timestamp" })
+		.notNull()
+		.default(sql`(unixepoch())`),
+});
+
+/**
  * Monthly price aggregation per rental listing, folded from availability
  * after each calendar crawl. Used directly by the analytics UI.
  */
@@ -383,5 +414,71 @@ export const listingMonthlyPrice = sqliteTable(
 			t.month,
 		),
 		index("listing_monthly_price_month_idx").on(t.month),
+	],
+);
+
+/**
+ * Monthly occupancy per rental listing, derived from the latest
+ * availability snapshots with blocked-vs-booked run classification:
+ * short unavailable runs bounded by open nights are real bookings,
+ * horizon-tail or very long runs are owner blocks / unopened months.
+ */
+export const listingOccupancy = sqliteTable(
+	"listing_occupancy",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		listingId: integer("listing_id")
+			.notNull()
+			.references(() => listings.id),
+		/** Month as YYYY-MM. */
+		month: text().notNull(),
+		/** Nights observed for this listing-month. */
+		sampleDays: integer("sample_days", { mode: "number" }),
+		/** Classified as real bookings (bounded unavailable runs). */
+		bookedNights: integer("booked_nights", { mode: "number" }),
+		/** Owner blocks / unopened months (unbounded tail runs, long runs). */
+		blockedNights: integer("blocked_nights", { mode: "number" }),
+		/** Open (bookable) nights. */
+		availableNights: integer("available_nights", { mode: "number" }),
+		/** bookedNights / sampleDays (0..1). */
+		occupancyRate: real("occupancy_rate"),
+		/** Avg effective nightly over AVAILABLE nights (marketable price). */
+		avgAvailablePrice: real("avg_available_price"),
+		capturedAt: integer("captured_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+	},
+	(t) => [
+		uniqueIndex("listing_occupancy_listing_month_idx").on(t.listingId, t.month),
+		index("listing_occupancy_month_idx").on(t.month),
+	],
+);
+
+/**
+ * Per-listing × weekday price/occupancy stats (Mon=0 .. Sun=6), folded
+ * from the same snapshots: weekend premiums and midweek dips per market.
+ */
+export const listingWeekdayStats = sqliteTable(
+	"listing_weekday_stats",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		listingId: integer("listing_id")
+			.notNull()
+			.references(() => listings.id),
+		/** 0 = Monday .. 6 = Sunday. */
+		weekday: integer("weekday", { mode: "number" }).notNull(),
+		sampleDays: integer("sample_days", { mode: "number" }),
+		avgEffectiveNightlyPrice: real("avg_effective_nightly_price"),
+		bookedNights: integer("booked_nights", { mode: "number" }),
+		availableNights: integer("available_nights", { mode: "number" }),
+		capturedAt: integer("captured_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+	},
+	(t) => [
+		uniqueIndex("listing_weekday_stats_listing_dow_idx").on(
+			t.listingId,
+			t.weekday,
+		),
 	],
 );

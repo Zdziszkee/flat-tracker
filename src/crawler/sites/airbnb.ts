@@ -178,6 +178,50 @@ async function countListingsInBox(
 	}
 }
 
+/** Delta mode: skip re-walking tiles whose supply hasn't changed (429s). */
+const DELTA_ENABLED =
+	(process.env.AIRBNB_DELTA ?? "1") !== "0" &&
+	typeof process !== "undefined";
+
+/**
+ * Hours after which a tile earns a full cursor-chain sweep again even if
+ * its first pages look unchanged: rankings rotate below the fold and new
+ * supply appears past the visible window. Default: full walk once a day.
+ */
+const FULL_SWEEP_HOURS = Number(process.env.AIRBNB_FULL_SWEEP_HOURS ?? 24);
+
+/**
+ * externalIds already stored inside a bbox — the delta fingerprint for a
+ * tile's page-1 change probe.
+ */
+async function knownIdsInBox(
+	minLat: number,
+	minLng: number,
+	maxLat: number,
+	maxLng: number,
+): Promise<Set<string> | null> {
+	if (!DELTA_ENABLED) return null;
+	try {
+		const { db } = await import("../../db/index.ts");
+		const { listings } = await import("../../db/schema.ts");
+		const rows = await db
+			.select({ externalId: listings.externalId })
+			.from(listings)
+			.where(
+				sql`${listings.source} = 'airbnb' AND ${listings.lat} between ${minLat} and ${maxLat} AND ${listings.lng} between ${minLng} and ${maxLng}`,
+			);
+		return new Set(rows.map((r) => r.externalId));
+	} catch {
+		return null;
+	}
+}
+
+function tileNeedsFullSweep(t: Tile | undefined): boolean {
+	if (!t?.drainedAt) return true; // never drained -> must walk fully
+	const ageMs = Date.now() - Date.parse(t.drainedAt);
+	return !(Number.isFinite(ageMs)) || ageMs > FULL_SWEEP_HOURS * 3600_000;
+}
+
 function replaceTile(tile: Tile, kids: Tile[]): void {
 	const idx = frontier.findIndex((t) => t.name === tile.name);
 	if (idx >= 0) frontier.splice(idx, 1, ...kids);
@@ -413,6 +457,49 @@ export const airbnbAdapter: CheerioAdapter = {
 
 		const u = new URL(url);
 		const current = u.searchParams.get("cursor");
+
+		// ---- Delta probe (page 1 of a previously drained tile) -----------
+		// Airbnb rankings rotate below the fold, so before paying for the
+		// full ~15-request cursor chain compare the page-1 fingerprints
+		// against the DB. When every first-page listing is already stored
+		// AND the tile had a full sweep recently, stop here: the chain has
+		// nothing new. This is what keeps the hourly refresh at ~1 request
+		// per unchanged tile instead of ~15 (the source of the 429 storms).
+		if (DELTA_ENABLED && current == null) {
+			const tile0: Tile = {
+				name: decodeURIComponent(u.pathname.split("/")[2] ?? "?"),
+				minLat: Number(u.searchParams.get("sw_lat")),
+				minLng: Number(u.searchParams.get("sw_lng")),
+				maxLat: Number(u.searchParams.get("ne_lat")),
+				maxLng: Number(u.searchParams.get("ne_lng")),
+				depth: Number(u.searchParams.get("d") ?? "0"),
+			};
+			const cached = frontier.find((t) => t.name === tile0.name);
+			if (cached && !tileNeedsFullSweep(cached)) {
+				const knownIds = await knownIdsInBox(
+					tile0.minLat,
+					tile0.minLng,
+					tile0.maxLat,
+					tile0.maxLng,
+				);
+				if (knownIds && results.length > 0) {
+					const allKnown = results.every((r) => {
+						const id = resultToListing(r).externalId;
+						return id !== "" && knownIds.has(id);
+					});
+					if (allKnown) {
+						markDrained(tile0.name);
+						console.log(
+							`airbnb: delta skip ${tile0.name} (${results.length} known, page 1 unchanged)`,
+						);
+						return results.map(resultToListing);
+					}
+					console.log(
+						`airbnb: delta changed ${tile0.name} (new ids on page 1), walking chain`,
+					);
+				}
+			}
+		}
 
 		if (pageCursors.length > 0) {
 			const currentIndex = current ? pageCursors.indexOf(current) : -1;

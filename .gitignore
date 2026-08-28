@@ -20,3 +20,10 @@ storage/
 dev.db
 dev.db-journal
 .devserver.log
+
+# Debug artifacts with embedded tokens / logs
+public/map-*.html
+dev-server.log
+*.log
+public/map-debug.html
+public/map-min-test.html

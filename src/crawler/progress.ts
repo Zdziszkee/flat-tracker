@@ -27,6 +27,7 @@ export type RefreshPhase =
 	| "airbnb-enrich"
 	| "geocode"
 	| "rcn"
+	| "building-assign"
 	| "done";
 
 export interface RefreshProgress {

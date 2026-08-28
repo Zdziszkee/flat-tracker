@@ -36,7 +36,7 @@ export const Route = createFileRoute("/api/refresh")({
 						console.log(
 							`[refresh] manual: ${ok}/${summary.sites.length} sites ok, ` +
 								`${summary.pruned} pruned, ${summary.rcnNew} new RCN, ` +
-								`${summary.geocoded} geocoded`,
+								`${summary.gugikNew} new GUGiK, ${summary.geocoded} geocoded`,
 						);
 					})
 					.catch((err) => console.error("[refresh] manual failed:", err));

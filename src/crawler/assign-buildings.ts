@@ -28,18 +28,29 @@ import {
  *
  * Usage: npm run assign-buildings
  */
-async function main() {
+export async function assignBuildings(): Promise<{
+	listings: number;
+	transactions: number;
+	addressBackfilled: number;
+}> {
 	console.log("Assigning buildings to listings...");
-	const listingsDone = await assignBuildingsToListingsLocal();
-	console.log(`  ${listingsDone} listings assigned`);
+	const listings = await assignBuildingsToListingsLocal();
+	console.log(`  ${listings} listings assigned`);
 
 	console.log("Assigning buildings to transactions (address-first)...");
-	const txDone = await assignBuildingsToTransactionsLocal();
-	console.log(`  ${txDone} transactions assigned by address`);
+	const transactions = await assignBuildingsToTransactionsLocal();
+	console.log(`  ${transactions} transactions assigned by address`);
 
 	console.log("Backfilling building addresses from transactions...");
-	const backfilled = await backfillBuildingAddresses();
-	console.log(`  ${backfilled} buildings got an address from transactions`);
+	const addressBackfilled = await backfillBuildingAddresses();
+	console.log(`  ${addressBackfilled} buildings got an address from transactions`);
+
+	return { listings, transactions, addressBackfilled };
+}
+
+/** CLI alias kept for `npm run assign-buildings`. */
+async function main() {
+	await assignBuildings();
 }
 
 /** buildings.address from the most common (street, number) in its txns. */

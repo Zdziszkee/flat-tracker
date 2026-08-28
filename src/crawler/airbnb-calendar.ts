@@ -9,17 +9,30 @@ import {
 	foldMonthlyPrices,
 	saveAvailabilityObservations,
 } from "./availability.ts";
+import { foldOccupancy } from "./occupancy.ts";
 
 /**
  * Airbnb availability-calendar importer, browser-first.
  *
  * Simulates a user: opens each listing page in a real browser, captures the
- * availability response the page itself requests, and selects a 7-night stay
- * in each of the next 12 months to read the month's payable total. This
- * captures seasonality (June vs January) instead of one flat nightly price.
+ * availability response the page itself requests, and reads stay totals for
+ * the next 4 months (seasonality), 1/3/30-night lengths (duration discount)
+ * and varied check-in weekdays (weekend premium).
+ *
+ * SCRAPING CADENCE: every day the task walks ALL active listings
+ * (~17k x ~10 page loads) — the user accepted the rate-limit risk
+ * explicitly. Ordering still prioritizes what matters first:
+ * never-observed listings, then check-ins inside CHECKIN_SOON_DAYS
+ * (prices get dynamic near arrival), then oldest-observed. A small
+ * inter-listing delay (AIRBNB_CALENDAR_DELAY_MS, default 250) keeps the
+ * run from bursting.
  */
 
 const MONTHS = 4;
+/** Listings with a check-in inside this window are re-observed first. */
+const CHECKIN_SOON_DAYS = 14;
+/** Politeness pause between listings (ms). */
+const LISTING_DELAY_MS = Number(process.env.AIRBNB_CALENDAR_DELAY_MS ?? 250);
 
 interface CalendarDay {
 	calendarDate?: string;
@@ -37,6 +50,12 @@ interface CalendarResponse {
 		};
 	};
 }
+
+/** Last calendar-scrape failure (for the circuit-breaker log). */
+let lastCalendarError = "";
+let consecutiveFailures = 0;
+/** Stop the run when this many listings fail in a row (rate-limited). */
+const FAILURE_BREAK = 50;
 
 function roomUrl(
 	listingId: string,
@@ -115,11 +134,14 @@ async function scrapeCalendarDays(
 		await page
 			.waitForSelector('[aria-label="Kalendarz"]', { timeout: 20_000 })
 			.catch(() => {});
-		return await Promise.race([
+		const days = await Promise.race([
 			calendarPromise,
 			new Promise<null>((resolve) => setTimeout(() => resolve(null), 8_000)),
 		]);
-	} catch {
+		if (!days) lastCalendarError = "calendar response not captured";
+		return days;
+	} catch (err) {
+		lastCalendarError = String(err).slice(0, 160);
 		return null;
 	} finally {
 		page.off("response", onResponse);
@@ -146,21 +168,43 @@ export async function runAirbnbCalendarImport(
 	failures: number;
 	monthlyRows: number;
 }> {
+	// Prioritized rotation: new listings first, then check-in-soon (dynamic
+	// pricing window), then oldest-observed. `last_obs`/`next_date` come
+	// from the availability snapshots.
+	// Precomputed cutoff date avoids mixing params inside strftime args.
+	const soonCutoff = new Date(Date.now() + CHECKIN_SOON_DAYS * 86_400_000)
+		.toISOString()
+		.slice(0, 10);
 	const rows = await db
-		.select({
-			id: listings.id,
-			externalId: listings.externalId,
-			price: listings.price,
-		})
-		.from(listings)
-		.where(
-			sql`${listings.source} = 'airbnb' and ${listings.isActive} = 1 and ${listings.externalId} != ''${
-				opts.missingOnly
-					? sql` and ${listings.id} not in (select listing_id from availability)`
-					: sql``
-			}`,
-		)
-		.all();
+		.all<{
+			id: number;
+			externalId: string;
+			price: number | null;
+		}>(sql`
+		SELECT l.id, l.externalId, l.price AS price
+		FROM listings l
+		LEFT JOIN (
+			SELECT listing_id,
+			       max(captured_at) AS last_obs,
+			       min(date) FILTER (WHERE date >= strftime('%Y-%m-%d','now')) AS next_date
+			FROM availability
+			WHERE price_config = 'calendar'
+			GROUP BY listing_id
+		) a ON a.listing_id = l.id
+		WHERE l.source = 'airbnb'
+		  AND l.is_active = 1
+		  AND l.externalId != ''
+		  ${opts.missingOnly ? sql`AND a.listing_id IS NULL` : sql``}
+		ORDER BY
+			CASE
+				WHEN a.listing_id IS NULL THEN 0
+				WHEN a.next_date IS NOT NULL
+				     AND a.next_date <= ${soonCutoff} THEN 1
+				ELSE 2
+			END,
+			COALESCE(a.last_obs, 0) ASC,
+			l.id
+	`);
 
 	const browser = await chromium.launch({ headless: true });
 	const page = await browser.newPage();
@@ -191,8 +235,17 @@ export async function runAirbnbCalendarImport(
 			);
 			if (!days) {
 				failures++;
+				consecutiveFailures++;
+				if (consecutiveFailures >= FAILURE_BREAK) {
+					console.error(
+						`airbnb-calendar: ${FAILURE_BREAK} consecutive failures — ` +
+							`aborting run (likely rate-limited). Last: ${lastCalendarError}`,
+					);
+					break;
+				}
 				continue;
 			}
+			consecutiveFailures = 0;
 
 			const maxGuests = await scrapeMaxGuests(page);
 			if (maxGuests != null) {
@@ -234,32 +287,73 @@ export async function runAirbnbCalendarImport(
 				guestTotals.push({ adults, total });
 			}
 
-			// Capture how the first month's price changes with stay length.
-			const lengthTotals: Array<{
-				nights: number;
+			// Stay probes matching REAL rental patterns (weekends, extended
+			// weekends, work weeks, whole weeks, 10/14-day stays) — each
+			// checked in on its typical weekday inside the first month:
+			//   1n transit · 2n Fri weekend · 3n Thu extended weekend ·
+			//   5n Mon work week · 7n Sat whole week · 10n · 14n
+			interface StayProbe {
+				config: string;
 				start: string;
 				end: string;
+				nights: number;
 				total: number | null;
-			}> = [];
-			for (const nights of [1, 3, 30]) {
-				const start = monthStarts[0].start;
-				const startDate = new Date(
-					Number(start.slice(0, 4)),
-					Number(start.slice(5, 7)) - 1,
-					1,
-				);
-				startDate.setDate(startDate.getDate() + nights);
-				const end = `${startDate.getFullYear()}-${String(
-					startDate.getMonth() + 1,
-				).padStart(2, "0")}-${String(startDate.getDate()).padStart(2, "0")}`;
-				const total = await scrapeStayTotal(
-					page,
-					row.externalId,
-					start,
-					end,
-					2,
-				);
-				lengthTotals.push({ nights, start, end, total });
+			}
+			const stayProbes: StayProbe[] = [];
+			{
+				const [y, mo] = [
+					Number(monthStarts[0].start.slice(0, 4)),
+					Number(monthStarts[0].start.slice(5, 7)) - 1,
+				];
+				const daysInMonth = new Date(y, mo + 1, 0).getDate();
+				const dayDate = (d: number): string =>
+					`${y}-${String(mo + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+				const findDow = (target: number): string | null => {
+					for (let d = 1; d <= daysInMonth; d++) {
+						if (new Date(y, mo, d).getDay() === target) return dayDate(d);
+					}
+					return null;
+				};
+				const iso = (base: string, plus: number): string => {
+					const d = new Date(
+						Number(base.slice(0, 4)),
+						Number(base.slice(5, 7)) - 1,
+						Number(base.slice(8, 10)) + plus,
+					);
+					return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+				};
+				const probes: Array<{
+					config: string;
+					start: string;
+					nights: number;
+				}> = [
+					{ config: "1n", start: monthStarts[0].start, nights: 1 },
+					{ config: "2n_fri", start: findDow(5) ?? "", nights: 2 },
+					{ config: "3n_thu", start: findDow(4) ?? "", nights: 3 },
+					{ config: "5n_mon", start: findDow(1) ?? "", nights: 5 },
+					{ config: "7n_sat", start: findDow(6) ?? "", nights: 7 },
+					{ config: "10n", start: monthStarts[0].start, nights: 10 },
+					{ config: "14n", start: monthStarts[0].start, nights: 14 },
+				];
+				for (const probe of probes) {
+					if (!probe.start) continue;
+					const end = iso(probe.start, probe.nights);
+					if (end > monthStarts[0].end) continue; // keep probe inside month 0
+					const total = await scrapeStayTotal(
+						page,
+						row.externalId,
+						probe.start,
+						end,
+						2,
+					);
+					stayProbes.push({
+						config: probe.config,
+						start: probe.start,
+						end,
+						nights: probe.nights,
+						total,
+					});
+				}
 			}
 
 			const baseObservations = days.map((d) => {
@@ -307,20 +401,20 @@ export async function runAirbnbCalendarImport(
 					})),
 				);
 
-			const lengthObservations = days.flatMap((d) => {
+			const stayProbeObservations = days.flatMap((d) => {
 				const date = d.calendarDate ?? "";
-				return lengthTotals
-					.filter((lt) => date >= lt.start && date < lt.end)
-					.map((lt) => ({
+				return stayProbes
+					.filter((sp) => date >= sp.start && date < sp.end)
+					.map((sp) => ({
 						listingId: row.id,
 						source: "airbnb",
 						date,
-						priceConfig: `${lt.nights}_nights_2_adults`,
+						priceConfig: sp.config,
 						listedPrice: nightly,
-						totalPrice: lt.total,
-						stayNights: lt.nights,
+						totalPrice: sp.total,
+						stayNights: sp.nights,
 						effectiveNightlyPrice:
-							lt.total != null ? lt.total / lt.nights : nightly,
+							sp.total != null ? sp.total / sp.nights : nightly,
 						taxes: null,
 						fees: null,
 						available: d.available === true,
@@ -331,17 +425,20 @@ export async function runAirbnbCalendarImport(
 			await saveAvailabilityObservations([
 				...baseObservations,
 				...guestObservations,
-				...lengthObservations,
+				...stayProbeObservations,
 			]);
 			observations +=
 				baseObservations.length +
 				guestObservations.length +
-				lengthObservations.length;
+				stayProbeObservations.length;
 
-			if ((i + 1) % 5 === 0 || i === rows.length - 1) {
+			if ((i + 1) % 25 === 0 || i === rows.length - 1) {
 				console.log(
 					`airbnb-calendar ${i + 1}/${rows.length}: days=${observations} failures=${failures}`,
 				);
+			}
+			if (LISTING_DELAY_MS > 0) {
+				await new Promise((r) => setTimeout(r, LISTING_DELAY_MS));
 			}
 		}
 	} finally {
@@ -349,6 +446,12 @@ export async function runAirbnbCalendarImport(
 	}
 
 	const monthlyRows = await foldMonthlyPrices();
+	// Blocked-vs-booked classification + weekday/month occupancy stats.
+	const occupancy = await foldOccupancy();
+	console.log(
+		`occupancy: listings=${occupancy.listings} ` +
+			`months=${occupancy.occupancyRows} weekdayRows=${occupancy.weekdayRows}`,
+	);
 	return {
 		listings: rows.length,
 		days: observations,

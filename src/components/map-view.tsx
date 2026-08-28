@@ -69,9 +69,7 @@ const TOKEN = env.VITE_MAPBOX_TOKEN;
 /** Distinct dot color per data source (legend + map points). */
 const SOURCE_COLORS: Record<string, string> = {
 	otodom: "#2563eb",
-	"otodom-rent": "#60a5fa",
 	olx: "#f97316",
-	"olx-rent": "#fdba74",
 	morizon: "#16a34a",
 	gratka: "#4ade80",
 	domiporta: "#a855f7",
@@ -480,6 +478,10 @@ export default function MapView({
 					<span className="inline-block h-2.5 w-2.5 rounded-sm bg-gray-300" />{" "}
 					bez historii
 				</span>
+				<span className="flex items-center gap-1">
+					<span className="inline-block h-2.5 w-2.5 rounded-sm border border-amber-700/50 bg-amber-400/25" />{" "}
+					działka z historią RCN
+				</span>
 				<span className="mx-1 h-3 w-px bg-gray-300" />
 				<span className="flex items-center gap-1">
 					<span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />{" "}
@@ -513,7 +515,6 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 	// Create the map once. The listings snapshot at init is only used for
 	// the initial source data; the effect below pushes updates on changes,
 	// so `listings` is intentionally not a dependency here.
-	// biome-ignore lint/correctness/useExhaustiveDependencies: see above
 	useEffect(() => {
 		if (!containerRef.current || mapRef.current) return;
 
@@ -585,35 +586,127 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				// Older style versions ignore config presets.
 			}
 
-			// RCN history on Standard's own extruded buildings: the style's
-			// building featureset colors features whose `select`/`highlight`
-			// feature-state is set, using colorBuildingSelect/colorBuildingHighlight
-			// config values. We mark history buildings via `highlight` so they
-			// pop in the accent color while keeping real heights + landmarks.
-			// The `composite` source lives inside the `basemap` import, so the
-			// state must be set through the scoped featureset target
-			// ({target: {featuresetId, importId}}) — a root-style
-			// {source: "composite"} selector throws "source does not exist".
-			void fetch("/api/buildings/history-ids")
-				.then((r) => r.json())
-				.then((d: { osmIds: number[] }) => {
-					for (const osmId of d.osmIds) {
+			// RCN history as OUR OWN fill-extrusion layer (amber). The
+			// Standard style's `highlight` feature-state is unusable here:
+			// per Mapbox docs the select/highlight coloring "does not work
+			// for buildings represented as 3D models" — it paints only the
+			// flat ground footprint while the extruded model stays gray.
+			// A dedicated extrusion colors the actual volume. The click and
+			// hover handlers below target this "3d-building" layer id.
+			const amberByOsmId = new Map<number, number>();
+			// Mapbox Standard exposes each basemap building's REAL height
+			// (props.height) keyed by OSM id; our OSM-tag estimates default
+			// to 12 m when tags are missing, so tall blocks would show
+			// uncolored gray tops poking through the shell. Copy real
+			// heights into per-feature states whenever the viewport changes.
+			//
+			// Queue + self-healing retry: a target-featureset query can throw
+			// while the basemap import is still resolving; leaving the queue
+			// armed makes the next idle (and there are many) finish the job.
+			let amberSyncQueued = false;
+			map.on("idle", () => {
+				try {
+					if (!amberSyncQueued || !map.getSource("buildings-rcn")) return;
+					if (!map.isStyleLoaded()) return;
+					const query = map.queryRenderedFeatures as unknown as (
+						this: mapboxgl.Map,
+						g: undefined,
+						o: { target: { featuresetId: string; importId?: string } },
+					) => Array<{ id?: number; properties?: { height?: number } }>;
+					// Detached calls lose `this` ("reading 'style'") — bind it.
+					const blds = query.call(
+						map,
+						undefined,
+						{ target: { featuresetId: "buildings", importId: "basemap" } },
+					);
+					for (const b of blds) {
+						const h = b.properties?.height;
+						const dbId =
+							typeof b.id === "number" ? amberByOsmId.get(b.id) : undefined;
+						if (dbId === undefined || typeof h !== "number" || h <= 0) {
+							continue;
+						}
 						map.setFeatureState(
-							{
-								target: {
-									featuresetId: "buildings",
-									importId: "basemap",
-								},
-								id: osmId,
-								// The public typings only spell out TargetFeature
-								// (a queryRenderedFeatures result), but the impl
-								// accepts this plain {target, id} descriptor.
-							} as unknown as mapboxgl.MapboxGeoJSONFeature,
-							{ highlight: true },
+							{ source: "buildings-rcn", id: dbId },
+							{ baseHeight: h },
 						);
 					}
-					console.log(`marked ${d.osmIds.length} buildings with history`);
-				})
+					amberSyncQueued = false;
+				} catch {
+					// Style/import not ready — the queue stays armed so the next
+					// idle retries.
+				}
+			});
+			map.on("moveend", () => {
+				amberSyncQueued = true;
+			});
+			void fetch("/api/buildings/geojson")
+				.then((r) => r.json())
+				.then(
+					(fc: {
+						type: "FeatureCollection";
+						features: Array<{
+							type: "Feature";
+							id: number;
+							geometry: { type: "Polygon"; coordinates: number[][][] };
+							properties: { height: number; osmId: number };
+						}>;
+					}) => {
+						// The Standard style extrudes the SAME OSM footprints, so
+						// identical walls z-fight/interleave (stripes). Expand
+						// each ring ~2% about its centroid so our amber shell
+						// fully encloses the basemap volume, and raise the roof
+						// +1.5 m for the same reason.
+						for (const f of fc.features) {
+							amberByOsmId.set(f.properties.osmId, f.id);
+							const ring = f.geometry.coordinates[0];
+							let cx = 0;
+							let cy = 0;
+							for (const [x, y] of ring) {
+								cx += x;
+								cy += y;
+							}
+							cx /= ring.length;
+							cy /= ring.length;
+							for (const c of ring) {
+								c[0] = cx + (c[0] - cx) * 1.02;
+								c[1] = cy + (c[1] - cy) * 1.02;
+							}
+						}
+						map.addSource("buildings-rcn", { type: "geojson", data: fc });
+						map.addLayer({
+							id: "3d-building",
+							type: "fill-extrusion",
+							source: "buildings-rcn",
+							paint: {
+								"fill-extrusion-color": "#f59e0b",
+								// Prefer the basemap's own real height for this
+								// building (set via feature-state by
+								// syncAmberHeights); fall back to the OSM estimate.
+								// Both get +2 m so walls clear co-planar surfaces.
+								"fill-extrusion-height": [
+									// Take whichever is taller: the OSM-tag estimate or
+									// the basemap's own real height for this building
+									// (synced via feature-state; 0 until then). +2 m
+									// keeps our walls above the co-planar surfaces.
+									"max",
+									["+", ["get", "height"], 2],
+									["+", ["number", ["feature-state", "baseHeight"], 0], 2],
+								],
+								"fill-extrusion-base": 0,
+								// Fully opaque: any transparency lets the Standard
+								// style's own extrusion bleed through as stripes.
+								"fill-extrusion-opacity": 1,
+								"fill-extrusion-vertical-gradient": false,
+							},
+						});
+						// Sync right away for the initial viewport (the persistent
+						// idle handler re-runs it on every camera change).
+						// Queue a height sync for the initial viewport (the
+						// idle handler consumes it once the style is ready).
+						amberSyncQueued = true;
+					},
+				)
 				.catch(() => {
 					// Coloring is optional; the map works without it.
 				});
@@ -753,8 +846,10 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			});
 			map.on("click", "3d-building", showBuildingHistory);
 
-			// ---- Cadastral parcels (RCN_Dzialka) --------------------------
-			// Viewport-limited GeoJSON; refetched as the camera moves.
+			// ---- Cadastral parcels (podział geodezyjny, region-wide) -----
+			// `parcels` mixes RCN_Dzialka (Krakow) with GUGiK KIEG WFS rows
+			// for the rest of małopolska (import-egib.ts). Viewport-limited
+			// GeoJSON; refetched as the camera moves.
 			// Rendered Geoportal-style (podział gruntów): thin dark boundary
 			// lines + działka ID labels, NO fills — RCN coloring belongs to
 			// the 3D buildings above. The fill layer stays as an invisible
@@ -763,17 +858,30 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			// from boot.
 			let parcelsSeq = 0;
 			const loadParcels = () => {
-				const b = map.getBounds();
-				if (!b) return;
-				// Pad the viewport so panning doesn't expose empty edges.
-				const padLng = (b.getEast() - b.getWest()) * 0.1;
-				const padLat = (b.getNorth() - b.getSouth()) * 0.1;
+				// With terrain enabled, map.getBounds() shrinks to the ground
+				// footprint of the frustum — in hilly terrain (Podhale,
+				// Beskidy) that can be a sliver tens of meters tall, emptying
+				// the parcel grid. Compute a flat-camera bbox from
+				// center+zoom instead (Web Mercator pixels-per-world-tile).
+				const c = map.getCenter();
+				const z = map.getZoom();
+				const canvas = map.getCanvas();
+				const w = canvas.clientWidth || canvas.width || 1200;
+				const h = canvas.clientHeight || canvas.height || 800;
+				const worldSpan = 360 / 2 ** z;
+				const spanLng = worldSpan * (w / 512);
+				const spanLat =
+					(spanLng * (h / w)) / Math.max(0.3, Math.cos((c.lat * Math.PI) / 180));
+				const padLng = spanLng * 0.1;
+				const padLat = spanLat * 0.1;
 				const seq = ++parcelsSeq;
 				const params = new URLSearchParams({
-					minLng: String(b.getWest() - padLng),
-					minLat: String(b.getSouth() - padLat),
-					maxLng: String(b.getEast() + padLng),
-					maxLat: String(b.getNorth() + padLat),
+					minLng: String(c.lng - spanLng / 2 - padLng),
+					minLat: String(c.lat - spanLat / 2 - padLat),
+					maxLng: String(c.lng + spanLng / 2 + padLng),
+					maxLat: String(c.lat + spanLat / 2 + padLat),
+					// Drives server-side ring simplification.
+					zoom: String(z),
 				});
 				void fetch(`/api/parcels?${params.toString()}`)
 					.then((r) => r.json())
@@ -798,9 +906,10 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 								return;
 							}
 							map.addSource("parcels", { type: "geojson", data: fc });
-							// Invisible click-catcher: keeps parcel clicks working
-							// without any fill visuals (fill layers are hit-tested
-							// even at opacity 0).
+							// RCN-history parcels get a faint amber tint; others
+							// stay invisible but still act as the click-catcher
+							// for parcel popups (fill layers are hit-tested at
+							// opacity 0).
 							map.addLayer({
 								id: "parcel-fill",
 								type: "fill",
@@ -810,7 +919,20 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 								// With terrain enabled the geometry drapes onto the
 								// DEM, so clicks track the relief.
 								slot: "middle",
-								paint: { "fill-opacity": 0 },
+								paint: {
+									"fill-color": [
+										"case",
+										["get", "hasRcn"],
+										"#f59e0b",
+										"#000000",
+									],
+									"fill-opacity": [
+										"case",
+										["get", "hasRcn"],
+										0.16,
+										0,
+									],
+								},
 							});
 							// Cadastral boundaries, Geoportal podział gruntów look:
 							// thin dark lines, slightly stronger as you zoom in.
@@ -884,6 +1006,24 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 							interface ParcelLookup {
 								parcel: {
 									id: string;
+									area?: {
+										unit: string;
+										medianM2: number | null;
+										txCount: number;
+										txCount24m: number;
+										lastVsMedianPct: number | null;
+										basedOn: Array<{
+											date: string;
+											price: number;
+											perUnit: number;
+											parcelId: string;
+										}>;
+									} | null;
+									meta?: {
+										landUse: string | null;
+										zoning: string | null;
+										areaHa: number | null;
+									} | null;
 									stats: {
 										txCount: number;
 										avgPricePerM2: number | null;
@@ -901,11 +1041,38 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 								} | null;
 							}
 							map.on("click", "parcel-fill", (e) => {
-								const props = e.features?.[0]?.properties as
-									| { parcelId?: string }
-									| undefined;
+								// Click priority: listing points > 3D buildings >
+								// parcels. Both higher layers dispatch their own
+								// handlers for the same click; bail when one of
+								// them covers this point so only the winner pops.
+								if (
+									map.queryRenderedFeatures(e.point, {
+										layers: [
+											"listings-circle",
+											"komornik-listings",
+											"3d-building",
+										],
+									}).length > 0
+								) {
+									return;
+								}
+								const props = (
+									e.features?.[0] as unknown as {
+										properties?: {
+											parcelId?: string;
+											obreb?: string | null;
+											gmina?: string | null;
+										};
+									}
+								)?.properties;
 								const pid = props?.parcelId;
 								if (!pid) return;
+								const where =
+									props?.gmina || props?.obreb
+										? `${props.gmina ?? ""}${
+												props.gmina && props.obreb ? " · " : ""
+											}${props.obreb ?? ""}`
+										: null;
 								e.preventDefault();
 								void fetch(
 									`/api/parcels/lookup?parcelId=${encodeURIComponent(pid)}`,
@@ -913,16 +1080,32 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 									.then((r) => r.json())
 									.then((data: ParcelLookup) => {
 										const s = data.parcel?.stats;
-										const fmt = (n: number | null | undefined) =>
+										const area = data.parcel?.area;
+										const meta = data.parcel?.meta;
+										const LAND_LABELS: Record<string, string> = {
+											gruntyRolne: "rolna",
+											gruntyZabudowaneIZurbanizowane: "budowlana/zurbanizowana",
+											gruntyLesne: "leśna",
+											terenyKomunikacyjne: "komunikacyjna",
+											inne: "inna",
+										};
+										const landLabel =
+											meta?.landUse != null
+												? (LAND_LABELS[meta.landUse] ?? meta.landUse)
+												: null;
+										const areaAr =
+											meta?.areaHa != null ? meta.areaHa * 100 : null;
+										const unitLabel = area?.unit === "ar" ? "zł/ar" : "zł/m²";
+										const fmtU = (n: number | null | undefined) =>
 											n == null
 												? "—"
-												: `${Math.round(n).toLocaleString("pl-PL")} zł/m²`;
+												: `${Math.round(n * (area?.unit === "ar" ? 100 : 1)).toLocaleString("pl-PL")} ${unitLabel}`;
 										const rows = (s?.recent ?? [])
 											.map(
 												(r) =>
 													`<tr><td>${r.date}</td><td>${Math.round(
 														r.price,
-													).toLocaleString("pl-PL")} zł</td><td>${fmt(
+													).toLocaleString("pl-PL")} zł</td><td>${fmtU(
 														r.pricePerM2,
 													)}</td><td>${r.areaM2 ?? "?"} m²${
 														r.street
@@ -931,22 +1114,42 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 													}</td></tr>`,
 											)
 											.join("");
+										const isAr = area?.unit === "ar";
+										const areaHtml = area?.medianM2
+											? `<div class="mt-1 border-t pt-1 text-xs">
+													<div class="text-gray-500">Otoczenie (1 km, 5 lat): mediana <b>${(area.unit === "ar" ? Math.round(area.medianM2) : Math.round(area.medianM2 * 10) / 10).toLocaleString("pl-PL")} ${area.unit === "ar" ? "zł/ar" : "zł/m²"}</b> · ${area.txCount} transakcji (${area.txCount24m} w 24 mies.)</div>
+													${area.lastVsMedianPct != null ? `<div class="${area.lastVsMedianPct <= -15 ? "text-emerald-600" : area.lastVsMedianPct >= 15 ? "text-red-600" : "text-gray-600"}">Ostatnia transakcja: <b>${area.lastVsMedianPct > 0 ? "+" : ""}${area.lastVsMedianPct}%</b> vs mediana okolicy</div>` : ""}
+												</div>`
+											: "";
 										const html = `<div class="min-w-56 p-1 text-sm">
 											<div class="font-medium">Działka ${pid}</div>
+											${where ? `<div class="text-xs text-gray-500">${escapeHtml(where)}</div>` : ""}
+											${landLabel || areaAr != null ? `<div class="text-xs text-gray-600">${landLabel ? `działka ${landLabel}` : ""}${landLabel && areaAr != null ? " · " : ""}${areaAr != null ? `${areaAr.toLocaleString("pl-PL")} ar` : ""}</div>` : ""}
 											${
 												s && s.txCount > 0
-													? `<div class="mt-1">${s.txCount} transakcji RCN · średnio ${fmt(
+													? `<div class="mt-1">${s.txCount} transakcji RCN · średnio ${fmtU(
 															s.avgPricePerM2,
 														)}</div>
-													<div class="text-gray-500">zakres ${fmt(
+													<div class="text-gray-500">zakres ${fmtU(
 														s.minPricePerM2,
-													)} – ${fmt(s.maxPricePerM2)}</div>
+													)} – ${fmtU(s.maxPricePerM2)}</div>
 													${
 														rows
-															? `<table class="mt-2 w-full text-xs"><thead><tr class="text-left text-gray-500"><th>data</th><th>cena</th><th>zł/m²</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+															? `<table class="mt-2 w-full text-xs"><thead><tr class="text-left text-gray-500"><th>data</th><th>cena</th><th>${unitLabel}</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
 															: ""
 													}`
 													: `<div class="mt-1 text-gray-500">Brak transakcji RCN na tej działce.</div>`
+											}
+											${areaHtml}
+											${
+												area && area.basedOn.length > 0
+													? `<div class="mt-1 text-xs text-gray-500">na podstawie ${area.basedOn.length} transakcji w okolicy:</div><table class="w-full text-xs"><tbody>${area.basedOn
+															.map(
+																(b) =>
+																	`<tr><td>${b.date}</td><td class="text-right">${Math.round(b.price).toLocaleString("pl-PL")} zł</td><td class="text-right">${isAr ? `${Math.round(b.perUnit).toLocaleString("pl-PL")} zł/ar` : `${Math.round(b.perUnit)} zł/m²`}</td></tr>`,
+															)
+															.join("")}</tbody></table>`
+													: ""
 											}
 										</div>`;
 										popupRef.current?.remove();
@@ -975,20 +1178,101 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			loadParcels();
 			map.on("moveend", loadParcels);
 
+			interface OfferValuation {
+				offer: { id: number; price: number | null; pricePerM2: number | null };
+				comps: {
+					building: { avgM2: number; n: number } | null;
+					area: { avgM2: number; n: number } | null;
+					rcn: { avgM2: number; n: number } | null;
+					fairM2: number | null;
+				};
+				overUnderPct: number | null;
+				rating: { label: string; tone: string } | null;
+				lt: {
+					rentAvg: number;
+					czynszAvg: number;
+					n: number;
+					netMonthly: number;
+					netYearly: number;
+					netYieldPct: number | null;
+				} | null;
+				str: {
+					nightlyAvg: number;
+					occupancy: number;
+					n: number;
+					netMonthly: number;
+					netYearly: number;
+					netYieldPct: number | null;
+				} | null;
+			}
+			const renderValuation = (v: OfferValuation): string => {
+				const pl = (n: number) => Math.round(n).toLocaleString("pl-PL");
+				const comp = (label: string, x: { avgM2: number; n: number } | null) =>
+					x
+						? `<div class="flex justify-between"><span class="text-gray-500">${label}</span><span>${pl(x.avgM2)} zł/m² <span class="text-gray-400">(${x.n})</span></span></div>`
+						: "";
+				const roi = (
+					label: string,
+					x: { n: number; netMonthly: number; netYieldPct: number | null },
+					color: string,
+				) =>
+					x.netYieldPct != null
+						? `<div class="mt-1 border-t pt-1">
+								<div class="font-medium ${color}">${label} (netto)</div>
+								<div class="text-gray-600">${pl(x.netMonthly)} zł/mies. netto → ROI <b>${x.netYieldPct.toFixed(1)}%</b>/rok</div>
+								<div class="text-gray-400 text-xs">${x.n} porównań w okolicy</div>
+							</div>`
+						: "";
+				return `<div class="mt-2 border-t pt-1 text-xs">
+					<div class="font-medium">Wycena vs rynek</div>
+					${v.comps.fairM2 != null ? `<div>godziwa: <b>${pl(v.comps.fairM2)} zł/m²</b>${v.overUnderPct != null ? ` · <span class="${v.rating?.tone ?? ""} font-medium">${v.rating?.label} ${v.overUnderPct > 0 ? "+" : ""}${v.overUnderPct}%</span>` : ""}</div>` : ""}
+					${comp("ten budynek", v.comps.building)}
+					${comp("okolica", v.comps.area)}
+					${comp("RCN 1 km / 24 mies.", v.comps.rcn)}
+					${v.lt ? roi("Najem długoterminowy", v.lt, "text-emerald-700") : ""}
+					${v.str ? roi("Najem krótkoterminowy (szac.)", v.str, "text-rose-700") : ""}
+				</div>`;
+			};
+
 			const showListingPopup = (e: mapboxgl.MapLayerMouseEvent) => {
 				const feature = e.features?.[0] as { properties?: unknown } | undefined;
 				const props = feature?.properties;
 				if (!props) return;
 				const listing = props as ApiListing;
+				// Sale + LT-rental offers get a live valuation/ROI section
+				// (fetched after the popup opens; STR popups stay as-is).
+				const wantValuation =
+					listing.offerType === "sale" ||
+					listing.offerType === "long_term_rental";
 				popupRef.current?.remove();
 				const popup = new mapboxgl.Popup({
 					offset: 16,
 					closeButton: false,
+					maxWidth: "320px",
 				})
 					.setLngLat(e.lngLat)
-					.setHTML(popupHtml(listing))
+					.setHTML(
+						wantValuation
+							? `${popupHtml(listing)}<div id="popup-valuation" class="text-gray-400 text-xs">Liczenie wyceny…</div>`
+							: popupHtml(listing),
+					)
 					.addTo(map);
 				popupRef.current = popup;
+				if (wantValuation) {
+					void fetch(`/api/valuation/offer?id=${listing.id}`)
+						.then((r) => r.json())
+						.then((v: OfferValuation) => {
+							if (popupRef.current !== popup) return; // stale popup
+							const slot = document.getElementById("popup-valuation");
+							if (slot) slot.outerHTML = renderValuation(v);
+						})
+						.catch(() => {
+							const slot = document.getElementById("popup-valuation");
+							if (slot && popupRef.current === popup) {
+								slot.textContent = "Wycena niedostępna.";
+							}
+						});
+				}
 			};
 
 			for (const layer of ["listings-circle", "komornik-listings"]) {

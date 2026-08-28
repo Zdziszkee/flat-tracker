@@ -7,14 +7,47 @@ import { parcels, transactions } from "#/db/schema";
 /**
  * Viewport-limited cadastral-parcel grid for the map.
  *
- * Given a bbox, returns the RCN_Dzialka polygons that overlap it as a
- * GeoJSON FeatureCollection. `properties.hasRcn` marks parcels that carry
- * at least one RCN transaction (computed from transactions.parcelId), so
- * the client can color them differently. The bbox predicate hits the
- * parcels_bbox_idx; a feature cap keeps extreme zoom-outs responsive.
+ * Given a bbox, returns the parcel polygons that overlap it as a
+ * GeoJSON FeatureCollection. Sources: RCN_Dzialka (Krakow) and GUGiK
+ * KIEG WFS (region-wide małopolska), one table. `properties.hasRcn`
+ * marks parcels that carry at least one RCN transaction (computed from
+ * transactions.parcelId); obreb/gmina give non-RCN parcels some popup
+ * context. The bbox predicate hits the parcels_bbox_idx; a feature cap
+ * keeps extreme zoom-outs responsive.
  */
 
-const MAX_FEATURES = 6000;
+const MAX_FEATURES = 12000;
+
+/**
+ * Drop points closer than ~`tol` degrees to their predecessor (plus the
+ * closing point). With 5.6M parcels region-wide, raw rings average ~10-15
+ * vertices; at low zoom the sub-meter wiggles are invisible. Tolerance is
+ * derived from the viewport so detail survives when zoomed in.
+ */
+function simplifyRing(ring: number[][], tolDeg: number): number[][] {
+	if (ring.length <= 5) return ring;
+	const tol2 = tolDeg * tolDeg;
+	const out: number[][] = [ring[0]];
+	for (let i = 1; i < ring.length - 1; i++) {
+		const prev = out[out.length - 1];
+		const dx = ring[i][0] - prev[0];
+		const dy = ring[i][1] - prev[1];
+		if (dx * dx + dy * dy >= tol2) out.push(ring[i]);
+	}
+	const last = ring[ring.length - 1];
+	const first = out[0];
+	if (
+		(last[0] !== first[0] || last[1] !== first[1]) &&
+		out.length > 0 &&
+		out[out.length - 1] !== ring[ring.length - 1]
+	) {
+		// re-close with the original final point semantics: ensure ring closure
+		out.push([...first]);
+	} else if (out[out.length - 1] !== first) {
+		out.push([...first]);
+	}
+	return out.length >= 4 ? out : ring;
+}
 
 interface ParcelRow {
 	parcelId: string;
@@ -23,6 +56,8 @@ interface ParcelRow {
 	bboxMaxLat: number;
 	bboxMaxLng: number;
 	polygon: string;
+	obreb: string | null;
+	gmina: string | null;
 }
 
 /** Parcel ids with RCN history, memoized per process. */
@@ -46,6 +81,10 @@ export const Route = createFileRoute("/api/parcels")({
 				const minLat = Number(url.searchParams.get("minLat"));
 				const maxLng = Number(url.searchParams.get("maxLng"));
 				const maxLat = Number(url.searchParams.get("maxLat"));
+				// Zoom drives ring simplification: ~0.6 px worth of degrees.
+				const zoom = Number(url.searchParams.get("zoom") ?? "16");
+				const tolDeg =
+					(360 / 2 ** (Number.isFinite(zoom) ? zoom : 16)) * (0.6 / 512);
 				if (
 					!Number.isFinite(minLng) ||
 					!Number.isFinite(minLat) ||
@@ -68,6 +107,8 @@ export const Route = createFileRoute("/api/parcels")({
 						bboxMaxLat: parcels.bboxMaxLat,
 						bboxMaxLng: parcels.bboxMaxLng,
 						polygon: parcels.polygon,
+						obreb: parcels.obreb,
+						gmina: parcels.gmina,
 					})
 					.from(parcels)
 					.where(
@@ -86,12 +127,23 @@ export const Route = createFileRoute("/api/parcels")({
 				for (const r of rows) {
 					let coords: unknown;
 					try {
-						// Stored JSON is a full Geometry ({type:"Polygon",coordinates:…})
-						const parsed = JSON.parse(r.polygon) as
-							| { coordinates?: unknown; type?: string }
-							| unknown[];
-						coords = Array.isArray(parsed) ? parsed : parsed.coordinates;
-						if (!Array.isArray(coords)) continue;
+						// RCN rows store [{lat,lng}…]; EGIB rows store the same
+						// shape. Convert to GeoJSON [lng,lat] pairs and CLOSE the
+						// ring — first == last is required by the GeoJSON spec,
+						// and mapbox-gl silently drops most unclosed polygons.
+						const parsed = JSON.parse(r.polygon) as Array<{
+							lat: number;
+							lng: number;
+						}>;
+						if (!Array.isArray(parsed) || parsed.length < 3) continue;
+						const full = parsed.map((p) => [p.lng, p.lat]);
+						const first = full[0];
+						const last = full[full.length - 1];
+						if (first[0] !== last[0] || first[1] !== last[1]) {
+							full.push([...first]);
+						}
+						const ring = simplifyRing(full, tolDeg);
+						coords = [ring];
 					} catch {
 						continue;
 					}
@@ -101,6 +153,8 @@ export const Route = createFileRoute("/api/parcels")({
 						properties: {
 							parcelId: r.parcelId,
 							hasRcn: withRcn.has(r.parcelId),
+							obreb: r.obreb,
+							gmina: r.gmina,
 						},
 					});
 				}
