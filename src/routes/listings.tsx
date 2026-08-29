@@ -67,6 +67,7 @@ interface OfferValuation {
 		rentAvg: number;
 		czynszAvg: number;
 		n: number;
+		basis: string;
 		netMonthly: number;
 		netYearly: number;
 		netYieldPct: number | null;
@@ -75,6 +76,7 @@ interface OfferValuation {
 		nightlyAvg: number;
 		occupancy: number;
 		n: number;
+		basis: string;
 		netMonthly: number;
 		netYearly: number;
 		netYieldPct: number | null;
@@ -140,7 +142,7 @@ function ValuationPanel({ id }: { id: number }) {
 						</div>
 						<div className="text-gray-500">
 							rocznie netto {data.lt.netYearly.toLocaleString("pl-PL")} zł · ROI{" "}
-							<b>{data.lt.netYieldPct?.toFixed(1) ?? "—"}%</b> ({data.lt.n} porównań)
+							<b>{data.lt.netYieldPct?.toFixed(1) ?? "—"}%</b> ({data.lt.basis}, {data.lt.n})
 						</div>
 					</div>
 				)}
@@ -154,7 +156,7 @@ function ValuationPanel({ id }: { id: number }) {
 						</div>
 						<div className="text-gray-500">
 							rocznie netto {data.str.netYearly.toLocaleString("pl-PL")} zł · ROI{" "}
-							<b>{data.str.netYieldPct?.toFixed(1) ?? "—"}%</b> ({data.str.n} porównań)
+							<b>{data.str.netYieldPct?.toFixed(1) ?? "—"}%</b> ({data.str.basis}, {data.str.n})
 						</div>
 					</div>
 				)}

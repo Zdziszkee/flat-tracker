@@ -11,15 +11,14 @@ import { db } from "#/db/index";
  *   1. same BUILDING (listings.buildingId)
  *   2. same AREA (district, fallback 1 km bbox on coordinates)
  *   3. RCN TRANSACTIONS within ~1 km in the last 24 months (ground truth)
- * and blends them (building 50 %, area 25 %, RCN 25 % — renormalized over
+ * blended (building 50 %, area 25 %, RCN 25 % — renormalized over
  * whichever sets exist) into a fair-value estimate.
  *
- * Rental potential for the same flat:
- *   - LT (long-term): comparable LT rents in the area minus czynsz adm.
- *     (opłaty from the utilities JSON), ×12 × 92 % occupancy.
- *   - STR (Airbnb/Booking): comparable nightly rates within 1 km ×
- *     classified occupancy (blocked nights excluded) × 30.4 nights.
- * Net ROI = annual net income / asking price.
+ * Rental potential (LT + STR) is estimated from comparable rentals
+ * within 1 km — filtered to a SIMILAR SIZE band (±40 % of the offer's
+ * area, widening to ±100 %, then unfiltered) so a unique 250 m² kamienica
+ * is never compared against studio rents. Net = income − opłaty
+ * (czynsz adm.); STR assumes the area's classified occupancy.
  */
 
 const EPOCH_CUTOFF = Math.floor(Date.now() / 1000) - 365 * 2 * 86400;
@@ -31,7 +30,7 @@ function bbox(lat: number, lng: number, meters: number) {
 }
 
 function rating(pct: number): { label: string; tone: string } {
-	if (pct <= -15) return { label: " mocno niedowartościowana", tone: "text-emerald-600" };
+	if (pct <= -15) return { label: "mocno niedowartościowana", tone: "text-emerald-600" };
 	if (pct <= -5) return { label: "niedowartościowana", tone: "text-emerald-600" };
 	if (pct < 5) return { label: "wycena uczciwa", tone: "text-gray-700" };
 	if (pct < 15) return { label: "lekko przewartościowana", tone: "text-amber-600" };
@@ -45,6 +44,11 @@ function czynszFromUtilities(json: string | null): number {
 	} catch {
 		return 0;
 	}
+}
+
+interface Comp {
+	avg: number;
+	n: number;
 }
 
 export const Route = createFileRoute("/api/valuation/offer")({
@@ -77,12 +81,12 @@ export const Route = createFileRoute("/api/valuation/offer")({
 				if (!offer) return json({ error: "not found" }, { status: 404 });
 
 				const offerM2 = offer.pricePerM2;
+				const ownArea = offer.areaM2 ?? null;
 
-				// ---- 1. Same-building comp (sale offers) -------------------
-				let building: { avg: number; n: number } | null = null;
+				// ---- 1. Same-building comp ----------------------------------
+				let building: Comp | null = null;
 				if (offer.buildingId != null && offerM2 != null) {
-					const r = await db
-						.get<{ avg: number; n: number }>(sql`
+					const r = await db.get<Comp>(sql`
 						SELECT avg(pricePerM2) AS avg, count(*) AS n
 						FROM listings
 						WHERE building_id = ${offer.buildingId}
@@ -94,11 +98,11 @@ export const Route = createFileRoute("/api/valuation/offer")({
 				}
 
 				// ---- 2. Area comp (district, else 1 km bbox) ----------------
-				let area: { avg: number; n: number } | null = null;
+				let area: Comp | null = null;
 				if (offerM2 != null) {
-					let r: { avg: number; n: number } | null = null;
+					let r: Comp | null = null;
 					if (offer.district) {
-						r = await db.get<{ avg: number; n: number }>(sql`
+						r = await db.get<Comp>(sql`
 							SELECT avg(pricePerM2) AS avg, count(*) AS n
 							FROM listings
 							WHERE district = ${offer.district}
@@ -109,7 +113,7 @@ export const Route = createFileRoute("/api/valuation/offer")({
 					}
 					if ((!r || r.n < 3) && offer.lat != null && offer.lng != null) {
 						const b = bbox(offer.lat, offer.lng, 1000);
-						r = await db.get<{ avg: number; n: number }>(sql`
+						r = await db.get<Comp>(sql`
 							SELECT avg(pricePerM2) AS avg, count(*) AS n
 							FROM listings
 							WHERE id != ${offer.id}
@@ -123,10 +127,10 @@ export const Route = createFileRoute("/api/valuation/offer")({
 				}
 
 				// ---- 3. RCN transactions comp (1 km, 24 months) -------------
-				let rcn: { avg: number; n: number } | null = null;
+				let rcn: Comp | null = null;
 				if (offer.lat != null && offer.lng != null) {
 					const b = bbox(offer.lat, offer.lng, 1000);
-					const r = await db.get<{ avg: number; n: number }>(sql`
+					const r = await db.get<Comp>(sql`
 						SELECT avg(pricePerM2) AS avg, count(*) AS n
 						FROM transactions
 						WHERE pricePerM2 BETWEEN 500 AND 40000
@@ -150,22 +154,42 @@ export const Route = createFileRoute("/api/valuation/offer")({
 						? (offerM2 / fairM2 - 1) * 100
 						: null;
 
-				// ---- 4. LT rental comps (net income) ------------------------
+				// ---- 4/5. Rental comps with SIZE-matched bands --------------
+				// Band 1: ±40 % of the offer's area; band 2: ±100 %; band 3:
+				// unfiltered. First band with >= 3 comps wins; the label says
+				// which basis was used so the panel stays honest.
+				const hasGeo =
+					offer.lat != null &&
+					offer.lng != null &&
+					offer.price != null &&
+					offer.price > 0;
+				const b =
+					hasGeo
+						? bbox(offer.lat as number, offer.lng as number, 1000)
+						: null;
+
+				const ltBasis = ownArea != null ? "podobny metraż" : "okolica";
 				let lt: {
 					rentAvg: number;
 					czynszAvg: number;
 					n: number;
+					basis: string;
 					netMonthly: number;
 					netYearly: number;
 					netYieldPct: number | null;
 				} | null = null;
-				if (offer.price != null && offer.lat != null && offer.lng != null) {
-					const b = bbox(offer.lat, offer.lng, 1000);
-					const r = await db.get<{
-						rentAvg: number;
-						czynszAvg: number;
-						n: number;
-					}>(sql`
+				let str: {
+					nightlyAvg: number;
+					occupancy: number;
+					n: number;
+					basis: string;
+					netMonthly: number;
+					netYearly: number;
+					netYieldPct: number | null;
+				} | null = null;
+				if (b && hasGeo) {
+					const tryLt = (band: "similar" | "wide" | "all") =>
+						db.get<{ rentAvg: number; czynszAvg: number; n: number }>(sql`
 						SELECT avg(price) AS rentAvg,
 						       avg(coalesce(json_extract(utilities, '$.czynsz'), 0)) AS czynszAvg,
 						       count(*) AS n
@@ -174,39 +198,53 @@ export const Route = createFileRoute("/api/valuation/offer")({
 						  AND price IS NOT NULL AND price > 0
 						  AND lat BETWEEN ${b.minLat} AND ${b.maxLat}
 						  AND lng BETWEEN ${b.minLng} AND ${b.maxLng}
+						  ${ownArea != null && band === "similar"
+								? sql`AND areaM2 BETWEEN ${ownArea * 0.6} AND ${ownArea * 1.4}`
+								: sql``}
+						  ${ownArea != null && band === "wide"
+								? sql`AND areaM2 BETWEEN ${ownArea * 0.5} AND ${ownArea * 2}`
+								: sql``}
 					`);
-					if (r && r.n >= 3) {
+					let picked: { n: number; basis: string } | null = null;
+					let rentRow: { rentAvg: number; czynszAvg: number; n: number } | null =
+						null;
+					for (const band of ["similar", "wide", "all"] as const) {
+						const r = await tryLt(band);
+						if (r && r.n >= 3) {
+							rentRow = r;
+							picked = {
+								n: r.n,
+								basis:
+									ownArea == null
+										? "okolica"
+										: band === "similar"
+											? `${ltBasis} (±40 % metrażu)`
+											: band === "wide"
+												? `${ltBasis} (±100 % metrażu)`
+												: ltBasis,
+							};
+							break;
+						}
+					}
+					if (rentRow && picked && offer.price != null && offer.price > 0) {
 						const ownCzynsz = czynszFromUtilities(offer.utilities);
-						const netMonthly = r.rentAvg - (ownCzynsz || r.czynszAvg);
+						const netMonthly = rentRow.rentAvg - (ownCzynsz || rentRow.czynszAvg);
 						const netYearly = netMonthly * 12 * 0.92; // ~1 mies. vacancji
 						lt = {
-							rentAvg: Math.round(r.rentAvg),
-							czynszAvg: Math.round(r.czynszAvg),
-							n: r.n,
+							rentAvg: Math.round(rentRow.rentAvg),
+							czynszAvg: Math.round(rentRow.czynszAvg),
+							n: rentRow.n,
+							basis: picked.basis,
 							netMonthly: Math.round(netMonthly),
 							netYearly: Math.round(netYearly),
-							netYieldPct:
-								offer.price > 0 ? (netYearly / offer.price) * 100 : null,
+							netYieldPct: (netYearly / offer.price) * 100,
 						};
 					}
-				}
 
-				// ---- 5. STR comps (net income, classified occupancy) --------
-				let str: {
-					nightlyAvg: number;
-					occupancy: number;
-					n: number;
-					netMonthly: number;
-					netYearly: number;
-					netYieldPct: number | null;
-				} | null = null;
-				if (offer.price != null && offer.lat != null && offer.lng != null) {
-					const b = bbox(offer.lat, offer.lng, 1000);
-					const r = await db.get<{
-						nightlyAvg: number;
-						occ: number | null;
-						n: number;
-					}>(sql`
+					// STR comps — same banding (area may be missing on STR rows,
+					// so the "all" fallback matters most here).
+					const tryStr = (band: "similar" | "wide" | "all") =>
+						db.get<{ nightlyAvg: number; occ: number | null; n: number }>(sql`
 						SELECT avg(l.price) AS nightlyAvg,
 						       avg(o.occupancy_rate) AS occ,
 						       count(*) AS n
@@ -217,20 +255,47 @@ export const Route = createFileRoute("/api/valuation/offer")({
 						  AND l.price IS NOT NULL AND l.price > 0
 						  AND l.lat BETWEEN ${b.minLat} AND ${b.maxLat}
 						  AND l.lng BETWEEN ${b.minLng} AND ${b.maxLng}
+						  ${ownArea != null && band === "similar"
+								? sql`AND l.areaM2 BETWEEN ${ownArea * 0.6} AND ${ownArea * 1.4}`
+								: sql``}
+						  ${ownArea != null && band === "wide"
+								? sql`AND l.areaM2 BETWEEN ${ownArea * 0.5} AND ${ownArea * 2}`
+								: sql``}
 					`);
-					if (r && r.n >= 3 && r.nightlyAvg != null) {
-						const occ = r.occ ?? null;
+					let strPicked: { n: number; basis: string } | null = null;
+					let strRow: { nightlyAvg: number; occ: number | null; n: number } | null =
+						null;
+					for (const band of ["similar", "wide", "all"] as const) {
+						const r = await tryStr(band);
+						if (r && r.n >= 3 && r.nightlyAvg != null) {
+							strRow = r;
+							strPicked = {
+								n: r.n,
+								basis:
+									ownArea == null
+										? "okolica"
+										: band === "similar"
+											? `${ltBasis} (±40 % metrażu)`
+											: band === "wide"
+												? `${ltBasis} (±100 % metrażu)`
+												: ltBasis,
+							};
+							break;
+						}
+					}
+					if (strRow && strPicked && offer.price != null && offer.price > 0) {
+						const occ = strRow.occ ?? null;
 						const netMonthly =
-							r.nightlyAvg * 30.4 * (occ != null ? occ : 0.55);
+							strRow.nightlyAvg * 30.4 * (occ != null ? occ : 0.55);
 						const netYearly = netMonthly * 12;
 						str = {
-							nightlyAvg: Math.round(r.nightlyAvg),
+							nightlyAvg: Math.round(strRow.nightlyAvg),
 							occupancy: occ != null ? occ : 0.55,
-							n: r.n,
+							n: strRow.n,
+							basis: strPicked.basis,
 							netMonthly: Math.round(netMonthly),
 							netYearly: Math.round(netYearly),
-							netYieldPct:
-								offer.price > 0 ? (netYearly / offer.price) * 100 : null,
+							netYieldPct: (netYearly / offer.price) * 100,
 						};
 					}
 				}
