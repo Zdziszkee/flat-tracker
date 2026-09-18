@@ -62,7 +62,7 @@ const MALOPOLSKA_BOUNDS: [[number, number], [number, number]] = [
 	[19.0, 49.1],
 	[21.6, 50.6],
 ];
-const MALOPOLSKA_CENTER: [number, number] = [19.94, 50.06]; // TEMP TEST
+const MALOPOLSKA_CENTER: [number, number] = [20.25, 49.85];
 
 const TOKEN = env.VITE_MAPBOX_TOKEN;
 
@@ -553,6 +553,12 @@ export default function MapView({
 					<span className="inline-block h-2.5 w-2.5 rounded-sm bg-gray-300" />{" "}
 					bez historii
 				</span>
+				{showParcels && (
+					<span className="flex items-center gap-1">
+						<span className="inline-block h-2.5 w-2.5 rounded-sm border border-gray-600" />{" "}
+						granice działek (od zbliżenia 14)
+					</span>
+				)}
 				<span className="flex items-center gap-1">
 					<span className="inline-block h-2.5 w-2.5 rounded-sm border border-amber-700/50 bg-amber-400/25" />{" "}
 					działka z historią RCN
@@ -1071,7 +1077,6 @@ function MapCanvas({
 			});
 			map.on("click", "3d-building", showBuildingHistory);
 
-			console.log("DBG parcel block entered; style.load count");
 			// ---- Cadastral parcels (podział geodezyjny, region-wide) -----
 			// `parcels` mixes RCN_Dzialka (Krakow) with GUGiK KIEG WFS rows for
 			// the rest of małopolska (import-egib.ts). Drawn Geoportal-style:
@@ -1091,7 +1096,10 @@ function MapCanvas({
 				"parcel-outline",
 				"parcel-labels",
 			];
-			console.log("DBG addSource parcels, exists=", !!map.getSource("parcels"));
+			// Slot-free on purpose: Mapbox Standard renders a custom layer
+			// added to the "middle" slot *under* the basemap's own landcover and
+			// building fills, which made the grid invisible. Without a slot the
+			// layer sits above the basemap (and below place labels).
 			if (!map.getSource("parcels")) {
 				map.addSource("parcels", {
 					type: "geojson",
@@ -1205,7 +1213,6 @@ function MapCanvas({
 					parcelAbort?.abort();
 					parcelAbort = null;
 					setParcelsVisible(false);
-					document.title = `DBG hidden z${map.getZoom().toFixed(1)} on=${showParcelsRef.current}`;
 					return;
 				}
 				const bbox = parcelBbox();
@@ -1216,14 +1223,9 @@ function MapCanvas({
 					bbox[2] <= parcelBounds[2] &&
 					bbox[3] <= parcelBounds[3];
 				if (!force && covered) {
-					console.log(
-						"DBG skip (covered), src feats=",
-						(map.getSource("parcels") as any)?._data?.features?.length,
-					);
 					setParcelsVisible(true);
 					return;
 				}
-				console.log("DBG fetch parcels z=", map.getZoom().toFixed(2));
 				const seq = ++parcelsSeq;
 				parcelAbort?.abort();
 				const controller = new AbortController();
@@ -1246,26 +1248,11 @@ function MapCanvas({
 							| mapboxgl.GeoJSONSource
 							| undefined;
 						src?.setData(fc);
-						console.log(
-							"DBG setData",
-							fc.features.length,
-							"-> src has",
-							(map.getSource("parcels") as any)?._data?.features?.length,
-							"srcUndefined=",
-							!src,
-						);
 						parcelBounds = bbox;
 						setParcelsVisible(true);
-						document.title = `DBG src=${(map.getSource("parcels") as any)?._data?.features?.length} layers=${JSON.stringify(
-							map
-								.getStyle()
-								.layers.filter((l: any) => String(l.id).startsWith("parcel"))
-								.map((l: any) => [l.id, l.slot ?? "-", l.source ?? "-"]),
-						)} z=${map.getZoom().toFixed(1)}`;
 					})
-					.catch((err) => {
+					.catch(() => {
 						// Aborted or offline: keep whatever grid is on screen.
-						document.title = `DBG err ${String(err).slice(0, 90)} url=${params.toString().slice(0, 120)}`;
 					});
 			};
 
