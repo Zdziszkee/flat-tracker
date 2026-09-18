@@ -28,6 +28,7 @@ import { Route as ApiRentalGuestPricesRouteImport } from './routes/api/rental-gu
 import { Route as ApiRentalStatsRouteImport } from './routes/api/rental-stats'
 import { Route as ApiSalesAnalyticsRouteImport } from './routes/api/sales-analytics'
 import { Route as ApiSourcesRouteImport } from './routes/api/sources'
+import { Route as ApiTopOccupancyAreasRouteImport } from './routes/api/top-occupancy-areas'
 import { Route as ApiValuationRouteImport } from './routes/api/valuation'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiBuildingsGeojsonRouteImport } from './routes/api/buildings/geojson'
@@ -132,6 +133,11 @@ const ApiSourcesRoute = ApiSourcesRouteImport.update({
   path: '/api/sources',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTopOccupancyAreasRoute = ApiTopOccupancyAreasRouteImport.update({
+  id: '/api/top-occupancy-areas',
+  path: '/api/top-occupancy-areas',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiValuationRoute = ApiValuationRouteImport.update({
   id: '/api/valuation',
   path: '/api/valuation',
@@ -193,6 +199,7 @@ export interface FileRoutesByFullPath {
   '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sales-analytics': typeof ApiSalesAnalyticsRoute
   '/api/sources': typeof ApiSourcesRoute
+  '/api/top-occupancy-areas': typeof ApiTopOccupancyAreasRoute
   '/api/valuation': typeof ApiValuationRouteWithChildren
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
@@ -222,6 +229,7 @@ export interface FileRoutesByTo {
   '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sales-analytics': typeof ApiSalesAnalyticsRoute
   '/api/sources': typeof ApiSourcesRoute
+  '/api/top-occupancy-areas': typeof ApiTopOccupancyAreasRoute
   '/api/valuation': typeof ApiValuationRouteWithChildren
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
@@ -252,6 +260,7 @@ export interface FileRoutesById {
   '/api/rental-stats': typeof ApiRentalStatsRoute
   '/api/sales-analytics': typeof ApiSalesAnalyticsRoute
   '/api/sources': typeof ApiSourcesRoute
+  '/api/top-occupancy-areas': typeof ApiTopOccupancyAreasRoute
   '/api/valuation': typeof ApiValuationRouteWithChildren
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
@@ -283,6 +292,7 @@ export interface FileRouteTypes {
     | '/api/rental-stats'
     | '/api/sales-analytics'
     | '/api/sources'
+    | '/api/top-occupancy-areas'
     | '/api/valuation'
     | '/api/auth/$'
     | '/api/buildings/geojson'
@@ -312,6 +322,7 @@ export interface FileRouteTypes {
     | '/api/rental-stats'
     | '/api/sales-analytics'
     | '/api/sources'
+    | '/api/top-occupancy-areas'
     | '/api/valuation'
     | '/api/auth/$'
     | '/api/buildings/geojson'
@@ -341,6 +352,7 @@ export interface FileRouteTypes {
     | '/api/rental-stats'
     | '/api/sales-analytics'
     | '/api/sources'
+    | '/api/top-occupancy-areas'
     | '/api/valuation'
     | '/api/auth/$'
     | '/api/buildings/geojson'
@@ -371,6 +383,7 @@ export interface RootRouteChildren {
   ApiRentalStatsRoute: typeof ApiRentalStatsRoute
   ApiSalesAnalyticsRoute: typeof ApiSalesAnalyticsRoute
   ApiSourcesRoute: typeof ApiSourcesRoute
+  ApiTopOccupancyAreasRoute: typeof ApiTopOccupancyAreasRoute
   ApiValuationRoute: typeof ApiValuationRouteWithChildren
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiBuildingsGeojsonRoute: typeof ApiBuildingsGeojsonRoute
@@ -514,6 +527,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSourcesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/top-occupancy-areas': {
+      id: '/api/top-occupancy-areas'
+      path: '/api/top-occupancy-areas'
+      fullPath: '/api/top-occupancy-areas'
+      preLoaderRoute: typeof ApiTopOccupancyAreasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/valuation': {
       id: '/api/valuation'
       path: '/api/valuation'
@@ -617,6 +637,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiRentalStatsRoute: ApiRentalStatsRoute,
   ApiSalesAnalyticsRoute: ApiSalesAnalyticsRoute,
   ApiSourcesRoute: ApiSourcesRoute,
+  ApiTopOccupancyAreasRoute: ApiTopOccupancyAreasRoute,
   ApiValuationRoute: ApiValuationRouteWithChildren,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiBuildingsGeojsonRoute: ApiBuildingsGeojsonRoute,
