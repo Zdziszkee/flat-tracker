@@ -4,7 +4,7 @@ import { scaleBand } from "@tanstack/charts/scales/band";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 /**
  * Analityka rynku — 19 wykresów: najem (histogramy czynszu, opłat i
@@ -134,6 +134,35 @@ function AnalyticsPage() {
 		queryFn: () => fetch("/api/valuation").then((r) => r.json()),
 	});
 
+	interface OccupancyCell {
+		lat: number;
+		lng: number;
+		listings: number;
+		sampleNights: number;
+		bookedNights: number;
+		occupancyRate: number | null;
+		avgPrice: number | null;
+	}
+	const [occSource, setOccSource] = useState<"airbnb" | "booking" | "all">(
+		"all",
+	);
+	const [occMonth, setOccMonth] = useState(() => {
+		const d = new Date();
+		return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+	});
+	const { data: topOccupancy } = useQuery<{
+		month: string;
+		source: string;
+		grid: number;
+		cells: OccupancyCell[];
+	}>({
+		queryKey: ["top-occupancy-areas", occSource, occMonth],
+		queryFn: () =>
+			fetch(
+				`/api/top-occupancy-areas?source=${occSource}&month=${occMonth}&limit=20&minListings=1`,
+			).then((r) => r.json()),
+	});
+
 	const charts = useMemo<{ [key: string]: unknown }>(() => {
 		if (!data) return {};
 		const c: { [key: string]: unknown } = {};
@@ -256,9 +285,7 @@ function AnalyticsPage() {
 			(a, b) => b.yieldPct - a.yieldPct,
 		);
 		c.grossYield = defineChart({
-			marks: [
-				barY(yieldSorted, { x: "city", y: "yieldPct", fill: "#059669" }),
-			],
+			marks: [barY(yieldSorted, { x: "city", y: "yieldPct", fill: "#059669" })],
 			x: bandX("Miasto"),
 			y: linY("rentowność brutto %"),
 		});
@@ -377,9 +404,7 @@ function AnalyticsPage() {
 			(a, b) => (b.occupancy ?? 0) - (a.occupancy ?? 0),
 		);
 		c.strOccupancy = defineChart({
-			marks: [
-				barY(occSorted, { x: "city", y: "occupancy", fill: "#0d9488" }),
-			],
+			marks: [barY(occSorted, { x: "city", y: "occupancy", fill: "#0d9488" })],
 			x: bandX("Miasto"),
 			y: {
 				scale: scaleLinear,
@@ -431,14 +456,26 @@ function AnalyticsPage() {
 						city,
 						avg: nightlyAb.find((r) => r.city === city)?.avgNightly ?? null,
 					})),
-					{ x: "city", y: "avg", stroke: "#ff385c", strokeWidth: 2, points: true },
+					{
+						x: "city",
+						y: "avg",
+						stroke: "#ff385c",
+						strokeWidth: 2,
+						points: true,
+					},
 				),
 				lineY(
 					cityOrder.map((city) => ({
 						city,
 						avg: nightlyBk.find((r) => r.city === city)?.avgNightly ?? null,
 					})),
-					{ x: "city", y: "avg", stroke: "#003580", strokeWidth: 2, points: true },
+					{
+						x: "city",
+						y: "avg",
+						stroke: "#003580",
+						strokeWidth: 2,
+						points: true,
+					},
 				),
 			],
 			x: bandX("Miasto"),
@@ -504,7 +541,8 @@ function AnalyticsPage() {
 		},
 		{
 			title: "7 · Wzrost cen transakcyjnych r/r wg powiatu",
-			subtitle: "średnia 12 mies. vs poprzednie 12 (min. 10 transakcji na okno)",
+			subtitle:
+				"średnia 12 mies. vs poprzednie 12 (min. 10 transakcji na okno)",
 			key: "yoyByPowiat",
 		},
 		{
@@ -514,7 +552,8 @@ function AnalyticsPage() {
 		},
 		{
 			title: "9 · Cena ofertowa vs transakcyjna",
-			subtitle: "niebieska = oferty, fioletowa = transakcje — luka = margines negocjacji",
+			subtitle:
+				"niebieska = oferty, fioletowa = transakcje — luka = margines negocjacji",
 			key: "offerVsTxGap",
 		},
 		{
@@ -585,9 +624,7 @@ function AnalyticsPage() {
 	return (
 		<div className="min-h-screen bg-gray-50 p-4">
 			<div className="mb-4 flex items-center justify-between">
-				<h1 className="text-xl font-semibold">
-					Analityka rynku · Małopolska
-				</h1>
+				<h1 className="text-xl font-semibold">Analityka rynku · Małopolska</h1>
 				<div className="flex items-center gap-3 text-sm">
 					<Link to="/map" className="text-blue-600 underline">
 						Mapa
@@ -624,6 +661,81 @@ function AnalyticsPage() {
 						</div>
 					);
 				})}
+			</div>
+
+			<div className="mt-4 overflow-x-auto rounded border bg-white">
+				<div className="flex items-center justify-between px-3 py-2">
+					<h2 className="text-sm font-semibold text-gray-600">
+						Najwyższe obłożenie STR — top 20 komórek
+					</h2>
+					<div className="flex items-center gap-2">
+						<select
+							value={occSource}
+							onChange={(e) =>
+								setOccSource(e.target.value as "airbnb" | "booking" | "all")
+							}
+							className="rounded border px-2 py-1 text-xs"
+						>
+							<option value="all">Airbnb + Booking</option>
+							<option value="airbnb">Airbnb</option>
+							<option value="booking">Booking</option>
+						</select>
+						<input
+							type="month"
+							value={occMonth}
+							onChange={(e) => setOccMonth(e.target.value)}
+							className="rounded border px-2 py-1 text-xs"
+						/>
+					</div>
+				</div>
+				<table className="w-full text-sm">
+					<thead className="bg-gray-50 text-left">
+						<tr>
+							<th className="px-3 py-2">#</th>
+							<th className="px-3 py-2">Współrzędne</th>
+							<th className="px-3 py-2 text-right">Obłożenie</th>
+							<th className="px-3 py-2 text-right">Ofert</th>
+							<th className="px-3 py-2 text-right">Zarezerwowane noce</th>
+							<th className="px-3 py-2 text-right">Śr. cena/noc</th>
+						</tr>
+					</thead>
+					<tbody>
+						{(topOccupancy?.cells ?? []).map((c, i) => (
+							<tr
+								key={`${c.lat}-${c.lng}`}
+								className="border-t hover:bg-gray-50"
+							>
+								<td className="px-3 py-1.5">{i + 1}</td>
+								<td className="px-3 py-1.5 font-mono text-xs text-gray-600">
+									{c.lat.toFixed(3)}, {c.lng.toFixed(3)}
+								</td>
+								<td className="px-3 py-1.5 text-right font-medium">
+									{c.occupancyRate != null
+										? `${c.occupancyRate.toFixed(1)}%`
+										: "n/d"}
+								</td>
+								<td className="px-3 py-1.5 text-right">{c.listings}</td>
+								<td className="px-3 py-1.5 text-right">{c.bookedNights}</td>
+								<td className="px-3 py-1.5 text-right">
+									{c.avgPrice != null
+										? `${Math.round(c.avgPrice).toLocaleString("pl-PL")} zł`
+										: "n/d"}
+								</td>
+							</tr>
+						))}
+						{topOccupancy?.cells.length === 0 && (
+							<tr>
+								<td
+									colSpan={6}
+									className="px-3 py-4 text-center text-xs text-gray-500"
+								>
+									Brak danych obłożenia dla wybranego miesiąca. Uruchom
+									kalendarze Airbnb/Booking, aby zebrać dane.
+								</td>
+							</tr>
+						)}
+					</tbody>
+				</table>
 			</div>
 
 			<div className="mt-4 overflow-x-auto rounded border bg-white">
