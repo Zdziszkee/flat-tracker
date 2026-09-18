@@ -405,8 +405,14 @@ async function collectFromGpkg(
 				.prepare("select name from sqlite_master where type='table' and name=?")
 				.get(spec.t);
 			if (!hasTable) continue;
+			// Keyset pagination on rowid instead of one long-lived iterator:
+			// inserts into the destination connection interleave with every
+			// page, and a live iterator spanning those awaits is what made
+			// better-sqlite3 throw its confusing "This database connection
+			// is busy executing a query" TypeError under write contention.
 			const stmt = src.prepare(
-				`SELECT tran_lokalny_id_iip AS uid, tran_rodzaj_rynku AS rynk,
+				`SELECT rowid AS _rid, tran_lokalny_id_iip AS uid,
+				        tran_rodzaj_rynku AS rynk,
 				        dok_data AS dok, tran_cena_brutto AS tranCena,
 				        ${spec.area.join(", ")}, ${spec.price.join(", ")}${
 									spec.rooms ? `, ${spec.rooms}` : ""
@@ -416,71 +422,73 @@ async function collectFromGpkg(
 											? "dzi_sposob_uzyt AS su, dzi_przezn_wmpzp AS mpzp, dzi_pow_ewid AS ewidHa"
 											: "NULL AS su, NULL AS mpzp, NULL AS ewidHa"
 									}, geometry
-				 FROM ${spec.t}`,
+				 FROM ${spec.t}
+				 WHERE rowid > ? ORDER BY rowid LIMIT ?`,
 			);
-			const iter = stmt.iterate() as unknown as IterableIterator<
-				Record<string, unknown>
-			>;
+			let lastRid = 0;
 			for (;;) {
-				const step = iter.next();
-				if (step.done) break;
-				const row = step.value;
-				const uid = String(row.uid ?? "");
-				if (!uid) continue;
-				const geom = row.geometry as Buffer | null;
-				let lat: number | null = null;
-				let lng: number | null = null;
-				if (geom) {
-					const pt = parseGpkgPoint(geom);
-					if (pt) {
-						const ll = pl2000ToLatLng(pt.x, pt.y);
-						if (ll) {
-							lat = ll.lat;
-							lng = ll.lng;
+				const page = stmt.all(lastRid, FLUSH_ROWS) as Array<
+					Record<string, unknown>
+				>;
+				if (page.length === 0) break;
+				for (const row of page) {
+					lastRid = row._rid as number;
+					const uid = String(row.uid ?? "");
+					if (!uid) continue;
+					const geom = row.geometry as Buffer | null;
+					let lat: number | null = null;
+					let lng: number | null = null;
+					if (geom) {
+						const pt = parseGpkgPoint(geom);
+						if (pt) {
+							const ll = pl2000ToLatLng(pt.x, pt.y);
+							if (ll) {
+								lat = ll.lat;
+								lng = ll.lng;
+							}
 						}
 					}
-				}
-				const price = num(row[spec.price[0]]) ?? num(row[spec.price[1]]);
-				let area = num(row[spec.area[0]]) ?? num(row[spec.area[1]]);
-				if (area != null && spec.areaHectares) area *= 10_000;
-				const mktRaw = String(row.rynk ?? "");
-				// One transaction (uid) can span MANY parcels — the export
-				// carries one row per (transaction x parcel). Include the
-				// parcel/unit key in the id or INSERT OR IGNORE would drop
-				// every sibling row.
-				const extKey = String(row.extId ?? "");
-				if (spec.isParcel && extKey) {
-					meta.push({
-						parcelId: extKey,
-						landUse: row.su != null ? String(row.su) : null,
-						zoning: row.mpzp != null ? String(row.mpzp) : null,
-						areaHa: num(row.ewidHa),
+					const price = num(row[spec.price[0]]) ?? num(row[spec.price[1]]);
+					let area = num(row[spec.area[0]]) ?? num(row[spec.area[1]]);
+					if (area != null && spec.areaHectares) area *= 10_000;
+					const mktRaw = String(row.rynk ?? "");
+					// One transaction (uid) can span MANY parcels — the export
+					// carries one row per (transaction x parcel). Include the
+					// parcel/unit key in the id or INSERT OR IGNORE would drop
+					// every sibling row.
+					const extKey = String(row.extId ?? "");
+					if (spec.isParcel && extKey) {
+						meta.push({
+							parcelId: extKey,
+							landUse: row.su != null ? String(row.su) : null,
+							zoning: row.mpzp != null ? String(row.mpzp) : null,
+							areaHa: num(row.ewidHa),
+						});
+					}
+					rows.push({
+						transactionId: extKey
+							? `${teryt}-G/${uid}/${extKey}`
+							: `${teryt}-G/${uid}`,
+						date: strDate(row.dok),
+						price: price ?? null,
+						areaM2: area ?? null,
+						pricePerM2:
+							price != null && area != null && area >= 5 ? price / area : null,
+						rooms: spec.rooms ? num(row[spec.rooms]) : null,
+						floor:
+							spec.floor && row[spec.floor] != null
+								? String(row[spec.floor])
+								: null,
+						street: null,
+						market: MARKET_BY_RYNKU[mktRaw] ?? null,
+						lat,
+						lng,
+						parcelId: spec.isParcel ? extKey || null : null,
 					});
+					seen++;
 				}
-				rows.push({
-					transactionId: extKey
-						? `${teryt}-G/${uid}/${extKey}`
-						: `${teryt}-G/${uid}`,
-					date: strDate(row.dok),
-					price: price ?? null,
-					areaM2: area ?? null,
-					pricePerM2:
-						price != null && area != null && area >= 5 ? price / area : null,
-					rooms: spec.rooms ? num(row[spec.rooms]) : null,
-					floor:
-						spec.floor && row[spec.floor] != null
-							? String(row[spec.floor])
-							: null,
-					street: null,
-					market: MARKET_BY_RYNKU[mktRaw] ?? null,
-					lat,
-					lng,
-					parcelId: spec.isParcel ? extKey || null : null,
-				});
-				seen++;
-				if (rows.length >= FLUSH_ROWS) await flush();
+				await flush();
 			}
-			await flush();
 		}
 		return seen;
 	} finally {
@@ -577,24 +585,34 @@ export async function importRcnGugik(
 	const totalBytes = queue.reduce((s, t) => s + t.bytes, 0);
 	let doneBytes = 0;
 	let totalNew = 0;
-	let failures = 0;
 	const t0 = Date.now();
+	let failed: PowiatPackage[] = [];
+
+	/** Import one powiat, recording the win; returns false when it failed. */
+	const attempt = async (
+		pkg: PowiatPackage,
+		label: string,
+	): Promise<boolean> => {
+		try {
+			totalNew += await importPowiat(pkg.teryt);
+			checkedAt[pkg.teryt] = new Date().toISOString();
+			writeFileSync(STATE_PATH, JSON.stringify(state));
+			return true;
+		} catch (err) {
+			const detail =
+				err instanceof Error ? (err.stack ?? err.message) : String(err);
+			console.error(`RCN-GUGIK ${label} failed: ${detail.slice(0, 800)}`);
+			return false;
+		}
+	};
+
 	for (let i = 0; i < queue.length; i++) {
 		const pkg = queue[i];
 		const label = `[${i + 1}/${queue.length}] ${pkg.teryt}${
 			pkg.bytes ? ` (${(pkg.bytes / 1e6).toFixed(1)} MB)` : ""
 		}`;
 		console.log(`RCN-GUGIK ${label} ...`);
-		try {
-			totalNew += await importPowiat(pkg.teryt);
-			checkedAt[pkg.teryt] = new Date().toISOString();
-			writeFileSync(STATE_PATH, JSON.stringify(state));
-		} catch (err) {
-			failures++;
-			console.error(
-				`RCN-GUGIK ${pkg.teryt} failed: ${String(err).slice(0, 200)}`,
-			);
-		}
+		if (!(await attempt(pkg, pkg.teryt))) failed.push(pkg);
 		doneBytes += pkg.bytes;
 		const elapsed = (Date.now() - t0) / 1000;
 		const pct = totalBytes
@@ -614,9 +632,29 @@ export async function importRcnGugik(
 			})}`,
 		);
 	}
+
+	// A drain this long will meet a lock or a throttled download sooner or
+	// later; one retry pass turns those into seconds of re-work instead of
+	// powiaty that silently stay missing (state.json only records wins).
+	if (failed.length > 0) {
+		console.log(
+			`RCN-GUGIK retrying ${failed.length} failed powiaty: ${failed
+				.map((f) => f.teryt)
+				.join(", ")}`,
+		);
+		const stillFailed: PowiatPackage[] = [];
+		for (const pkg of failed) {
+			if (!(await attempt(pkg, `${pkg.teryt} (retry)`))) stillFailed.push(pkg);
+		}
+		console.log(
+			`RCN-GUGIK recovered ${failed.length - stillFailed.length}/${failed.length} on retry`,
+		);
+		failed = stillFailed;
+	}
+
 	console.log(
 		`RCN-GUGIK scope=${scope} done: ${totalNew} new transactions from ` +
-			`${queue.length - failures}/${queue.length} powiaty in ` +
+			`${queue.length - failed.length}/${queue.length} powiaty in ` +
 			`${Math.round((Date.now() - t0) / 1000)}s`,
 	);
 	return totalNew;

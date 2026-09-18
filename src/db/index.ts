@@ -35,8 +35,15 @@ if (databasePath !== ":memory:") {
 export const sqlite = new Database(databasePath);
 
 // The server and the standalone importers (RCN drains, assign-buildings)
-// share one file, so a writer can always meet a writer: wait for the lock
-// instead of failing the batch with SQLITE_BUSY.
+// share one file, so writers meet writers and readers meet writers. WAL
+// keeps readers from queuing behind a bulk import (an RCN drain writes for
+// hours), and busy_timeout makes the remaining writer-vs-writer case wait
+// for the lock instead of failing the batch with SQLITE_BUSY.
+sqlite.pragma("journal_mode = WAL");
+// NORMAL is the usual WAL pairing: commits stop fsyncing the journal on
+// every batch (a crawl/RCN drain commits thousands of them), and a power
+// cut can only cost the most recent commits, never the database.
+sqlite.pragma("synchronous = NORMAL");
 sqlite.pragma("busy_timeout = 10000");
 
 // Fresh clone bootstrap: create the schema from `drizzle/` migrations on
