@@ -6,9 +6,19 @@
  * powiat comes from here — including parcels that the old flow never
  * had price history for (e.g. Charsznica in powiat miechowski).
  *
- * Download URL pattern (mirrors the QGIS "Pobierz dane GUGiK" plugin):
- *   https://opendata.geoportal.gov.pl/InneDane/latest_exports/
- *     rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip
+ * Two scopes; `rcn-gugik-index.ts` owns the government catalogue and the
+ * download URL pattern (mirrors the QGIS "Pobierz dane GUGiK" plugin):
+ *
+ *   - "malopolska" (default): the 21 małopolska powiaty the map covers.
+ *     This is what the hourly server refresh runs, cadence-gated.
+ *   - "poland": every package GUGiK publishes (~380 powiaty, several GB
+ *     of downloads). A whole-country load is a deliberate, resumable
+ *     drain:
+ *       bunx tsx src/crawler/import-rcn-gugik.ts --all
+ *     `RCN_GUGIK_SCOPE=pl` opts the server refresh into it instead.
+ *   Kraków (1261) is skipped in both scopes on purpose: importing it here
+ *   would double-count Kraków in the map/building price history that the
+ *   local GML already feeds.
  *
  * Each zip unpacks to a GeoPackage with three tables sharing one schema
  * family (transakcje_dzialki / _budynki / _lokale): full transaction
@@ -20,10 +30,11 @@
  * Daily-cadence: the state file records when each powiat was imported;
  * runs within the cadence window skip the download entirely. Rows are
  * upserted on the unique transactionId (`{teryt}-G/{lokalny_id_iip}`),
- * so re-imports are harmless diffs.
+ * so re-imports are harmless diffs and a drain that dies halfway resumes
+ * at the first powiat it never recorded.
  *
  * Run daily via the refresh pipeline, or manually:
- *   bunx tsx src/crawler/import-rcn-gugik.ts [--force]
+ *   bunx tsx src/crawler/import-rcn-gugik.ts [--force] [--all] [--only=1201,1202]
  */
 
 import "dotenv/config";
@@ -42,9 +53,14 @@ import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { parcelMeta, transactions } from "#/db/schema";
+import {
+	loadPowiatPackages,
+	type PowiatPackage,
+	powiatZipUrl,
+} from "./rcn-gugik-index.ts";
 
 /** Małopolska powiaty (TERYT4); 1261 = Kraków lives in import-rcn.ts. */
-const POWIATY = [
+const MALOPOLSKA_POWIATY = [
 	"1201",
 	"1202",
 	"1203",
@@ -68,13 +84,34 @@ const POWIATY = [
 	"1263",
 ] as const;
 
-const BASE_URL =
-	"https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG";
 const DATA_DIR = "data/rcn/gugik";
 const STATE_PATH = `${DATA_DIR}/state.json`;
 /** Skip re-download/import if this powiat ran inside the window. */
 const CADENCE_HOURS = Number(process.env.RCN_GUGIK_CADENCE_HOURS ?? 20);
-const FORCE = process.argv.includes("--force");
+/** Powiaty whose history comes from the local RCN GML zip instead. */
+const LOCAL_RCN_COVERED = new Set(["1261"]);
+/** Rows buffered per powiat before hitting SQLite (keeps memory flat). */
+const FLUSH_ROWS = 2000;
+
+export type RcnGugikScope = "malopolska" | "poland";
+
+export interface RcnGugikOptions {
+	/** Default: `RCN_GUGIK_SCOPE` env, else "malopolska". */
+	scope?: RcnGugikScope;
+	/** Ignore the cadence gate and re-import everything in scope. */
+	force?: boolean;
+	/** Restrict to these TERYT4 codes (retry / spot-import). */
+	only?: string[];
+	/** Stop after N packages (smoke test against the live source). */
+	limit?: number;
+}
+
+function resolveScope(env: string | undefined): RcnGugikScope {
+	const v = (env ?? "").toLowerCase();
+	return v === "pl" || v === "poland" || v === "all" || v === "1"
+		? "poland"
+		: "malopolska";
+}
 
 interface State {
 	checkedAt?: Record<string, string>;
@@ -145,8 +182,7 @@ function parseGpkgPoint(buf: Buffer): Pt | null {
 				// Polygon:    [ringCount, ([ptCount, points...])...]
 				// MultiPolygon: [polyCount, (wkbPolygon)...]
 				let p = base;
-				const shapes =
-					geoType === 6 ? r.getUint32(p, little) : 1;
+				const shapes = geoType === 6 ? r.getUint32(p, little) : 1;
 				if (geoType === 6) p += 4;
 				for (let s = 0; s < shapes; s++) {
 					if (geoType === 6) p += 5; // nested WKB header
@@ -209,9 +245,15 @@ proj4.defs(
 );
 const cs92ToWgs = proj4("EPSG:2180", proj4.WGS84);
 
-function pl2000ToLatLng(x: number, y: number): { lat: number; lng: number } | null {
+function pl2000ToLatLng(
+	x: number,
+	y: number,
+): { lat: number; lng: number } | null {
 	const [lng, lat] = cs92ToWgs.forward([x, y]);
-	if (lng > 19.05 && lng < 21.45 && lat > 49.15 && lat < 50.55) {
+	// Sanity check against Poland's bounding box — a garbled blob must not
+	// land a transaction in the ocean. National scope needs the whole box;
+	// the małopolska subset simply never produces points outside it.
+	if (lng > 14.0 && lng < 24.3 && lat > 48.9 && lat < 55.1) {
 		return { lat, lng };
 	}
 	return null;
@@ -273,10 +315,10 @@ function insertRows(rows: RowInsert[]): number {
 // Per-powiat flow
 
 async function downloadPowiat(teryt: string): Promise<string> {
-	const url = `${BASE_URL}/${teryt}_transakcje_ceny.gpkg.zip`;
+	const url = powiatZipUrl(teryt);
 	const zipPath = path.join(DATA_DIR, `${teryt}.gpkg.zip`);
 	const res = await fetch(url, {
-		signal: AbortSignal.timeout(120_000),
+		signal: AbortSignal.timeout(600_000),
 	});
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
 	const buf = Buffer.from(await res.arrayBuffer());
@@ -294,26 +336,44 @@ interface ParcelMetaRow {
 	areaHa: number | null;
 }
 
+/**
+ * Stream one GeoPackage into the DB.
+ *
+ * Deliberately batched instead of "collect everything, then insert": the
+ * big city powiaty (Warszawa is a 420 MB zip) hold millions of rows and
+ * holding them all as objects would balloon memory for no reason.
+ * `onBatch` is called as buffers fill, so peak memory is FLUSH_ROWS.
+ */
 async function collectFromGpkg(
 	gpkgPath: string,
 	teryt: string,
-): Promise<{ rows: RowInsert[]; meta: ParcelMetaRow[] }> {
+	onBatch: (rows: RowInsert[], meta: ParcelMetaRow[]) => Promise<void>,
+): Promise<number> {
 	const { default: Database } = await import("better-sqlite3");
 	const src = new Database(gpkgPath, { readonly: true });
 	try {
-		const out: RowInsert[] = [];
-		const meta: ParcelMetaRow[] = [];
+		let rows: RowInsert[] = [];
+		let meta: ParcelMetaRow[] = [];
+		let seen = 0;
+		const flush = async (): Promise<void> => {
+			if (rows.length === 0 && meta.length === 0) return;
+			const batchRows = rows;
+			const batchMeta = meta;
+			rows = [];
+			meta = [];
+			await onBatch(batchRows, batchMeta);
+		};
 		const tables: Array<{
-				t: string;
-				idCol: string;
-				area: string[];
-				/** true when the area column is hectares (RCN land areas). */
-				areaHectares?: boolean;
-				price: string[];
-				isParcel?: boolean;
-				rooms?: string;
-				floor?: string;
-			}> = [
+			t: string;
+			idCol: string;
+			area: string[];
+			/** true when the area column is hectares (RCN land areas). */
+			areaHectares?: boolean;
+			price: string[];
+			isParcel?: boolean;
+			rooms?: string;
+			floor?: string;
+		}> = [
 			{
 				t: "transakcje_dzialki",
 				idCol: "dzi_id_dzialki",
@@ -342,23 +402,29 @@ async function collectFromGpkg(
 
 		for (const spec of tables) {
 			const hasTable = src
-				.prepare(
-					"select name from sqlite_master where type='table' and name=?",
-				)
+				.prepare("select name from sqlite_master where type='table' and name=?")
 				.get(spec.t);
 			if (!hasTable) continue;
 			const stmt = src.prepare(
 				`SELECT tran_lokalny_id_iip AS uid, tran_rodzaj_rynku AS rynk,
 				        dok_data AS dok, tran_cena_brutto AS tranCena,
 				        ${spec.area.join(", ")}, ${spec.price.join(", ")}${
-							spec.rooms ? `, ${spec.rooms}` : ""
-						}${spec.floor ? `, ${spec.floor}` : ""}, ${spec.idCol} AS extId,
-				         ${spec.t === "transakcje_dzialki"
-									? "dzi_sposob_uzyt AS su, dzi_przezn_wmpzp AS mpzp, dzi_pow_ewid AS ewidHa"
-									: "NULL AS su, NULL AS mpzp, NULL AS ewidHa"}, geometry
+									spec.rooms ? `, ${spec.rooms}` : ""
+								}${spec.floor ? `, ${spec.floor}` : ""}, ${spec.idCol} AS extId,
+				         ${
+										spec.t === "transakcje_dzialki"
+											? "dzi_sposob_uzyt AS su, dzi_przezn_wmpzp AS mpzp, dzi_pow_ewid AS ewidHa"
+											: "NULL AS su, NULL AS mpzp, NULL AS ewidHa"
+									}, geometry
 				 FROM ${spec.t}`,
 			);
-			for (const row of stmt.iterate() as unknown as IterableIterator<Record<string, unknown>>) {
+			const iter = stmt.iterate() as unknown as IterableIterator<
+				Record<string, unknown>
+			>;
+			for (;;) {
+				const step = iter.next();
+				if (step.done) break;
+				const row = step.value;
 				const uid = String(row.uid ?? "");
 				if (!uid) continue;
 				const geom = row.geometry as Buffer | null;
@@ -391,7 +457,7 @@ async function collectFromGpkg(
 						areaHa: num(row.ewidHa),
 					});
 				}
-				out.push({
+				rows.push({
 					transactionId: extKey
 						? `${teryt}-G/${uid}/${extKey}`
 						: `${teryt}-G/${uid}`,
@@ -411,39 +477,42 @@ async function collectFromGpkg(
 					lng,
 					parcelId: spec.isParcel ? extKey || null : null,
 				});
+				seen++;
+				if (rows.length >= FLUSH_ROWS) await flush();
 			}
+			await flush();
 		}
-		return { rows: out, meta };
+		return seen;
 	} finally {
 		src.close();
 	}
 }
 
+/** Parcel land metadata (type/size) — upsert per parcel. */
+async function upsertParcelMeta(meta: ParcelMetaRow[]): Promise<void> {
+	for (let i = 0; i < meta.length; i += 1000) {
+		await db
+			.insert(parcelMeta)
+			.values(meta.slice(i, i + 1000))
+			.onConflictDoUpdate({
+				target: parcelMeta.parcelId,
+				set: {
+					landUse: sql`excluded.land_use`,
+					zoning: sql`excluded.zoning`,
+					areaHa: sql`excluded.area_ha`,
+					updatedAt: new Date(),
+				},
+			});
+	}
+}
+
 async function importPowiat(teryt: string): Promise<number> {
 	const gpkgPath = await downloadPowiat(teryt);
-	const { rows, meta } = await collectFromGpkg(gpkgPath, teryt);
-	// Chunked inserts (each powiat can hold thousands of rows).
 	let inserted = 0;
-	for (let i = 0; i < rows.length; i += 1000) {
-		inserted += insertRows(rows.slice(i, i + 1000));
-	}
-	// Parcel land metadata (type/size) — upsert per parcel.
-	if (meta.length > 0) {
-		for (let i = 0; i < meta.length; i += 1000) {
-			await db
-				.insert(parcelMeta)
-				.values(meta.slice(i, i + 1000))
-				.onConflictDoUpdate({
-					target: parcelMeta.parcelId,
-					set: {
-						landUse: sql`excluded.land_use`,
-						zoning: sql`excluded.zoning`,
-						areaHa: sql`excluded.area_ha`,
-						updatedAt: new Date(),
-					},
-				});
-		}
-	}
+	const seen = await collectFromGpkg(gpkgPath, teryt, async (rows, meta) => {
+		inserted += insertRows(rows);
+		if (meta.length > 0) await upsertParcelMeta(meta);
+	});
 	// Cleanup heavy intermediates once imported.
 	const zipPath = path.join(DATA_DIR, `${teryt}.gpkg.zip`);
 	try {
@@ -453,39 +522,133 @@ async function importPowiat(teryt: string): Promise<number> {
 		/* best effort */
 	}
 	console.log(
-		`RCN-GUGIK ${teryt}: ${rows.length} transactions seen, ${inserted} inserted`,
+		`  RCN-GUGIK ${teryt}: ${seen} transactions seen, ${inserted} new`,
 	);
 	return inserted;
 }
 
-export async function importRcnGugik(): Promise<number> {
+/** Which TERYT4 codes a scope covers, cheapest source first. */
+async function targetsForScope(scope: RcnGugikScope): Promise<PowiatPackage[]> {
+	if (scope === "malopolska") {
+		return MALOPOLSKA_POWIATY.filter((t) => !LOCAL_RCN_COVERED.has(t)).map(
+			(teryt) => ({ teryt, bytes: 0 }),
+		);
+	}
+	const packages = await loadPowiatPackages();
+	return packages.filter((p) => !LOCAL_RCN_COVERED.has(p.teryt));
+}
+
+export async function importRcnGugik(
+	opts: RcnGugikOptions = {},
+): Promise<number> {
 	mkdirSync(DATA_DIR, { recursive: true });
+	const scope = opts.scope ?? resolveScope(process.env.RCN_GUGIK_SCOPE);
+	const force = opts.force ?? false;
 	const state = readState();
 	state.checkedAt ??= {};
+	const checkedAt = state.checkedAt;
+
+	let targets = await targetsForScope(scope);
+	if (opts.only && opts.only.length > 0) {
+		const wanted = new Set(opts.only);
+		targets = targets.filter((t) => wanted.has(t.teryt));
+	}
 	const now = Date.now();
+	const due = targets.filter(
+		(t) =>
+			force ||
+			now - (checkedAt[t.teryt] ? Date.parse(checkedAt[t.teryt]) : 0) >=
+				CADENCE_HOURS * 3600_000,
+	);
+	const queue = opts.limit ? due.slice(0, opts.limit) : due;
+
+	if (scope === "poland" && LOCAL_RCN_COVERED.size > 0) {
+		console.log(
+			`RCN-GUGIK scope=poland: ${targets.length} powiat packages published; ` +
+				`skipping ${[...LOCAL_RCN_COVERED].join(", ")} (covered by the local RCN GML)`,
+		);
+	}
+	console.log(
+		`RCN-GUGIK scope=${scope}: ${queue.length} of ${targets.length} powiaty due ` +
+			`(cadence ${CADENCE_HOURS}h, force=${force})`,
+	);
+	if (queue.length === 0) return 0;
+
+	const totalBytes = queue.reduce((s, t) => s + t.bytes, 0);
+	let doneBytes = 0;
 	let totalNew = 0;
-	for (const teryt of POWIATY) {
-		const last = state.checkedAt[teryt]
-			? Date.parse(state.checkedAt[teryt])
-			: 0;
-		if (!FORCE && now - last < CADENCE_HOURS * 3600_000) continue;
+	let failures = 0;
+	const t0 = Date.now();
+	for (let i = 0; i < queue.length; i++) {
+		const pkg = queue[i];
+		const label = `[${i + 1}/${queue.length}] ${pkg.teryt}${
+			pkg.bytes ? ` (${(pkg.bytes / 1e6).toFixed(1)} MB)` : ""
+		}`;
+		console.log(`RCN-GUGIK ${label} ...`);
 		try {
-			totalNew += await importPowiat(teryt);
-			state.checkedAt[teryt] = new Date().toISOString();
+			totalNew += await importPowiat(pkg.teryt);
+			checkedAt[pkg.teryt] = new Date().toISOString();
 			writeFileSync(STATE_PATH, JSON.stringify(state));
 		} catch (err) {
-			console.error(`RCN-GUGIK ${teryt} failed: ${String(err).slice(0, 200)}`);
+			failures++;
+			console.error(
+				`RCN-GUGIK ${pkg.teryt} failed: ${String(err).slice(0, 200)}`,
+			);
 		}
+		doneBytes += pkg.bytes;
+		const elapsed = (Date.now() - t0) / 1000;
+		const pct = totalBytes
+			? Math.round((doneBytes / totalBytes) * 100)
+			: Math.round(((i + 1) / queue.length) * 100);
+		const eta = doneBytes
+			? Math.round((elapsed / doneBytes) * (totalBytes - doneBytes))
+			: 0;
+		console.log(
+			`JCODE_PROGRESS ${JSON.stringify({
+				percent: pct,
+				current: i + 1,
+				total: queue.length,
+				unit: "powiaty",
+				message: `RCN-GUGIK ${scope}: ${pkg.teryt} done, ${totalNew} new rows`,
+				eta_seconds: eta,
+			})}`,
+		);
 	}
+	console.log(
+		`RCN-GUGIK scope=${scope} done: ${totalNew} new transactions from ` +
+			`${queue.length - failures}/${queue.length} powiaty in ` +
+			`${Math.round((Date.now() - t0) / 1000)}s`,
+	);
 	return totalNew;
 }
 
-// CLI: bunx tsx src/crawler/import-rcn-gugik.ts [--force]
+// CLI: bunx tsx src/crawler/import-rcn-gugik.ts
+//        [--force] [--all|--poland] [--only=1201,1202] [--limit=N]
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("import-rcn-gugik.ts")) {
-	importRcnGugik()
+	const argv = process.argv.slice(2);
+	const onlyArg = argv.find((a) => a.startsWith("--only="));
+	const limitArg = argv.find((a) => a.startsWith("--limit="));
+	const scope: RcnGugikScope | undefined =
+		argv.includes("--all") || argv.includes("--poland")
+			? "poland"
+			: argv.includes("--malopolska")
+				? "malopolska"
+				: undefined;
+	importRcnGugik({
+		scope,
+		force: argv.includes("--force"),
+		only: onlyArg
+			? onlyArg
+					.slice("--only=".length)
+					.split(",")
+					.map((s) => s.trim())
+					.filter(Boolean)
+			: undefined,
+		limit: limitArg ? Number(limitArg.slice("--limit=".length)) : undefined,
+	})
 		.then((n) => {
 			console.log(`Done: ${n} inserted`);
-			process.exit(n === 0 ? 0 : 0);
+			process.exit(0);
 		})
 		.catch((err) => {
 			console.error(err);

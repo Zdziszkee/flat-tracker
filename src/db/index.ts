@@ -34,6 +34,11 @@ if (databasePath !== ":memory:") {
 
 export const sqlite = new Database(databasePath);
 
+// The server and the standalone importers (RCN drains, assign-buildings)
+// share one file, so a writer can always meet a writer: wait for the lock
+// instead of failing the batch with SQLITE_BUSY.
+sqlite.pragma("busy_timeout = 10000");
+
 // Fresh clone bootstrap: create the schema from `drizzle/` migrations on
 // first use, so `bun install && bun run dev` works with no DB and no
 // `.env.local`. Re-runs are no-ops.

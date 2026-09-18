@@ -69,6 +69,22 @@ stores price, price/m², area, rooms, floor, address, date and coordinates.
 Re-runs are idempotent: a HEAD request skips the download when the registry
 hasn't changed.
 
+Every other powiat in the country is available from the same government
+open-data service (`opendata.geoportal.gov.pl` → "Usługa Transakcje"), one
+GeoPackage per TERYT4. The hourly refresh loads the 21 małopolska ones; to
+pull the whole country (380 packages, ~5.3 GB of downloads, resumable and
+re-runnable) use:
+
+```bash
+bun run discover:rcn-powiats    # refresh the package catalogue (cached)
+bun run import:rcn-gugik:all    # drain every published powiat
+```
+
+Kraków (1261) is always taken from the richer local GML zip instead, so
+national runs never double-count it. `assign-buildings` only anchors rows
+inside the małopolska OSM footprint index, so powiaty outside the region
+keep their registry coordinates but get no building link.
+
 ## Stack
 
 TanStack Start (React 19) · Crawlee 3 + Cheerio · SQLite + Drizzle ·

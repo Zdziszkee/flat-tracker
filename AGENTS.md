@@ -49,6 +49,9 @@ bun run db:generate       # new migration from schema changes
 bun run db:migrate        # apply migrations
 bun run assign-buildings  # match listings/transactions to OSM buildings
 bun run geocode-addresses # geocode listings that carry only an address
+bun run import:rcn-gugik       # małopolska RCN packages (cadence-gated)
+bun run import:rcn-gugik:all   # every GUGiK powiat in Poland (resumable drain)
+bun run discover:rcn-powiats   # refresh the GUGiK package catalogue
 bun run build:powiats     # regenerate src/data/malopolska-powiats.ts (Overpass)
 ```
 
@@ -141,15 +144,32 @@ curl -X POST http://localhost:3000/_nitro/tasks/refresh   # server task
 `refreshAll()`: refetches all sources, upserts new/changed listings, prunes
 otodom/olx listings older than the since window (default 90 days), then
 refreshes RCN transactions (HEAD check; skips when nothing changed) and the
-region-wide GUGiK per-powiat GeoPackages (20 h cadence gate, effectively
-daily on the hourly cron). When either import inserts new rows, building
-assignment (`assign-buildings`) re-runs automatically so new price history
-shows up colored on the map.
+region-wide GUGiK per-powiat GeoPackages — małopolska scope by default
+(20 h cadence gate, effectively daily on the hourly cron); set
+`RCN_GUGIK_SCOPE=poland` to make the server refresh cover the whole country
+instead. When either import inserts new rows, building assignment
+(`assign-buildings`) re-runs automatically so new price history shows up
+colored on the map.
 Portal failures are isolated per site (one blocked portal does not abort
 the rest of the run). The task and plugin are registered explicitly in
 `vite.config.ts` (no Nitro directory scanning — TanStack Start owns
 `src/routes`); the handler path must be an absolute file URL, relative
 paths fail to resolve from the virtual tasks module.
+
+**Whole-country loads are a manual drain** (`bun run import:rcn-gugik:all`):
+GUGiK publishes one GeoPackage per powiat nationwide (380 packages,
+~5.3 GB), so it is not something an hourly server task should pull. The
+run is resumable — `data/rcn/gugik/state.json` records the last successful
+import per TERYT4, and the cadence gate skips those powiaty on a re-run —
+and idempotent, so interrupting it costs only the powiat in flight. The
+package catalogue lives in `data/rcn/gugik/teryt-index.json`, discovered
+by HEAD-probing the URL space (`bun run discover:rcn-powiats`,
+`src/crawler/rcn-gugik-index.ts`); discovery is additive so a flaky probe
+can never shrink the catalogue. Kraków (1261) is skipped in both scopes:
+`import-rcn.ts` already imports the richer city GML, and a second copy
+under `1261-G/...` ids would double-count Kraków in the building price
+history. Rows outside małopolska keep their registry coordinates but stay
+unbound — the `osm_buildings` index only covers the region.
 
 **Server refreshes fetch only the first, newest-sorted page per site**
 (`firstPageOnly: true`, the default in `refreshAll`): each hourly run
@@ -214,7 +234,7 @@ assigns all 84k transactions in minutes, not hours.
 | investmap.pl | **Every registered Krakow investment with its flats** (incl. small private ones) | Public JSON API `GET /api/investment/search?withEstates=1&categorySlug=mieszkania&citySlug=krakow&offset=N` — flats inline (`es[].list`): area, price, price_m2, floor, rooms; coordinates from the investment |
 | licytacje.komornik.pl | Court auction notices (Małopolska real estate, all subcategories) | Playwright only (WAF blocks non-browser TLS); anonymous JSON API `POST /services/item-back/rest/item/search` (same-origin, `termFilters` + `fullTextFilters` city, `offset` pagination); every REAL_ESTATE subcategory kept |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
-| GUGiK RCN (Usługa Transakcje) | Same, but ALL other małopolska powiaty (per-powiat GeoPackages; parcel/building/lokal transactions) | `https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip` — imported by `import-rcn-gugik.ts` (`bun run import:rcn-gugik`) |
+| GUGiK RCN (Usługa Transakcje) | Same, but every powiat in Poland: małopolska by default, the other ~358 on demand (per-powiat GeoPackages; parcel/building/lokal transactions) | `https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip` — imported by `import-rcn-gugik.ts` (`bun run import:rcn-gugik`, `bun run import:rcn-gugik:all`) |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
 
 ### RCN GML structure (import-rcn.ts)

@@ -23,6 +23,8 @@
     "import:egib": "tsx src/crawler/import-egib.ts",
     "geocode-addresses": "tsx src/crawler/geocode-addresses.ts",
     "import:rcn-gugik": "tsx src/crawler/import-rcn-gugik.ts",
+    "import:rcn-gugik:all": "tsx src/crawler/import-rcn-gugik.ts --all",
+    "discover:rcn-powiats": "tsx scripts/discover-rcn-powiats.ts",
     "estimate-utilities": "tsx src/crawler/estimate-utilities.ts",
     "build-street-lexicon": "tsx scripts/build-street-lexicon.ts",
     "build:powiats": "tsx scripts/build-powiats-geojson.ts"

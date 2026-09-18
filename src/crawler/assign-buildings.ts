@@ -1,8 +1,8 @@
 import "dotenv/config";
 
-import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, gte, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { db } from "#/db/index";
-import { buildings, listings, transactions } from "#/db/schema";
+import { buildings, listings, osmBuildings, transactions } from "#/db/schema";
 import { buildStreetIndex, matchByAddress } from "./address-index.ts";
 import {
 	buildOsmIndex,
@@ -105,7 +105,38 @@ async function assignBuildingsToListingsLocal(): Promise<number> {
 	return assigned;
 }
 
+/**
+ * Coverage of the local `osm_buildings` index (union of every footprint
+ * box). Assignment is scoped to it because the RCN import is national
+ * while the OSM extract is małopolska-wide: without the filter, a national
+ * drain would drag ~20M out-of-region rows through rbush (and into memory)
+ * on every refresh, only to match none of them.
+ */
+async function osmCoverage(): Promise<{
+	minLat: number;
+	maxLat: number;
+	minLng: number;
+	maxLng: number;
+} | null> {
+	const [row] = await db
+		.select({
+			minLat: sql<number>`min(${osmBuildings.bboxMinLat})`,
+			maxLat: sql<number>`max(${osmBuildings.bboxMaxLat})`,
+			minLng: sql<number>`min(${osmBuildings.bboxMinLng})`,
+			maxLng: sql<number>`max(${osmBuildings.bboxMaxLng})`,
+		})
+		.from(osmBuildings);
+	if (row?.minLat == null || row.maxLat == null) return null;
+	return {
+		minLat: row.minLat,
+		maxLat: row.maxLat,
+		minLng: row.minLng,
+		maxLng: row.maxLng,
+	};
+}
+
 async function assignBuildingsToTransactionsLocal(): Promise<number> {
+	const coverage = await osmCoverage();
 	const all = await db
 		.select({
 			id: transactions.id,
