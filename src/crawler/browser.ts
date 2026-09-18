@@ -15,6 +15,10 @@ import { firefox } from "playwright-core";
  * Note that camoufox is driven *through* Playwright (`playwright-core`
  * launches its Firefox build), so Playwright the library stays; what becomes
  * unnecessary is Playwright's own browser download.
+ *
+ * Callers create their context with `viewport: null` so camoufox's spoofed
+ * window size survives (Playwright's default viewport fights the injected
+ * fingerprint and can hang a second page on some builds).
  */
 
 type AppBrowser = import("playwright").Browser;

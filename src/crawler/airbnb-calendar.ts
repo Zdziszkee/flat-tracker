@@ -1,7 +1,7 @@
 import "dotenv/config";
 
 import { eq, sql } from "drizzle-orm";
-import { chromium } from "playwright";
+import { launchBrowser } from "./browser.ts";
 
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
@@ -206,8 +206,10 @@ export async function runAirbnbCalendarImport(
 			l.id
 	`);
 
-	const browser = await chromium.launch({ headless: true });
-	const page = await browser.newPage();
+	// camoufox keeps its injected window size when no viewport is requested.
+	const browser = await launchBrowser();
+	const context = await browser.newContext({ viewport: null });
+	const page = await context.newPage();
 
 	let observations = 0;
 	let failures = 0;
