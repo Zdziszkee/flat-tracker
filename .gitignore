@@ -20,7 +20,7 @@ todos.json
 
 # SQLite dev database (regenerate with db:migrate + crawl/import)
 dev.db
-dev.db-journal
+dev.db-*
 .devserver.log
 
 # Debug artifacts with embedded tokens / logs
