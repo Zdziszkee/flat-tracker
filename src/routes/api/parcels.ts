@@ -136,20 +136,34 @@ export const Route = createFileRoute("/api/parcels")({
 				for (const r of rows) {
 					let coords: unknown;
 					try {
-						// RCN rows store [{lat,lng}…]; EGIB rows store the same
-						// shape. Convert to GeoJSON [lng,lat] pairs and CLOSE the
-						// ring — first == last is required by the GeoJSON spec,
-						// and mapbox-gl silently drops most unclosed polygons.
-						const parsed = JSON.parse(r.polygon) as Array<{
-							lat: number;
-							lng: number;
-						}>;
-						if (!Array.isArray(parsed) || parsed.length < 3) continue;
-						const full = parsed.map((p) => [p.lng, p.lat]);
+						// Two shapes live in `parcels.polygon`: the EGIB import
+						// writes GeoJSON (`{"type":"Polygon","coordinates":
+						// [[[lng,lat]...]]}`), the RCN one a bare `[{lat,lng}…]`
+						// ring. Both are rings of the same parcel outline, and
+						// assuming only the second is what silently emptied this
+						// layer (every row hit the `continue` below).
+						const parsed = JSON.parse(r.polygon) as
+							| Array<{ lat: number; lng: number }>
+							| {
+									type?: string;
+									coordinates?: Array<Array<[number, number]>>;
+							  };
+						const outer = Array.isArray(parsed)
+							? parsed.map((p) => [p.lng, p.lat] as [number, number])
+							: parsed?.type === "Polygon" &&
+									Array.isArray(parsed.coordinates?.[0])
+								? parsed.coordinates[0].map(
+										([lng, lat]) => [lng, lat] as [number, number],
+									)
+								: null;
+						if (!outer || outer.length < 3) continue;
+						const full = outer;
+						// GeoJSON requires a closed ring and mapbox-gl silently
+						// drops most unclosed polygons.
 						const first = full[0];
 						const last = full[full.length - 1];
 						if (first[0] !== last[0] || first[1] !== last[1]) {
-							full.push([...first]);
+							full.push([...first] as [number, number]);
 						}
 						const ring = simplifyRing(full, tolDeg);
 						coords = [ring];
