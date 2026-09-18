@@ -3,6 +3,7 @@ import { json } from "@tanstack/react-start";
 import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
+import { inMalopolska } from "#/db/region";
 import {
 	listingHistory,
 	listingMonthlyPrice,
@@ -52,7 +53,7 @@ export const Route = createFileRoute("/api/market-insights")({
 					})
 					.from(transactions)
 					.where(
-						sql`${transactions.pricePerM2} is not null and ${transactions.date} >= strftime('%s','now','-2 years')`,
+						sql`${transactions.pricePerM2} is not null and ${transactions.date} >= strftime('%s','now','-2 years') and ${inMalopolska}`,
 					)
 					.get();
 
@@ -64,7 +65,7 @@ export const Route = createFileRoute("/api/market-insights")({
 					})
 					.from(transactions)
 					.where(
-						sql`${transactions.pricePerM2} is not null and ${transactions.market} is not null and ${transactions.date} >= strftime('%s','now','-2 years')`,
+						sql`${transactions.pricePerM2} is not null and ${transactions.market} is not null and ${transactions.date} >= strftime('%s','now','-2 years') and ${inMalopolska}`,
 					)
 					.groupBy(transactions.market)
 					.all()
@@ -82,7 +83,7 @@ export const Route = createFileRoute("/api/market-insights")({
 					})
 					.from(transactions)
 					.where(
-						sql`${transactions.pricePerM2} is not null and ${transactions.date} >= strftime('%s','now','-8 years')`,
+						sql`${transactions.pricePerM2} is not null and ${transactions.date} >= strftime('%s','now','-8 years') and ${inMalopolska}`,
 					)
 					.groupBy(sql`strftime('%Y', ${transactions.date}, 'unixepoch')`)
 					.orderBy(sql`strftime('%Y', ${transactions.date}, 'unixepoch') asc`)

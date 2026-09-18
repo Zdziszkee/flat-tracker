@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-import { and, gte, isNotNull, lte } from "drizzle-orm";
+import { and, gte, isNotNull, lte, sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import { parcels, transactions } from "#/db/schema";
 
@@ -64,10 +64,19 @@ interface ParcelRow {
 let rcnParcelIds: Set<string> | null = null;
 async function getRcnParcelIds(): Promise<Set<string>> {
 	if (rcnParcelIds) return rcnParcelIds;
+	// Parcel ids carry their TERYT4 prefix, so the region is a range on the
+	// indexed `parcel_id` rather than a coordinate test: with the national
+	// RCN loaded, an unscoped DISTINCT would materialize millions of ids
+	// (and this Set lives for the whole process).
 	const rows = await db
 		.selectDistinct({ parcelId: transactions.parcelId })
 		.from(transactions)
-		.where(isNotNull(transactions.parcelId));
+		.where(
+			and(
+				isNotNull(transactions.parcelId),
+				sql`${transactions.parcelId} >= '12' and ${transactions.parcelId} < '13'`,
+			),
+		);
 	rcnParcelIds = new Set(rows.map((r) => r.parcelId as string));
 	return rcnParcelIds;
 }
