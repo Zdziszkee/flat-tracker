@@ -39,8 +39,10 @@ bunx camoufox-js fetch   # ~660 MB anti-detect Firefox; also what gets past Book
 rendered sources use whichever is present), but camoufox is the one the
 portals are fought with.
 
-Skip it and those two sources just report a failed crawl on `/sources`; every
-other source is unaffected.
+Skip it and the rendered sources (booking, licytacje.komornik.pl, plus the
+airbnb/booking calendar tasks) log one line and report a failed crawl on
+`/sources` (`CRAWL_DEBUG=1` prints the raw error); every other source is
+unaffected.
 
 Then open:
 
