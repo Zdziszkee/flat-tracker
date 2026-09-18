@@ -8,8 +8,10 @@ OpenStreetMap building.
 ## Stack
 
 - **Framework**: TanStack Start (React 19, file-based routing in `src/routes/`)
-- **Scraping**: Crawlee 3 + Cheerio (all current adapters parse embedded JSON,
-  no browser needed; Playwright crawler path exists for JS-rendered sites)
+- **Scraping**: Crawlee 3 + Cheerio (most adapters parse embedded JSON/API
+  responses, no browser needed); the WAF-protected sources (booking,
+  licytacje-komornik) and the calendar tasks run camoufox through
+  `src/crawler/browser.ts` — the only place that launches a browser.
 - **DB**: SQLite + Drizzle ORM (`drizzle-orm/better-sqlite3`)
 - **Orchestration**: Effect TS wraps the crawl pipeline (`src/crawler/pipeline.ts`)
 - **Geocoding**: Overpass API (free) — building footprints + point-in-polygon
@@ -89,7 +91,9 @@ driver (playwright-core launches its Firefox build), so the library stays;
 what is optional is Playwright's *browser download*. `camoufox-js` is a
 runtime dependency for that reason. Adapters that need a browser declare
 `launchBrowser` (`CustomLaunchAdapter`), which `crawler.ts` calls instead of
-letting Crawlee launch chromium.
+letting Crawlee launch chromium. A failed crawl logs a single line (deepest
+cause); `CRAWL_DEBUG=1` prints the raw error, and the same line is what
+`crawl_runs.error` / `/sources` show.
 
 Crawling is triggered from the UI, not the terminal: the **/sources** page
 ("Refresh now" → `POST /api/refresh`) runs the same `refreshAll()` as the
