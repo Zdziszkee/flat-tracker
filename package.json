@@ -24,7 +24,8 @@
     "geocode-addresses": "tsx src/crawler/geocode-addresses.ts",
     "import:rcn-gugik": "tsx src/crawler/import-rcn-gugik.ts",
     "estimate-utilities": "tsx src/crawler/estimate-utilities.ts",
-    "build-street-lexicon": "tsx scripts/build-street-lexicon.ts"
+    "build-street-lexicon": "tsx scripts/build-street-lexicon.ts",
+    "build:powiats": "tsx scripts/build-powiats-geojson.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",

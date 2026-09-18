@@ -12,9 +12,11 @@ dist-ssr
 __unconfig*
 todos.json
 
-# Crawl data (large GML downloads)
-data/
-storage/
+# Crawl data (large GML/PBF downloads) — root only. A bare `data/` would
+# also ignore src/data/**, which silently dropped a committed-in-source
+# module (src/data/malopolska-powiats.ts) from every clone.
+/data/
+/storage/
 
 # SQLite dev database (regenerate with db:migrate + crawl/import)
 dev.db
