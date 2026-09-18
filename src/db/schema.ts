@@ -34,6 +34,12 @@ export const buildings = sqliteTable("buildings", {
 	tags: text(),
 	/** GeoJSON geometry (polygon) of the building footprint, JSON string. */
 	geometry: text(),
+	/**
+	 * Construction year: the average of the flat listings anchored to this
+	 * building (otodom detail pages), else the OSM `start_date` tag.
+	 * Maintained by `assign-buildings` (updateBuildingYears).
+	 */
+	buildYear: integer("build_year", { mode: "number" }),
 	createdAt: integer("created_at", { mode: "timestamp" }).default(
 		sql`(unixepoch())`,
 	),

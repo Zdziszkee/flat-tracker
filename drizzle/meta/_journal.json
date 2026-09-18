@@ -99,6 +99,13 @@
       "when": 1787941576216,
       "tag": "0013_spicy_scarlet_spider",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1789748596452,
+      "tag": "0014_hesitant_raider",
+      "breakpoints": true
     }
   ]
 }

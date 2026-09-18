@@ -20,6 +20,8 @@ interface CachedBuilding {
 	address: string | null;
 	lat: number;
 	lng: number;
+	/** Construction year (listings, else OSM start_date). */
+	buildYear: number | null;
 	polygon: Array<{ lat: number; lng: number }> | null;
 }
 
@@ -137,6 +139,7 @@ async function getBuildingsCache(): Promise<CachedBuilding[]> {
 		address: r.address,
 		lat: r.lat,
 		lng: r.lng,
+		buildYear: r.buildYear,
 		polygon: r.geometry
 			? (JSON.parse(r.geometry) as Array<{ lat: number; lng: number }>)
 			: null,
@@ -310,6 +313,7 @@ export const Route = createFileRoute("/api/buildings/lookup")({
 									id: b.id,
 									osmId: b.osmId,
 									address: b.address,
+									buildYear: b.buildYear,
 									lat: b.lat,
 									lng: b.lng,
 									stats,
@@ -349,6 +353,7 @@ export const Route = createFileRoute("/api/buildings/lookup")({
 							id: building.id,
 							osmId: building.osmId,
 							address: building.address,
+							buildYear: building.buildYear,
 							lat: building.lat,
 							lng: building.lng,
 							stats,

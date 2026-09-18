@@ -295,6 +295,7 @@ interface BuildingLookup {
 		address: string | null;
 		lat: number;
 		lng: number;
+		buildYear?: number | null;
 		stats: {
 			txCount: number;
 			avgPricePerM2: number | null;
@@ -323,6 +324,20 @@ interface BuildingLookup {
 	} | null;
 }
 
+/** "28 lat", "3 lata", "1 rok". */
+function ageLabel(year: number): string {
+	const age = new Date().getFullYear() - year;
+	const mod10 = age % 10;
+	const mod100 = age % 100;
+	const unit =
+		age === 1
+			? "rok"
+			: mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)
+				? "lata"
+				: "lat";
+	return `${age} ${unit}`;
+}
+
 function buildingPopupHtml(data: BuildingLookup): string {
 	if (!data?.building) {
 		return `<div class="min-w-48 p-1 text-sm text-gray-600">
@@ -332,10 +347,14 @@ function buildingPopupHtml(data: BuildingLookup): string {
 	}
 	const b = data.building;
 	const s = b.stats;
+	const yearLine = b.buildYear
+		? `<div class="flex justify-between gap-3"><span>Rok budowy</span><span class="font-medium">${b.buildYear} · ${ageLabel(b.buildYear)}</span></div>`
+		: "";
 	if (!s) {
 		// Building found but no RCN history (address fallback).
 		return `<div class="min-w-56 space-y-1 text-sm">
       <div class="font-semibold">${escapeHtml(b.address ?? "Budynek (bez adresu)")}</div>
+      <div class="border-t pt-1">${yearLine || '<div class="text-xs text-gray-500">Brak danych o wieku budynku.</div>'}</div>
       <div class="text-xs text-gray-500">Brak transakcji RCN dla tego budynku.</div>
     </div>`;
 	}
@@ -376,6 +395,7 @@ function buildingPopupHtml(data: BuildingLookup): string {
 	return `<div class="min-w-60 space-y-1 text-sm">
     <div class="font-semibold">${escapeHtml(b.address ?? "Budynek (bez adresu)")}</div>
     <div class="text-xs text-gray-500">Historia transakcji RCN</div>
+    ${yearLine ? `<div class="border-t pt-1">${yearLine}</div>` : ""}
     ${
 			s.txCount > 0
 				? `<div class="border-t pt-1">

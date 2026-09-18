@@ -83,6 +83,29 @@ load and *every* page 500'd. Never un-anchor those rules, and keep route-level
 imports of optional datasets lazy (`await import()`) so a missing data file
 degrades one endpoint instead of the whole app.
 
+### Incremental detail enrichment (otodom)
+
+A `firstPageOnly` run gets one request per source unless the adapter asks for
+more (`AdapterBase.firstPageOnlyRequests`). otodom spends 9: the newest list
+page plus up to 8 detail pages, and only for offers whose detail was never
+parsed (`listings.features` is the marker). Detail pages are the only source
+of a flat's coordinates, `build_year`, building material/floors, condition and
+market — `db-sink` promotes those out of the `features` JSON into columns — and
+otodom's CDN rate-limits bulk detail crawls, hence the small budget. A full
+crawl (no `firstPageOnly`) still follows every recent detail page.
+
+### Building age
+
+No official source in this pipeline carries a construction year: the Kraków
+RCN GML (`RCN_Budynek` = id, rodzaj, geometria, adres), the GUGiK RCN
+GeoPackages (`bud_*` = id, nr, rodzaj, pow_uzyt, cena, adres) and KIEG EGiB
+`ms:budynki` (ID_BUDYNKU, RODZAJ, KONDYGNACJE_NADZIEMNE/PODZIEMNE) all lack
+one — checked, do not re-investigate. `buildings.build_year` is therefore
+derived by `updateBuildingYears()` in `assign-buildings`: the average
+`listings.build_year` of the flats anchored to the building, else the OSM
+`start_date` tag, else null (never guessed). `/api/buildings/lookup` returns
+it and the map popup renders it as "Rok budowy: 1998 · 28 lat".
+
 Browser binaries are a separate download and their absence must stay
 non-fatal (reported once per refresh by `src/crawler/browser.ts`). Every
 JS-rendered source — booking, licytacje-komornik, and the booking/airbnb
@@ -224,7 +247,7 @@ assigns all 84k transactions in minutes, not hours.
 
 | Source | What | Access |
 |---|---|---|
-| otodom.pl | Active sale listings, Małopolska | HTML `__NEXT_DATA__` JSON; list pages have no coords, detail pages (`/pl/oferta/`) add lat/lng |
+| otodom.pl | Active sale listings, Małopolska | HTML `__NEXT_DATA__` JSON; list pages have no coords, detail pages (`/pl/oferta/`) add lat/lng, `build_year`, building material/floors, condition, market (`attributes`, promoted by db-sink) |
 | otodom.pl (wynajem) | Long-term rental listings, Małopolska | Same `__NEXT_DATA__` path with `/wynajem/mieszkanie/malopolskie`; detail price read from `rentPrice` |
 | olx.pl | Active sale listings, Małopolska | HTML `window.__PRERENDERED_STATE__` JSON incl. coordinates |
 | morizon.pl / gratka.pl | Same feed (one company), agency-heavy | schema.org LD+JSON (`Offer` nodes); pagination `?page=N` |
@@ -372,6 +395,10 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   script never needs a manual `db:migrate`; don't open `better-sqlite3`
   directly (except throwaway tools in `scripts/`).
 - `scripts/` holds throwaway utilities (db-state, overpass-test).
+- Schema gaps that are known and intentional: `todos` is an unused template
+  table (no code reads it), and nothing ever sets `listings.is_active = 0`
+  (the sink always writes 1) — "active" means "still in the DB", removal
+  happens through pruning, not through a sold/withdrawn state.
 
 ## Roadmap ideas
 

@@ -1,6 +1,6 @@
 import "dotenv/config";
 
-import { and, eq, gte, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import { buildings, listings, osmBuildings, transactions } from "#/db/schema";
 import { buildStreetIndex, matchByAddress } from "./address-index.ts";
@@ -32,7 +32,15 @@ export async function assignBuildings(): Promise<{
 	listings: number;
 	transactions: number;
 	addressBackfilled: number;
+	buildYears: number;
 }> {
+	// The OSM index is the matcher; build it from the Geofabrik extract once.
+	// (Inside the function, not at module load: refresh.ts imports this module
+	// to call assignBuildings, and an import must not start a second pass.)
+	if (!(await osmIndexReady())) {
+		console.log("Local OSM index missing, building from Geofabrik extract...");
+		await buildOsmIndex();
+	}
 	console.log("Assigning buildings to listings...");
 	const listings = await assignBuildingsToListingsLocal();
 	console.log(`  ${listings} listings assigned`);
@@ -43,9 +51,41 @@ export async function assignBuildings(): Promise<{
 
 	console.log("Backfilling building addresses from transactions...");
 	const addressBackfilled = await backfillBuildingAddresses();
-	console.log(`  ${addressBackfilled} buildings got an address from transactions`);
+	console.log(
+		`  ${addressBackfilled} buildings got an address from transactions`,
+	);
 
-	return { listings, transactions, addressBackfilled };
+	console.log("Deriving building years...");
+	const buildYears = await updateBuildingYears();
+	console.log(`  ${buildYears} buildings now have a construction year`);
+
+	return { listings, transactions, addressBackfilled, buildYears };
+}
+
+/**
+ * buildings.build_year: the average year of the flats anchored to the
+ * building (otodom detail pages carry "Rok budowy" for every flat of a
+ * house), falling back to the OSM `start_date` tag. Buildings with neither
+ * stay null rather than guessing.
+ */
+export async function updateBuildingYears(): Promise<number> {
+	const year = sql`coalesce(
+		(select round(avg(l.build_year)) from ${listings} l
+		 where l.building_id = ${buildings.id} and l.build_year between 1700 and 2100),
+		(select case
+			when cast(substr(json_extract(${buildings.tags}, '$.start_date'), 1, 4) as integer)
+				between 1700 and 2100
+			then cast(substr(json_extract(${buildings.tags}, '$.start_date'), 1, 4) as integer)
+		end)
+	)`;
+	await db.run(
+		sql`update ${buildings} set build_year = ${year} where ${year} is not null`,
+	);
+	const [row] = await db
+		.select({ n: sql<number>`count(*)` })
+		.from(buildings)
+		.where(isNotNull(buildings.buildYear));
+	return row?.n ?? 0;
 }
 
 /** CLI alias kept for `bun run assign-buildings`. */
@@ -147,11 +187,46 @@ async function assignBuildingsToTransactionsLocal(): Promise<number> {
 			buildingId: transactions.buildingId,
 		})
 		.from(transactions)
-		.where(isNotNull(transactions.lat));
+		.where(
+			coverage
+				? and(
+						isNotNull(transactions.lat),
+						gte(transactions.lat, coverage.minLat),
+						lte(transactions.lat, coverage.maxLat),
+						gte(transactions.lng, coverage.minLng),
+						lte(transactions.lng, coverage.maxLng),
+					)
+				: isNotNull(transactions.lat),
+		);
 
 	if (all.length === 0) return 0;
 	const tree = await loadOsmIndex();
 	const streetIndex = await buildStreetIndex();
+
+	// Writes are batched: a statement per transaction turned this pass into
+	// hours on the full registry (~1M rows). Grouping by building keeps every
+	// statement a plain `where id in (...)`.
+	const pending = new Map<number, number[]>();
+	let queued = 0;
+	const queue = (buildingId: number, id: number) => {
+		const ids = pending.get(buildingId);
+		if (ids) ids.push(id);
+		else pending.set(buildingId, [id]);
+		queued++;
+	};
+	const flush = async () => {
+		const entries = [...pending];
+		pending.clear();
+		queued = 0;
+		for (const [buildingId, ids] of entries) {
+			for (let i = 0; i < ids.length; i += 400) {
+				await db
+					.update(transactions)
+					.set({ buildingId })
+					.where(inArray(transactions.id, ids.slice(i, i + 400)));
+			}
+		}
+	};
 
 	let byAddress = 0;
 	let byGeo = 0;
@@ -176,11 +251,9 @@ async function assignBuildingsToTransactionsLocal(): Promise<number> {
 				addrMatch.lng,
 			);
 			if (buildingId !== null && buildingId !== t.buildingId) {
-				await db
-					.update(transactions)
-					.set({ buildingId })
-					.where(eq(transactions.id, t.id));
+				queue(buildingId, t.id);
 				byAddress++;
+				if (queued >= 50_000) await flush();
 			}
 			continue;
 		}
@@ -190,23 +263,33 @@ async function assignBuildingsToTransactionsLocal(): Promise<number> {
 		if (!b) continue;
 		const buildingId = await ensureBuilding(b);
 		if (buildingId !== null && buildingId !== t.buildingId) {
-			await db
-				.update(transactions)
-				.set({ buildingId })
-				.where(eq(transactions.id, t.id));
+			queue(buildingId, t.id);
 			byGeo++;
+			if (queued >= 50_000) await flush();
 		}
 	}
+	await flush();
 	console.log(`  address matches: ${byAddress}, geo fallback: ${byGeo}`);
 	return byAddress + byGeo;
 }
 
+/**
+ * buildings.id by osmId. One pass touches the same building from thousands
+ * of transactions, and without this it did a SELECT per row.
+ */
+const buildingIdByOsmId = new Map<number, number>();
+
 /** Insert into the `buildings` table if not already present, return its id. */
 async function ensureBuilding(b: OsmBuilding): Promise<number | null> {
+	const cached = buildingIdByOsmId.get(b.osmId);
+	if (cached !== undefined) return cached;
 	const existing = await db.query.buildings.findFirst({
 		where: (row) => eq(row.osmId, b.osmId),
 	});
-	if (existing) return existing.id;
+	if (existing) {
+		buildingIdByOsmId.set(b.osmId, existing.id);
+		return existing.id;
+	}
 
 	const [row] = await db
 		.insert(buildings)
@@ -220,6 +303,7 @@ async function ensureBuilding(b: OsmBuilding): Promise<number | null> {
 		})
 		.onConflictDoNothing()
 		.returning({ id: buildings.id });
+	if (row) buildingIdByOsmId.set(b.osmId, row.id);
 	return row?.id ?? null;
 }
 
@@ -232,23 +316,24 @@ async function ensureBuildingByOsmId(
 	const existing = await db.query.buildings.findFirst({
 		where: (row) => eq(row.osmId, osmId),
 	});
-	if (existing) return existing.id;
+	if (existing) {
+		buildingIdByOsmId.set(osmId, existing.id);
+		return existing.id;
+	}
 
 	const [row] = await db
 		.insert(buildings)
 		.values({ osmId, lat, lng })
 		.onConflictDoNothing()
 		.returning({ id: buildings.id });
+	if (row) buildingIdByOsmId.set(osmId, row.id);
 	return row?.id ?? null;
 }
 
-// Build the local index on first run.
-if (!(await osmIndexReady())) {
-	console.log("Local OSM index missing, building from Geofabrik extract...");
-	await buildOsmIndex();
+/** CLI entry: `bun run assign-buildings`. */
+if (process.argv[1]?.replace(/\\/g, "/").endsWith("assign-buildings.ts")) {
+	main().catch((err) => {
+		console.error(err);
+		process.exitCode = 1;
+	});
 }
-
-main().catch((err) => {
-	console.error(err);
-	process.exitCode = 1;
-});
