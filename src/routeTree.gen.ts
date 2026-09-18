@@ -19,6 +19,7 @@ import { Route as ApiInvestmentAnalyticsRouteImport } from './routes/api/investm
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiMarketChartsRouteImport } from './routes/api/market-charts'
 import { Route as ApiMarketInsightsRouteImport } from './routes/api/market-insights'
+import { Route as ApiOccupancyHeatmapRouteImport } from './routes/api/occupancy-heatmap'
 import { Route as ApiParcelsRouteImport } from './routes/api/parcels'
 import { Route as ApiPowiatMapRouteImport } from './routes/api/powiat-map'
 import { Route as ApiRefreshRouteImport } from './routes/api/refresh'
@@ -84,6 +85,11 @@ const ApiMarketChartsRoute = ApiMarketChartsRouteImport.update({
 const ApiMarketInsightsRoute = ApiMarketInsightsRouteImport.update({
   id: '/api/market-insights',
   path: '/api/market-insights',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiOccupancyHeatmapRoute = ApiOccupancyHeatmapRouteImport.update({
+  id: '/api/occupancy-heatmap',
+  path: '/api/occupancy-heatmap',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiParcelsRoute = ApiParcelsRouteImport.update({
@@ -178,6 +184,7 @@ export interface FileRoutesByFullPath {
   '/api/listings': typeof ApiListingsRoute
   '/api/market-charts': typeof ApiMarketChartsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
+  '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
   '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/refresh': typeof ApiRefreshRoute
@@ -206,6 +213,7 @@ export interface FileRoutesByTo {
   '/api/listings': typeof ApiListingsRoute
   '/api/market-charts': typeof ApiMarketChartsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
+  '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
   '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/refresh': typeof ApiRefreshRoute
@@ -235,6 +243,7 @@ export interface FileRoutesById {
   '/api/listings': typeof ApiListingsRoute
   '/api/market-charts': typeof ApiMarketChartsRoute
   '/api/market-insights': typeof ApiMarketInsightsRoute
+  '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
   '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/refresh': typeof ApiRefreshRoute
@@ -265,6 +274,7 @@ export interface FileRouteTypes {
     | '/api/listings'
     | '/api/market-charts'
     | '/api/market-insights'
+    | '/api/occupancy-heatmap'
     | '/api/parcels'
     | '/api/powiat-map'
     | '/api/refresh'
@@ -293,6 +303,7 @@ export interface FileRouteTypes {
     | '/api/listings'
     | '/api/market-charts'
     | '/api/market-insights'
+    | '/api/occupancy-heatmap'
     | '/api/parcels'
     | '/api/powiat-map'
     | '/api/refresh'
@@ -321,6 +332,7 @@ export interface FileRouteTypes {
     | '/api/listings'
     | '/api/market-charts'
     | '/api/market-insights'
+    | '/api/occupancy-heatmap'
     | '/api/parcels'
     | '/api/powiat-map'
     | '/api/refresh'
@@ -350,6 +362,7 @@ export interface RootRouteChildren {
   ApiListingsRoute: typeof ApiListingsRoute
   ApiMarketChartsRoute: typeof ApiMarketChartsRoute
   ApiMarketInsightsRoute: typeof ApiMarketInsightsRoute
+  ApiOccupancyHeatmapRoute: typeof ApiOccupancyHeatmapRoute
   ApiParcelsRoute: typeof ApiParcelsRouteWithChildren
   ApiPowiatMapRoute: typeof ApiPowiatMapRoute
   ApiRefreshRoute: typeof ApiRefreshRoute
@@ -436,6 +449,13 @@ declare module '@tanstack/react-router' {
       path: '/api/market-insights'
       fullPath: '/api/market-insights'
       preLoaderRoute: typeof ApiMarketInsightsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/occupancy-heatmap': {
+      id: '/api/occupancy-heatmap'
+      path: '/api/occupancy-heatmap'
+      fullPath: '/api/occupancy-heatmap'
+      preLoaderRoute: typeof ApiOccupancyHeatmapRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/parcels': {
@@ -588,6 +608,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiListingsRoute: ApiListingsRoute,
   ApiMarketChartsRoute: ApiMarketChartsRoute,
   ApiMarketInsightsRoute: ApiMarketInsightsRoute,
+  ApiOccupancyHeatmapRoute: ApiOccupancyHeatmapRoute,
   ApiParcelsRoute: ApiParcelsRouteWithChildren,
   ApiPowiatMapRoute: ApiPowiatMapRoute,
   ApiRefreshRoute: ApiRefreshRoute,

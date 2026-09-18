@@ -9,6 +9,10 @@ export const Route = createFileRoute("/map")({
 	component: MapPage,
 });
 
+/** localStorage key for the "granice działek" toggle. */
+const PARCELS_STORAGE_KEY = "flat-tracker:show-parcels";
+const OCCUPANCY_STORAGE_KEY = "flat-tracker:show-occupancy";
+
 const SOURCE_LABELS: Record<string, string> = {
 	otodom: "Otodom",
 	olx: "OLX",
@@ -38,9 +42,33 @@ function MapPage() {
 	const [offerType, setOfferType] = useState<"all" | "sale" | "rental">("all");
 	const [sources, setSources] = useState<string[]>([]);
 	const [mounted, setMounted] = useState(false);
+	/**
+	 * Cadastral parcel grid. Off the bat it is part of the map look (on), the
+	 * toggle mirrors the user's last choice, and the layer itself only draws
+	 * from zoom 14 (below that a viewport holds tens of thousands of parcels
+	 * and the API cannot return them all).
+	 */
+	const [showParcels, setShowParcels] = useState(true);
+	/** Short-term rental occupancy heatmap layer. */
+	const [showOccupancy, setShowOccupancy] = useState(false);
+	const [occupancySource, setOccupancySource] = useState<
+		"airbnb" | "booking" | "all"
+	>("all");
+	const [occupancyMonth, setOccupancyMonth] = useState(() => {
+		const d = new Date();
+		return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+	});
 
 	useEffect(() => {
 		setMounted(true);
+		try {
+			const stored = window.localStorage.getItem(PARCELS_STORAGE_KEY);
+			if (stored !== null) setShowParcels(stored === "1");
+			const occStored = window.localStorage.getItem(OCCUPANCY_STORAGE_KEY);
+			if (occStored !== null) setShowOccupancy(occStored === "1");
+		} catch {
+			// Private mode / storage disabled: keep the default.
+		}
 		fetch("/api/sources")
 			.then((r) => r.json())
 			.then((d: { sources?: string[] }) => setSources(d.sources ?? []))
@@ -87,6 +115,65 @@ function MapPage() {
 						</option>
 					))}
 				</select>
+				<label className="flex items-center gap-1.5 text-sm text-gray-700">
+					<input
+						type="checkbox"
+						checked={showParcels}
+						onChange={(e) => {
+							setShowParcels(e.target.checked);
+							try {
+								window.localStorage.setItem(
+									PARCELS_STORAGE_KEY,
+									e.target.checked ? "1" : "0",
+								);
+							} catch {
+								// Not fatal: the toggle just won't persist.
+							}
+						}}
+					/>
+					Granice działek
+				</label>
+				<label className="flex items-center gap-1.5 text-sm text-gray-700">
+					<input
+						type="checkbox"
+						checked={showOccupancy}
+						onChange={(e) => {
+							setShowOccupancy(e.target.checked);
+							try {
+								window.localStorage.setItem(
+									OCCUPANCY_STORAGE_KEY,
+									e.target.checked ? "1" : "0",
+								);
+							} catch {
+								// Not fatal: the toggle just won't persist.
+							}
+						}}
+					/>
+					Obłożenie STR
+				</label>
+				{showOccupancy && (
+					<>
+						<select
+							value={occupancySource}
+							onChange={(e) =>
+								setOccupancySource(
+									e.target.value as "airbnb" | "booking" | "all",
+								)
+							}
+							className="rounded border px-2 py-1 text-sm"
+						>
+							<option value="all">Airbnb + Booking</option>
+							<option value="airbnb">Airbnb</option>
+							<option value="booking">Booking</option>
+						</select>
+						<input
+							type="month"
+							value={occupancyMonth}
+							onChange={(e) => setOccupancyMonth(e.target.value)}
+							className="rounded border px-2 py-1 text-sm"
+						/>
+					</>
+				)}
 				<Link to="/analytics" className="text-sm text-blue-600 underline">
 					Analityka inwestycyjna
 				</Link>
@@ -108,7 +195,15 @@ function MapPage() {
 							</div>
 						}
 					>
-						<MapView source={source} days={days} offerType={offerType} />
+						<MapView
+							source={source}
+							days={days}
+							offerType={offerType}
+							showParcels={showParcels}
+							showOccupancy={showOccupancy}
+							occupancySource={occupancySource}
+							occupancyMonth={occupancyMonth}
+						/>
 					</Suspense>
 				)}
 			</div>

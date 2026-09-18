@@ -62,7 +62,7 @@ const MALOPOLSKA_BOUNDS: [[number, number], [number, number]] = [
 	[19.0, 49.1],
 	[21.6, 50.6],
 ];
-const MALOPOLSKA_CENTER: [number, number] = [20.25, 49.85];
+const MALOPOLSKA_CENTER: [number, number] = [19.94, 50.06]; // TEMP TEST
 
 const TOKEN = env.VITE_MAPBOX_TOKEN;
 
@@ -408,6 +408,21 @@ function buildingPopupHtml(data: BuildingLookup): string {
   </div>`;
 }
 
+/** Viewport-limited parcel grid from /api/parcels. */
+interface ParcelFeatureCollection {
+	type: "FeatureCollection";
+	features: Array<{
+		type: "Feature";
+		geometry: { type: "Polygon"; coordinates: number[][][] };
+		properties: {
+			parcelId: string;
+			hasRcn: boolean;
+			obreb?: string | null;
+			gmina?: string | null;
+		};
+	}>;
+}
+
 type GeoJsonFeatureCollection = {
 	type: "FeatureCollection";
 	features: Array<{
@@ -425,6 +440,23 @@ type AddressLabelFeatureCollection = {
 		properties: { osmId: number; address: string };
 	}>;
 };
+
+interface OccupancyCell {
+	lat: number;
+	lng: number;
+	listings: number;
+	sampleNights: number;
+	bookedNights: number;
+	occupancyRate: number | null;
+	avgPrice: number | null;
+}
+
+interface OccupancyHeatmap {
+	month: string;
+	source: string;
+	grid: number;
+	cells: OccupancyCell[];
+}
 
 function toGeoJson(listings: ApiListing[]): GeoJsonFeatureCollection {
 	return {
@@ -446,14 +478,32 @@ export default function MapView({
 	source,
 	days,
 	offerType,
+	showParcels,
+	showOccupancy,
+	occupancySource,
+	occupancyMonth,
 }: {
 	source: string;
 	days: 0 | 1 | 7 | 30;
 	offerType: "all" | "sale" | "rental";
+	showParcels: boolean;
+	showOccupancy: boolean;
+	occupancySource: "airbnb" | "booking" | "all";
+	occupancyMonth: string;
 }) {
 	const { data, isLoading, error } = useQuery<ListingsResponse>({
 		queryKey: ["listings"],
 		queryFn: () => fetch("/api/listings").then((r) => r.json()),
+	});
+
+	const { data: occupancyData } = useQuery<OccupancyHeatmap>({
+		queryKey: ["occupancy-heatmap", occupancySource, occupancyMonth],
+		queryFn: () =>
+			fetch(
+				`/api/occupancy-heatmap?source=${occupancySource}&month=${occupancyMonth}`,
+			).then((r) => r.json()),
+		enabled: showOccupancy,
+		staleTime: 5 * 60 * 1000,
 	});
 
 	const listings = (data?.listings ?? []).filter(
@@ -487,7 +537,12 @@ export default function MapView({
 					Nie udało się pobrać danych: {String(error)}
 				</div>
 			)}
-			<MapCanvas listings={listings} />
+			<MapCanvas
+				listings={listings}
+				showParcels={showParcels}
+				showOccupancy={showOccupancy}
+				occupancy={occupancyData?.cells ?? []}
+			/>
 
 			<footer className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-4 rounded-lg bg-white/90 px-4 py-1.5 text-xs text-gray-600 shadow">
 				<span className="flex items-center gap-1">
@@ -524,13 +579,44 @@ export default function MapView({
 	);
 }
 
-function MapCanvas({ listings }: { listings: ApiListing[] }) {
+function occupancyToGeoJson(cells: OccupancyCell[]): GeoJsonFeatureCollection {
+	return {
+		type: "FeatureCollection",
+		features: cells
+			.filter((c) => c.occupancyRate != null && c.occupancyRate > 0)
+			.map((c) => ({
+				type: "Feature",
+				geometry: { type: "Point", coordinates: [c.lng, c.lat] },
+				properties: c as unknown as ApiListing,
+			})),
+	};
+}
+
+function MapCanvas({
+	listings,
+	showParcels,
+	showOccupancy,
+	occupancy,
+}: {
+	listings: ApiListing[];
+	showParcels: boolean;
+	showOccupancy: boolean;
+	occupancy: OccupancyCell[];
+}) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const mapRef = useRef<mapboxgl.Map | null>(null);
 	const popupRef = useRef<mapboxgl.Popup | null>(null);
+	// Read by the parcel sync inside the map callbacks, which outlive renders.
+	const showParcelsRef = useRef(showParcels);
+	// Same for the occupancy heatmap toggle.
+	const showOccupancyRef = useRef(showOccupancy);
+	// Set by the mount effect: re-reads the viewport and refetches if needed.
+	const syncParcelsRef = useRef<(() => void) | null>(null);
 	// Latest listings snapshot, readable from the async map-load callback
 	// no matter whether the API resolves before or after "load" fires.
 	const listingsRef = useRef(listings);
+	// Latest occupancy snapshot, set by the effect below.
+	const occupancyRef = useRef(occupancy);
 
 	// Create the map once. The listings snapshot at init is only used for
 	// the initial source data; the effect below pushes updates on changes,
@@ -634,11 +720,9 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 						o: { target: { featuresetId: string; importId?: string } },
 					) => Array<{ id?: number; properties?: { height?: number } }>;
 					// Detached calls lose `this` ("reading 'style'") — bind it.
-					const blds = query.call(
-						map,
-						undefined,
-						{ target: { featuresetId: "buildings", importId: "basemap" } },
-					);
+					const blds = query.call(map, undefined, {
+						target: { featuresetId: "buildings", importId: "basemap" },
+					});
 					for (const b of blds) {
 						const h = b.properties?.height;
 						const dbId =
@@ -797,6 +881,65 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				});
 			}
 
+			// Short-term rental occupancy heatmap (rendered on top of listings).
+			map.addSource("occupancy", {
+				type: "geojson",
+				data: occupancyToGeoJson(occupancyRef.current),
+			});
+			map.addLayer({
+				id: "occupancy-heat",
+				type: "heatmap",
+				source: "occupancy",
+				layout: {
+					visibility: showOccupancyRef.current ? "visible" : "none",
+				},
+				paint: {
+					"heatmap-weight": [
+						"interpolate",
+						["linear"],
+						["get", "occupancyRate"],
+						0,
+						0,
+						100,
+						1,
+					],
+					"heatmap-intensity": [
+						"interpolate",
+						["linear"],
+						["zoom"],
+						8,
+						0.6,
+						14,
+						2,
+					],
+					"heatmap-color": [
+						"interpolate",
+						["linear"],
+						["heatmap-density"],
+						0,
+						"rgba(0, 0, 255, 0)",
+						0.2,
+						"rgba(0, 255, 255, 0.4)",
+						0.4,
+						"rgba(0, 255, 0, 0.5)",
+						0.6,
+						"rgba(255, 255, 0, 0.6)",
+						0.8,
+						"rgba(255, 0, 0, 0.7)",
+					],
+					"heatmap-radius": [
+						"interpolate",
+						["linear"],
+						["zoom"],
+						8,
+						15,
+						14,
+						40,
+					],
+					"heatmap-opacity": 0.75,
+				},
+			});
+
 			// Click a 3D building to see its RCN price history.
 			const showBuildingHistory = (e: mapboxgl.MapLayerMouseEvent) => {
 				// If a listing marker is under the cursor, the listing popup wins.
@@ -866,23 +1009,117 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 			});
 			map.on("click", "3d-building", showBuildingHistory);
 
+			console.log("DBG parcel block entered; style.load count");
 			// ---- Cadastral parcels (podział geodezyjny, region-wide) -----
-			// `parcels` mixes RCN_Dzialka (Krakow) with GUGiK KIEG WFS rows
-			// for the rest of małopolska (import-egib.ts). Viewport-limited
-			// GeoJSON; refetched as the camera moves.
-			// Rendered Geoportal-style (podział gruntów): thin dark boundary
-			// lines + działka ID labels, NO fills — RCN coloring belongs to
-			// the 3D buildings above. The fill layer stays as an invisible
-			// click-catcher for the parcel history popup. Loaded at every
-			// zoom (the API caps at 6000 features), so the layer is present
-			// from boot.
+			// `parcels` mixes RCN_Dzialka (Krakow) with GUGiK KIEG WFS rows for
+			// the rest of małopolska (import-egib.ts). Drawn Geoportal-style:
+			// thin dark boundaries + działka IDs, no fills — RCN colouring
+			// belongs to the 3D buildings above. The invisible fill layer stays
+			// as the click-catcher for the parcel history popup.
+			//
+			// Only from z14. Below that a viewport holds 15k-25k parcels in
+			// Kraków while the API caps at 12k, so the grid came back partial and
+			// megabyte-heavy on every camera move — that is what made the layer
+			// look like it ignored zoom. Above the gate the worst case is ~5k
+			// parcels, and syncs are debounced, abortable and skipped while the
+			// viewport stays inside the fetched bbox.
+			const PARCEL_MIN_ZOOM = 14;
+			const PARCEL_LAYER_IDS = [
+				"parcel-fill",
+				"parcel-outline",
+				"parcel-labels",
+			];
+			console.log("DBG addSource parcels, exists=", !!map.getSource("parcels"));
+			if (!map.getSource("parcels")) {
+				map.addSource("parcels", {
+					type: "geojson",
+					data: { type: "FeatureCollection", features: [] },
+				});
+			}
+			// RCN-history parcels get a faint amber tint; the rest stay invisible
+			// but still act as the click-catcher (fills hit-test at opacity 0).
+			map.addLayer({
+				id: "parcel-fill",
+				type: "fill",
+				source: "parcels",
+				// `middle` slot so hit-testing priority matches the drawing order
+				// (above basemap fills, below labels). With terrain enabled the
+				// geometry drapes onto the DEM, so clicks track the relief.
+				slot: "middle",
+				layout: { visibility: "none" },
+				paint: {
+					"fill-color": ["case", ["get", "hasRcn"], "#f59e0b", "#000000"],
+					"fill-opacity": ["case", ["get", "hasRcn"], 0.16, 0],
+				},
+			});
+			// Cadastral boundaries, Geoportal podział gruntów look.
+			map.addLayer({
+				id: "parcel-outline",
+				type: "line",
+				source: "parcels",
+				layout: { visibility: "none" },
+				paint: {
+					"line-color": "#26303b",
+					"line-width": ["interpolate", ["linear"], ["zoom"], 14, 0.9, 17, 1.6],
+					"line-opacity": [
+						"interpolate",
+						["linear"],
+						["zoom"],
+						13.5,
+						0.5,
+						15,
+						0.85,
+						17,
+						1,
+					],
+				},
+			});
+			// Działka IDs at parcel centroids, like geoportal's identyfikator.
+			map.addLayer({
+				id: "parcel-labels",
+				type: "symbol",
+				source: "parcels",
+				slot: "middle",
+				minzoom: 15,
+				layout: {
+					visibility: "none",
+					"text-field": ["get", "parcelId"],
+					"text-font": ["DIN Pro Medium", "Noto Sans Regular"],
+					"text-size": ["interpolate", ["linear"], ["zoom"], 15, 9.5, 17, 12],
+					"text-letter-spacing": 0.05,
+				},
+				paint: {
+					"text-color": "#1f2937",
+					"text-halo-color": "#ffffff",
+					"text-halo-width": 1.2,
+					"text-opacity": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.6, 1],
+				},
+			});
+
 			let parcelsSeq = 0;
-			const loadParcels = () => {
-				// With terrain enabled, map.getBounds() shrinks to the ground
-				// footprint of the frustum — in hilly terrain (Podhale,
-				// Beskidy) that can be a sliver tens of meters tall, emptying
-				// the parcel grid. Compute a flat-camera bbox from
-				// center+zoom instead (Web Mercator pixels-per-world-tile).
+			let parcelBounds: [number, number, number, number] | null = null;
+			let parcelAbort: AbortController | null = null;
+			let parcelTimer: ReturnType<typeof setTimeout> | null = null;
+
+			const setParcelsVisible = (visible: boolean) => {
+				for (const id of PARCEL_LAYER_IDS) {
+					if (map.getLayer(id)) {
+						map.setLayoutProperty(
+							id,
+							"visibility",
+							visible ? "visible" : "none",
+						);
+					}
+				}
+			};
+
+			/**
+			 * Flat-camera viewport bbox with 10% padding. With terrain enabled
+			 * map.getBounds() shrinks to the ground footprint of the frustum —
+			 * in hilly terrain (Podhale, Beskidy) that is a sliver tens of meters
+			 * tall, which empties the parcel grid.
+			 */
+			const parcelBbox = (): [number, number, number, number] => {
 				const c = map.getCenter();
 				const z = map.getZoom();
 				const canvas = map.getCanvas();
@@ -891,313 +1128,247 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 				const worldSpan = 360 / 2 ** z;
 				const spanLng = worldSpan * (w / 512);
 				const spanLat =
-					(spanLng * (h / w)) / Math.max(0.3, Math.cos((c.lat * Math.PI) / 180));
+					(spanLng * (h / w)) /
+					Math.max(0.3, Math.cos((c.lat * Math.PI) / 180));
 				const padLng = spanLng * 0.1;
 				const padLat = spanLat * 0.1;
-				const seq = ++parcelsSeq;
-				const params = new URLSearchParams({
-					minLng: String(c.lng - spanLng / 2 - padLng),
-					minLat: String(c.lat - spanLat / 2 - padLat),
-					maxLng: String(c.lng + spanLng / 2 + padLng),
-					maxLat: String(c.lat + spanLat / 2 + padLat),
-					// Drives server-side ring simplification.
-					zoom: String(z),
-				});
-				void fetch(`/api/parcels?${params.toString()}`)
-					.then((r) => r.json())
-					.then(
-						(fc: {
-							type: "FeatureCollection";
-							features: Array<{
-								type: "Feature";
-								geometry: {
-									type: "Polygon";
-									coordinates: number[][][];
-								};
-								properties: { parcelId: string; hasRcn: boolean };
-							}>;
-						}) => {
-							if (seq !== parcelsSeq) return; // stale response
-							const src = map.getSource("parcels") as
-								| mapboxgl.GeoJSONSource
-								| undefined;
-							if (src) {
-								src.setData(fc);
-								return;
-							}
-							map.addSource("parcels", { type: "geojson", data: fc });
-							// RCN-history parcels get a faint amber tint; others
-							// stay invisible but still act as the click-catcher
-							// for parcel popups (fill layers are hit-tested at
-							// opacity 0).
-							map.addLayer({
-								id: "parcel-fill",
-								type: "fill",
-								source: "parcels",
-								// `middle` slot so hit-testing priority matches the
-								// drawing order (above basemap fills, below labels).
-								// With terrain enabled the geometry drapes onto the
-								// DEM, so clicks track the relief.
-								slot: "middle",
-								paint: {
-									"fill-color": [
-										"case",
-										["get", "hasRcn"],
-										"#f59e0b",
-										"#000000",
-									],
-									"fill-opacity": [
-										"case",
-										["get", "hasRcn"],
-										0.16,
-										0,
-									],
-								},
-							});
-							// Cadastral boundaries, Geoportal podział gruntów look:
-							// thin dark lines, slightly stronger as you zoom in.
-							map.addLayer({
-								id: "parcel-outline",
-								type: "line",
-								source: "parcels",
-								slot: "middle",
-								paint: {
-									"line-color": "#3d4652",
-									"line-width": [
-										"interpolate",
-										["linear"],
-										["zoom"],
-										12,
-										0.7,
-										16,
-										1.4,
-									],
-									"line-opacity": [
-										"interpolate",
-										["linear"],
-										["zoom"],
-										9,
-										0.15,
-										12,
-										0.55,
-										14,
-										0.9,
-									],
-								},
-							});
-							// Działka IDs at parcel centroids, like geoportal's
-							// identyfikator działki; fade in from z14.
-							map.addLayer({
-								id: "parcel-labels",
-								type: "symbol",
-								source: "parcels",
-								slot: "middle",
-								minzoom: 14,
-								layout: {
-									"text-field": ["get", "parcelId"],
-									"text-font": ["DIN Pro Medium", "Noto Sans Regular"],
-									"text-size": [
-										"interpolate",
-										["linear"],
-										["zoom"],
-										14,
-										9.5,
-										17,
-										12,
-									],
-									"text-letter-spacing": 0.05,
-								},
-								paint: {
-									"text-color": "#1f2937",
-									"text-halo-color": "#ffffff",
-									"text-halo-width": 1.2,
-									"text-opacity": [
-										"interpolate",
-										["linear"],
-										["zoom"],
-										14,
-										0,
-										15,
-										1,
-									],
-								},
-							});
-							// Parcel popups mirror building history.
-							interface ParcelLookup {
-								parcel: {
-									id: string;
-									area?: {
-										unit: string;
-										medianM2: number | null;
-										txCount: number;
-										txCount24m: number;
-										lastVsMedianPct: number | null;
-										basedOn: Array<{
-											date: string;
-											price: number;
-											perUnit: number;
-											parcelId: string;
-										}>;
-									} | null;
-									meta?: {
-										landUse: string | null;
-										zoning: string | null;
-										areaHa: number | null;
-									} | null;
-									stats: {
-										txCount: number;
-										avgPricePerM2: number | null;
-										minPricePerM2: number | null;
-										maxPricePerM2: number | null;
-										recent: Array<{
-											date: string;
-											price: number;
-											pricePerM2: number | null;
-											areaM2: number | null;
-											street: string | null;
-											streetNumber: string | null;
-										}>;
-									};
-								} | null;
-							}
-							map.on("click", "parcel-fill", (e) => {
-								// Click priority: listing points > 3D buildings >
-								// parcels. Both higher layers dispatch their own
-								// handlers for the same click; bail when one of
-								// them covers this point so only the winner pops.
-								if (
-									map.queryRenderedFeatures(e.point, {
-										layers: [
-											"listings-circle",
-											"komornik-listings",
-											"3d-building",
-										],
-									}).length > 0
-								) {
-									return;
-								}
-								const props = (
-									e.features?.[0] as unknown as {
-										properties?: {
-											parcelId?: string;
-											obreb?: string | null;
-											gmina?: string | null;
-										};
-									}
-								)?.properties;
-								const pid = props?.parcelId;
-								if (!pid) return;
-								const where =
-									props?.gmina || props?.obreb
-										? `${props.gmina ?? ""}${
-												props.gmina && props.obreb ? " · " : ""
-											}${props.obreb ?? ""}`
-										: null;
-								e.preventDefault();
-								void fetch(
-									`/api/parcels/lookup?parcelId=${encodeURIComponent(pid)}`,
-								)
-									.then((r) => r.json())
-									.then((data: ParcelLookup) => {
-										const s = data.parcel?.stats;
-										const area = data.parcel?.area;
-										const meta = data.parcel?.meta;
-										const LAND_LABELS: Record<string, string> = {
-											gruntyRolne: "rolna",
-											gruntyZabudowaneIZurbanizowane: "budowlana/zurbanizowana",
-											gruntyLesne: "leśna",
-											terenyKomunikacyjne: "komunikacyjna",
-											inne: "inna",
-										};
-										const landLabel =
-											meta?.landUse != null
-												? (LAND_LABELS[meta.landUse] ?? meta.landUse)
-												: null;
-										const areaAr =
-											meta?.areaHa != null ? meta.areaHa * 100 : null;
-										const unitLabel = area?.unit === "ar" ? "zł/ar" : "zł/m²";
-										const fmtU = (n: number | null | undefined) =>
-											n == null
-												? "—"
-												: `${Math.round(n * (area?.unit === "ar" ? 100 : 1)).toLocaleString("pl-PL")} ${unitLabel}`;
-										const rows = (s?.recent ?? [])
-											.map(
-												(r) =>
-													`<tr><td>${r.date}</td><td>${Math.round(
-														r.price,
-													).toLocaleString("pl-PL")} zł</td><td>${fmtU(
-														r.pricePerM2,
-													)}</td><td>${r.areaM2 ?? "?"} m²${
-														r.street
-															? ` · ${r.street} ${r.streetNumber ?? ""}`
-															: ""
-													}</td></tr>`,
-											)
-											.join("");
-										const isAr = area?.unit === "ar";
-										const areaHtml = area?.medianM2
-											? `<div class="mt-1 border-t pt-1 text-xs">
-													<div class="text-gray-500">Otoczenie (1 km, 5 lat): mediana <b>${(area.unit === "ar" ? Math.round(area.medianM2) : Math.round(area.medianM2 * 10) / 10).toLocaleString("pl-PL")} ${area.unit === "ar" ? "zł/ar" : "zł/m²"}</b> · ${area.txCount} transakcji (${area.txCount24m} w 24 mies.)</div>
-													${area.lastVsMedianPct != null ? `<div class="${area.lastVsMedianPct <= -15 ? "text-emerald-600" : area.lastVsMedianPct >= 15 ? "text-red-600" : "text-gray-600"}">Ostatnia transakcja: <b>${area.lastVsMedianPct > 0 ? "+" : ""}${area.lastVsMedianPct}%</b> vs mediana okolicy</div>` : ""}
-												</div>`
-											: "";
-										const html = `<div class="min-w-56 p-1 text-sm">
-											<div class="font-medium">Działka ${pid}</div>
-											${where ? `<div class="text-xs text-gray-500">${escapeHtml(where)}</div>` : ""}
-											${landLabel || areaAr != null ? `<div class="text-xs text-gray-600">${landLabel ? `działka ${landLabel}` : ""}${landLabel && areaAr != null ? " · " : ""}${areaAr != null ? `${areaAr.toLocaleString("pl-PL")} ar` : ""}</div>` : ""}
-											${
-												s && s.txCount > 0
-													? `<div class="mt-1">${s.txCount} transakcji RCN · średnio ${fmtU(
-															s.avgPricePerM2,
-														)}</div>
-													<div class="text-gray-500">zakres ${fmtU(
-														s.minPricePerM2,
-													)} – ${fmtU(s.maxPricePerM2)}</div>
-													${
-														rows
-															? `<table class="mt-2 w-full text-xs"><thead><tr class="text-left text-gray-500"><th>data</th><th>cena</th><th>${unitLabel}</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-															: ""
-													}`
-													: `<div class="mt-1 text-gray-500">Brak transakcji RCN na tej działce.</div>`
-											}
-											${areaHtml}
-											${
-												area && area.basedOn.length > 0
-													? `<div class="mt-1 text-xs text-gray-500">na podstawie ${area.basedOn.length} transakcji w okolicy:</div><table class="w-full text-xs"><tbody>${area.basedOn
-															.map(
-																(b) =>
-																	`<tr><td>${b.date}</td><td class="text-right">${Math.round(b.price).toLocaleString("pl-PL")} zł</td><td class="text-right">${isAr ? `${Math.round(b.perUnit).toLocaleString("pl-PL")} zł/ar` : `${Math.round(b.perUnit)} zł/m²`}</td></tr>`,
-															)
-															.join("")}</tbody></table>`
-													: ""
-											}
-										</div>`;
-										popupRef.current?.remove();
-										const popup = new mapboxgl.Popup({
-											offset: 10,
-											closeButton: false,
-											maxWidth: "320px",
-										})
-											.setLngLat(e.lngLat)
-											.setHTML(html)
-											.addTo(map);
-										popupRef.current = popup;
-									})
-									.catch(() => {});
-							});
-							map.on("mouseenter", "parcel-fill", () => {
-								map.getCanvas().style.cursor = "pointer";
-							});
-							map.on("mouseleave", "parcel-fill", () => {
-								map.getCanvas().style.cursor = "";
-							});
-						},
-					)
-					.catch(() => {});
+				return [
+					c.lng - spanLng / 2 - padLng,
+					c.lat - spanLat / 2 - padLat,
+					c.lng + spanLng / 2 + padLng,
+					c.lat + spanLat / 2 + padLat,
+				];
 			};
-			loadParcels();
-			map.on("moveend", loadParcels);
 
+			const syncParcels = (force = false) => {
+				if (!showParcelsRef.current || map.getZoom() < PARCEL_MIN_ZOOM) {
+					parcelAbort?.abort();
+					parcelAbort = null;
+					setParcelsVisible(false);
+					document.title = `DBG hidden z${map.getZoom().toFixed(1)} on=${showParcelsRef.current}`;
+					return;
+				}
+				const bbox = parcelBbox();
+				const covered =
+					parcelBounds !== null &&
+					bbox[0] >= parcelBounds[0] &&
+					bbox[1] >= parcelBounds[1] &&
+					bbox[2] <= parcelBounds[2] &&
+					bbox[3] <= parcelBounds[3];
+				if (!force && covered) {
+					console.log("DBG skip (covered), src feats=", (map.getSource("parcels") as any)?._data?.features?.length);
+					setParcelsVisible(true);
+					return;
+				}
+				console.log("DBG fetch parcels z=", map.getZoom().toFixed(2));
+				const seq = ++parcelsSeq;
+				parcelAbort?.abort();
+				const controller = new AbortController();
+				parcelAbort = controller;
+				const params = new URLSearchParams({
+					minLng: String(bbox[0]),
+					minLat: String(bbox[1]),
+					maxLng: String(bbox[2]),
+					maxLat: String(bbox[3]),
+					// Drives server-side ring simplification.
+					zoom: String(map.getZoom()),
+				});
+				void fetch(`/api/parcels?${params.toString()}`, {
+					signal: controller.signal,
+				})
+					.then((r) => r.json())
+					.then((fc: ParcelFeatureCollection) => {
+						if (seq !== parcelsSeq) return; // stale response
+						const src = map.getSource("parcels") as
+							| mapboxgl.GeoJSONSource
+							| undefined;
+						src?.setData(fc);
+						console.log("DBG setData", fc.features.length, "-> src has", (map.getSource("parcels") as any)?._data?.features?.length, "srcUndefined=", !src);
+						parcelBounds = bbox;
+						setParcelsVisible(true);
+						document.title = `DBG src=${(map.getSource("parcels") as any)?._data?.features?.length} layers=${JSON.stringify(
+							map
+								.getStyle()
+								.layers.filter((l: any) => String(l.id).startsWith("parcel"))
+								.map((l: any) => [l.id, l.slot ?? "-", l.source ?? "-"]),
+						)} z=${map.getZoom().toFixed(1)}`;
+					})
+					.catch((err) => {
+						// Aborted or offline: keep whatever grid is on screen.
+						document.title = `DBG err ${String(err).slice(0, 90)} url=${params.toString().slice(0, 120)}`;
+					});
+			};
+
+			// Refetch once the camera settles, so a burst of wheel-zoom steps
+			// results in one request for the final viewport.
+			const scheduleParcels = () => {
+				if (parcelTimer) clearTimeout(parcelTimer);
+				parcelTimer = setTimeout(() => syncParcels(), 250);
+			};
+			syncParcelsRef.current = () => syncParcels(true);
+			map.on("moveend", scheduleParcels);
+			syncParcels(true);
+
+			// Parcel popups mirror building history.
+			interface ParcelLookup {
+				parcel: {
+					id: string;
+					area?: {
+						unit: string;
+						medianM2: number | null;
+						txCount: number;
+						txCount24m: number;
+						lastVsMedianPct: number | null;
+						basedOn: Array<{
+							date: string;
+							price: number;
+							perUnit: number;
+							parcelId: string;
+						}>;
+					} | null;
+					meta?: {
+						landUse: string | null;
+						zoning: string | null;
+						areaHa: number | null;
+					} | null;
+					stats: {
+						txCount: number;
+						avgPricePerM2: number | null;
+						minPricePerM2: number | null;
+						maxPricePerM2: number | null;
+						recent: Array<{
+							date: string;
+							price: number;
+							pricePerM2: number | null;
+							areaM2: number | null;
+							street: string | null;
+							streetNumber: string | null;
+						}>;
+					};
+				} | null;
+			}
+			map.on("click", "parcel-fill", (e) => {
+				// Click priority: listing points > 3D buildings >
+				// parcels. Both higher layers dispatch their own
+				// handlers for the same click; bail when one of
+				// them covers this point so only the winner pops.
+				if (
+					map.queryRenderedFeatures(e.point, {
+						layers: ["listings-circle", "komornik-listings", "3d-building"],
+					}).length > 0
+				) {
+					return;
+				}
+				const props = (
+					e.features?.[0] as unknown as {
+						properties?: {
+							parcelId?: string;
+							obreb?: string | null;
+							gmina?: string | null;
+						};
+					}
+				)?.properties;
+				const pid = props?.parcelId;
+				if (!pid) return;
+				const where =
+					props?.gmina || props?.obreb
+						? `${props.gmina ?? ""}${
+								props.gmina && props.obreb ? " · " : ""
+							}${props.obreb ?? ""}`
+						: null;
+				e.preventDefault();
+				void fetch(`/api/parcels/lookup?parcelId=${encodeURIComponent(pid)}`)
+					.then((r) => r.json())
+					.then((data: ParcelLookup) => {
+						const s = data.parcel?.stats;
+						const area = data.parcel?.area;
+						const meta = data.parcel?.meta;
+						const LAND_LABELS: Record<string, string> = {
+							gruntyRolne: "rolna",
+							gruntyZabudowaneIZurbanizowane: "budowlana/zurbanizowana",
+							gruntyLesne: "leśna",
+							terenyKomunikacyjne: "komunikacyjna",
+							inne: "inna",
+						};
+						const landLabel =
+							meta?.landUse != null
+								? (LAND_LABELS[meta.landUse] ?? meta.landUse)
+								: null;
+						const areaAr = meta?.areaHa != null ? meta.areaHa * 100 : null;
+						const unitLabel = area?.unit === "ar" ? "zł/ar" : "zł/m²";
+						const fmtU = (n: number | null | undefined) =>
+							n == null
+								? "—"
+								: `${Math.round(n * (area?.unit === "ar" ? 100 : 1)).toLocaleString("pl-PL")} ${unitLabel}`;
+						const rows = (s?.recent ?? [])
+							.map(
+								(r) =>
+									`<tr><td>${r.date}</td><td>${Math.round(
+										r.price,
+									).toLocaleString("pl-PL")} zł</td><td>${fmtU(
+										r.pricePerM2,
+									)}</td><td>${r.areaM2 ?? "?"} m²${
+										r.street ? ` · ${r.street} ${r.streetNumber ?? ""}` : ""
+									}</td></tr>`,
+							)
+							.join("");
+						const isAr = area?.unit === "ar";
+						const areaHtml = area?.medianM2
+							? `<div class="mt-1 border-t pt-1 text-xs">
+									<div class="text-gray-500">Otoczenie (1 km, 5 lat): mediana <b>${(area.unit === "ar" ? Math.round(area.medianM2) : Math.round(area.medianM2 * 10) / 10).toLocaleString("pl-PL")} ${area.unit === "ar" ? "zł/ar" : "zł/m²"}</b> · ${area.txCount} transakcji (${area.txCount24m} w 24 mies.)</div>
+									${area.lastVsMedianPct != null ? `<div class="${area.lastVsMedianPct <= -15 ? "text-emerald-600" : area.lastVsMedianPct >= 15 ? "text-red-600" : "text-gray-600"}">Ostatnia transakcja: <b>${area.lastVsMedianPct > 0 ? "+" : ""}${area.lastVsMedianPct}%</b> vs mediana okolicy</div>` : ""}
+								</div>`
+							: "";
+						const html = `<div class="min-w-56 p-1 text-sm">
+							<div class="font-medium">Działka ${pid}</div>
+							${where ? `<div class="text-xs text-gray-500">${escapeHtml(where)}</div>` : ""}
+							${landLabel || areaAr != null ? `<div class="text-xs text-gray-600">${landLabel ? `działka ${landLabel}` : ""}${landLabel && areaAr != null ? " · " : ""}${areaAr != null ? `${areaAr.toLocaleString("pl-PL")} ar` : ""}</div>` : ""}
+							${
+								s && s.txCount > 0
+									? `<div class="mt-1">${s.txCount} transakcji RCN · średnio ${fmtU(
+											s.avgPricePerM2,
+										)}</div>
+									<div class="text-gray-500">zakres ${fmtU(
+										s.minPricePerM2,
+									)} – ${fmtU(s.maxPricePerM2)}</div>
+									${
+										rows
+											? `<table class="mt-2 w-full text-xs"><thead><tr class="text-left text-gray-500"><th>data</th><th>cena</th><th>${unitLabel}</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+											: ""
+									}`
+									: `<div class="mt-1 text-gray-500">Brak transakcji RCN na tej działce.</div>`
+							}
+							${areaHtml}
+							${
+								area && area.basedOn.length > 0
+									? `<div class="mt-1 text-xs text-gray-500">na podstawie ${area.basedOn.length} transakcji w okolicy:</div><table class="w-full text-xs"><tbody>${area.basedOn
+											.map(
+												(b) =>
+													`<tr><td>${b.date}</td><td class="text-right">${Math.round(b.price).toLocaleString("pl-PL")} zł</td><td class="text-right">${isAr ? `${Math.round(b.perUnit).toLocaleString("pl-PL")} zł/ar` : `${Math.round(b.perUnit)} zł/m²`}</td></tr>`,
+											)
+											.join("")}</tbody></table>`
+									: ""
+							}
+						</div>`;
+						popupRef.current?.remove();
+						const popup = new mapboxgl.Popup({
+							offset: 10,
+							closeButton: false,
+							maxWidth: "320px",
+						})
+							.setLngLat(e.lngLat)
+							.setHTML(html)
+							.addTo(map);
+						popupRef.current = popup;
+					})
+					.catch(() => {});
+			});
+			map.on("mouseenter", "parcel-fill", () => {
+				map.getCanvas().style.cursor = "pointer";
+			});
+			map.on("mouseleave", "parcel-fill", () => {
+				map.getCanvas().style.cursor = "";
+			});
 			interface OfferValuation {
 				offer: { id: number; price: number | null; pricePerM2: number | null };
 				comps: {
@@ -1313,6 +1484,36 @@ function MapCanvas({ listings }: { listings: ApiListing[] }) {
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
+
+	// "Granice działek" toggle: hide/show at once, and refresh when switched
+	// on (the layer is zoom-gated, so turning it on while zoomed out simply
+	// keeps it hidden until the camera is close enough).
+	useEffect(() => {
+		showParcelsRef.current = showParcels;
+		syncParcelsRef.current?.();
+	}, [showParcels]);
+
+	// Occupancy heatmap: keep the ref in sync and push new data into the source.
+	useEffect(() => {
+		showOccupancyRef.current = showOccupancy;
+		occupancyRef.current = occupancy;
+		const map = mapRef.current;
+		if (!map) return;
+		const layer = map.getLayer("occupancy-heat");
+		if (layer) {
+			map.setLayoutProperty(
+				"occupancy-heat",
+				"visibility",
+				showOccupancy ? "visible" : "none",
+			);
+		}
+		const src = map.getSource("occupancy") as
+			| mapboxgl.GeoJSONSource
+			| undefined;
+		if (src && "setData" in src) {
+			src.setData(occupancyToGeoJson(occupancy));
+		}
+	}, [showOccupancy, occupancy]);
 
 	// Push updated listings into the source whenever the filter changes.
 	// setData is safe even while the style is still streaming, so apply it
