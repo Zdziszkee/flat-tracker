@@ -136,9 +136,10 @@ export interface PlaywrightAdapter extends AdapterBase {
 }
 
 /**
- * A Playwright adapter that needs a custom browser launcher (anti-detect
- * browsers Crawlee cannot accept). The crawler detects this capability
- * instead of hard-coding adapter ids.
+ * A Playwright adapter that brings its own browser instead of letting
+ * Crawlee start chromium: every anti-detect/WAF source (booking,
+ * licytacje-komornik) launches camoufox through `browser.ts`. The crawler
+ * detects the capability rather than hard-coding adapter ids.
  */
 export interface CustomLaunchAdapter extends PlaywrightAdapter {
 	/** Launches the browser used for this adapter's crawl. Caller closes it. */

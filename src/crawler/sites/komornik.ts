@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 
-import type { Listing, PlaywrightAdapter } from "../types.ts";
+import { launchBrowser } from "../browser.ts";
+import type { CustomLaunchAdapter, Listing } from "../types.ts";
 
 /**
  * Licytacje komornicze (Krajowa Rada Komornicza) — court auction notices
@@ -16,7 +17,7 @@ import type { Listing, PlaywrightAdapter } from "../types.ts";
  * fullTextFilters city match; pagination is `offset` (20/page). Items
  * include the starting price (cena wywołania), auction window, notice
  * creation date and address. Coordinates are usually (0,0) — leave null
- * and let `npm run geocode-addresses` anchor them via the OSM index.
+ * and let `bun run geocode-addresses` anchor them via the OSM index.
  *
  * Every REAL_ESTATE notice is kept (flats, houses, plots, garages and
  * "inne"/other), so the crawler mirrors the whole Małopolska search feed.
@@ -51,10 +52,13 @@ interface KomornikPage {
 	items?: KomornikItem[];
 }
 
-export const komornikAdapter: PlaywrightAdapter = {
+export const komornikAdapter: CustomLaunchAdapter = {
 	id: "licytacje-komornik",
 	name: "Licytacje komornicze · Małopolska (nieruchomości)",
 	kind: "playwright",
+	// WAF-protected: run it on the camoufox browser like Booking rather than
+	// Crawlee's own (Playwright chromium) launcher.
+	launchBrowser: () => launchBrowser(),
 	startUrls: [SEARCH_URL],
 	maxRequestsPerCrawl: 3,
 	listingSelector: "a.auction",

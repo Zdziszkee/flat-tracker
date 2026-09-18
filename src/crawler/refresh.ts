@@ -6,7 +6,7 @@ import { Effect } from "effect";
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
 import { enrichAirbnbDetails } from "./airbnb-enrich.ts";
-import { warnIfBrowserSourcesUnavailable } from "./browser-check.ts";
+import { warnIfNoBrowser } from "./browser.ts";
 import { pruneOldListings, recordCrawlRun } from "./db-sink.ts";
 import { geocodeUnlocatedListings } from "./geocode-listings.ts";
 import { importRcn } from "./import-rcn.ts";
@@ -75,6 +75,23 @@ export interface RefreshSummary {
 	elapsedSeconds: number;
 }
 
+/**
+ * One log line for a failed crawl. Effect wraps adapter errors in a
+ * FiberFailure whose own message is just "An error has occurred"; the
+ * actionable text (Playwright, WAF, HTTP) sits in the cause chain, which
+ * used to be dumped as ~50 lines of stack into the dev server log. The same
+ * one-liner is stored in `crawl_runs.error` and shown by /sources; set
+ * CRAWL_DEBUG=1 for the untruncated error.
+ */
+function causeLine(err: unknown): string {
+	let cur: unknown = err;
+	for (let i = 0; i < 5 && cur instanceof Error && cur.cause; i++) {
+		cur = cur.cause;
+	}
+	const message = cur instanceof Error ? cur.message : String(cur);
+	return message.split("\n").find((line) => line.trim()) ?? message;
+}
+
 type CrawlState = Record<string, string>;
 
 async function readState(): Promise<CrawlState> {
@@ -128,9 +145,9 @@ export async function refreshAll(
 		"rcn-import",
 		"building-assign",
 	]);
-	// Fresh clone: the npm package ships without browser binaries, so
+	// Fresh clone: browser binaries are a separate download, so the
 	// browser-rendered portals would fail with a stack trace each.
-	await warnIfBrowserSourcesUnavailable(
+	await warnIfNoBrowser(
 		siteAdapters.filter((a) => a.kind === "playwright").map((a) => a.id),
 	);
 
@@ -212,7 +229,9 @@ export async function refreshAll(
 					elapsedSeconds: report.elapsedSeconds,
 				};
 			} catch (err) {
-				console.error(`[refresh] crawl of "${adapter.id}" failed:`, err);
+				const error = causeLine(err);
+				console.error(`[refresh] crawl of "${adapter.id}" failed: ${error}`);
+				if (process.env.CRAWL_DEBUG === "1") console.error(err);
 				await recordCrawlRun({
 					source: adapter.id,
 					startedAt: new Date(taskStarted),
@@ -220,12 +239,12 @@ export async function refreshAll(
 					pages: 0,
 					newCount: 0,
 					updatedCount: 0,
-					error: String(err),
+					error,
 				});
 				setSourceProgress(base.id, {
 					state: "failed",
 					finishedAt: new Date().toISOString(),
-					error: String(err),
+					error,
 				});
 				return {
 					site: adapter.id,
@@ -234,7 +253,7 @@ export async function refreshAll(
 					updatedListings: 0,
 					pages: 0,
 					elapsedSeconds: 0,
-					error: String(err),
+					error,
 				};
 			}
 		});
@@ -251,6 +270,7 @@ export async function refreshAll(
 				try {
 					sites[i] = await tasks[i]();
 				} catch (err) {
+					const error = causeLine(err);
 					sites[i] = {
 						site: siteAdapters[i]?.id ?? "unknown",
 						ok: false,
@@ -258,12 +278,12 @@ export async function refreshAll(
 						updatedListings: 0,
 						pages: 0,
 						elapsedSeconds: 0,
-						error: String(err),
+						error,
 					};
 					setSourceProgress(sites[i].site, {
 						state: "failed",
 						finishedAt: new Date().toISOString(),
-						error: String(err),
+						error,
 					});
 				}
 			}

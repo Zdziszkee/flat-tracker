@@ -1,6 +1,6 @@
 import type { Page, Response } from "playwright";
 
-import { bookingLauncherFactory } from "../camoufox-launch.ts";
+import { launchBrowser } from "../browser.ts";
 import type { CustomLaunchAdapter, Listing } from "../types.ts";
 
 /**
@@ -231,7 +231,7 @@ export const bookingAdapter: CustomLaunchAdapter = {
 	id: "booking",
 	name: "Booking - Małopolska short-term rentals",
 	kind: "playwright",
-	launchBrowser: () => bookingLauncherFactory(true),
+	launchBrowser: () => launchBrowser(),
 	// crawler.ts goto()s this once and hands the loaded page to
 	// extractListings — the region probe reuses that navigation.
 	startUrls: [regionSearchUrl()],

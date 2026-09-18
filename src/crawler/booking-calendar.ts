@@ -3,7 +3,7 @@ import "dotenv/config";
 import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
-import { bookingLauncherFactory } from "./camoufox-launch.ts";
+import { launchBrowser } from "./browser.ts";
 import {
 	foldMonthlyPrices,
 	saveAvailabilityObservations,
@@ -110,7 +110,7 @@ export async function main(): Promise<void> {
 	`);
 	console.log(`booking-calendar: ${rows.length} listings in rotation`);
 
-	const browser = await bookingLauncherFactory(true);
+	const browser = await launchBrowser();
 	let observations = 0;
 	let successes = 0;
 	try {

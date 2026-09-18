@@ -22,9 +22,10 @@ export interface CrawlResult {
  * Run a crawl for a site adapter. Uses a real browser for JS-rendered
  * sites and plain HTTP + Cheerio for static ones, with the same output.
  *
- * Adapters carrying a `launchBrowser` capability (anti-detect browsers
- * Crawlee cannot accept, e.g. Booking behind DataDome) are launched
- * directly by their own launcher instead of through Crawlee.
+ * Adapters carrying a `launchBrowser` capability (WAF/anti-detect sources
+ * such as Booking behind DataDome and licytacje.komornik.pl) launch their
+ * own camoufox browser instead of letting Crawlee start chromium; the
+ * resulting page is handed to `extractListings`.
  */
 export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 	const listings: Listing[] = [];
