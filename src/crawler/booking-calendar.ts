@@ -15,21 +15,36 @@ import { foldOccupancy } from "./occupancy.ts";
  * Booking.com availability/price calendar importer.
  *
  * For each active listing, open the property page with a 7-night stay pinned
- * to the 1st of each of the next 12 months and read the payable total. The
+ * to the 1st of each of the next N months and read the payable total. The
  * whole 7-night window is expanded into day-by-day `calendar` observations so
  * the occupancy classifier can detect booked vs blocked runs. A separate
  * `7_nights_2_adults` observation per window is kept for price-config
  * analytics.
  *
+ * Env tuning (all optional):
+ *   - BOOKING_CALENDAR_MONTHS: how many month-starts to probe (default 6, max 12)
+ *   - BOOKING_CALENDAR_DELAY_MS: pause between listings (default 250 ms)
+ *
+ * A circuit breaker aborts the run after 30 consecutive failures to avoid
+ * hammering Booking when rate-limited.
+ *
  * Cadence: the "booking-calendar" task runs it daily at 03:30 (right
- * after the Airbnb calendar pass) and walks ALL active listings —
- * ~1.7k x 12 loads per night; rate limiting is accepted as an experiment
- * (tune with BOOKING_CALENDAR_DELAY_MS).
+ * after the Airbnb calendar pass) and walks ALL active listings.
  */
 
-const MONTHS = 12;
+/**
+ * Number of monthly 7-night probes per listing. Default 6 keeps the daily run
+ * polite (~1.7k listings × 6 loads ≈ 10k requests). Raise with care: 12
+ * doubles request volume and the chance of hitting Booking rate limits.
+ */
+const MONTHS = Math.min(
+	12,
+	Math.max(1, Number(process.env.BOOKING_CALENDAR_MONTHS ?? 6)),
+);
 /** Politeness pause between listings (ms). */
 const LISTING_DELAY_MS = Number(process.env.BOOKING_CALENDAR_DELAY_MS ?? 250);
+/** Abort the run after this many consecutive failures (likely rate-limited). */
+const FAILURE_BREAK = 30;
 
 function propertyUrl(externalId: string, start: string, end: string): string {
 	return (
@@ -124,6 +139,8 @@ export async function main(): Promise<void> {
 	const browser = await launchBrowser();
 	let observations = 0;
 	let successes = 0;
+	let failures = 0;
+	let lastError = "";
 	try {
 		const page = await browser.newPage();
 		const now = new Date();
@@ -147,12 +164,16 @@ export async function main(): Promise<void> {
 						waitUntil: "domcontentloaded",
 						timeout: 45_000,
 					})
-					.catch(() => {});
+					.catch((err) => {
+						lastError = String(err).slice(0, 120);
+					});
 				await page
 					.waitForSelector('[data-testid="property-section--content"]', {
 						timeout: 15_000,
 					})
-					.catch(() => {});
+					.catch((err) => {
+						lastError = String(err).slice(0, 120);
+					});
 				const total = await scrapeStayTotal(page);
 				const nightly = total != null ? total / 7 : null;
 				const available = total != null;
@@ -193,10 +214,22 @@ export async function main(): Promise<void> {
 
 			await saveAvailabilityObservations(obs);
 			observations += obs.length;
-			if (obs.some((o) => o.available)) successes++;
+			if (obs.some((o) => o.available)) {
+				successes++;
+				failures = 0;
+			} else {
+				failures++;
+			}
+			if (failures >= FAILURE_BREAK) {
+				console.error(
+					`booking-calendar: ${FAILURE_BREAK} consecutive failures — ` +
+						`aborting run (likely rate-limited). Last: ${lastError}`,
+				);
+				break;
+			}
 			if ((i + 1) % 25 === 0 || i === rows.length - 1) {
 				console.log(
-					`booking-calendar ${i + 1}/${rows.length}: obs=${observations} reachable=${successes}`,
+					`booking-calendar ${i + 1}/${rows.length}: obs=${observations} reachable=${successes} failures=${failures}`,
 				);
 			}
 			if (LISTING_DELAY_MS > 0) {
