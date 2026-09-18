@@ -7,8 +7,8 @@
  * `src/routes/api/powiat-map.ts` imported a file that no clone had. This
  * script makes the dataset reproducible.
  *
- *   npm run build:powiats            # use the cached Overpass response
- *   npm run build:powiats -- --refresh
+ *   bun run build:powiats            # use the cached Overpass response
+ *   bun run build:powiats -- --refresh
  *
  * Steps: fetch every admin_level=6 relation inside the małopolska
  * voivodeship from Overpass (cached under data/powiats/), stitch the
@@ -244,8 +244,8 @@ async function main(): Promise<void> {
  * into the powiat around them.
  *
  * GENERATED FILE — do not edit by hand. Regenerate with:
- *   npm run build:powiats            # cached Overpass response
- *   npm run build:powiats -- --refresh
+ *   bun run build:powiats            # cached Overpass response
+ *   bun run build:powiats -- --refresh
  *
  * Source: OpenStreetMap via Overpass API, © OpenStreetMap contributors (ODbL).
  * Rings are simplified (Douglas-Peucker, ~${Math.round(TOLERANCE * 111_000)} m) and rounded to 4 decimals.

@@ -1,7 +1,7 @@
 /**
  * CLI wrapper around the shared Airbnb enrichment module.
  *
- * Usage: npx tsx scripts/enrich-airbnb.ts [budget]   (default 3000)
+ * Usage: bunx tsx scripts/enrich-airbnb.ts [budget]   (default 3000)
  */
 import "dotenv/config";
 

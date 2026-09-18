@@ -35,7 +35,7 @@ if (databasePath !== ":memory:") {
 export const sqlite = new Database(databasePath);
 
 // Fresh clone bootstrap: create the schema from `drizzle/` migrations on
-// first use, so `npm install && npm run dev` works with no DB and no
+// first use, so `bun install && bun run dev` works with no DB and no
 // `.env.local`. Re-runs are no-ops.
 const migration = autoMigrate(sqlite);
 

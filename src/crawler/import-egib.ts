@@ -22,7 +22,7 @@
  * it stopped. Re-runs are also harmless thanks to INSERT OR IGNORE.
  *
  * Run with Node via tsx (better-sqlite3 does not work under Bun):
- *   npm run import:egib [-- --tiles=12]   # smoke-test the first N tiles
+ *   bun run import:egib [-- --tiles=12]   # smoke-test the first N tiles
  */
 
 import "dotenv/config";

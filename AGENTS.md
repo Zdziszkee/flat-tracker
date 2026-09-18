@@ -18,24 +18,41 @@ OpenStreetMap building.
   `maxBounds` only. Token: `VITE_MAPBOX_TOKEN` in `.env.local` (public
   `pk.` token — restrict it to the app domain in the Mapbox dashboard).
   Free tier: 50k map loads/month.
-- **Runtime note**: `better-sqlite3` does NOT work under Bun. All DB-touching
-  scripts must run with **Node via tsx** (`npm run ...`), never `bun run ...`.
+- **Runtime note**: `better-sqlite3` crashes under Bun's own runtime
+  (verified on Bun 1.4.0), so a TS entry point must never be executed *by*
+  bun (`bun src/crawler/...`, `bun file.ts`). Run it through tsx, which the
+  package scripts already do (`bun run assign-buildings`).
+
+## Toolchain: bun first
+
+Use **bun** for everything it can do: `bun install` (the lockfile is
+`bun.lock`), `bunx <tool>` instead of `npx <tool>`, and `bun run <script>` to
+run package scripts — including scripts that open SQLite, because
+`bun run assign-buildings` executes `tsx` (Node) rather than the file itself.
+The single exception is above: never hand a DB-touching entry point straight
+to bun's runtime. `bun run dev` is fine — Vite/Nitro run under Node either way.
+
+Do not write `npx` anywhere (docs, comments, log messages). Where a tool has
+to come from the project's own dependency tree, name its bin explicitly, e.g.
+`bunx camoufox-js fetch` (the registry package `camoufox` is a different,
+unrelated package).
 
 ## Commands
 
 ```bash
-npm run dev               # start dev server (vite, port 3000); kicks off a background
+bun install               # dependencies (bun.lock is the lockfile)
+bun run dev               # start dev server (vite, port 3000); kicks off a background
                           # data refresh on boot (see `server/plugins/refresh-on-start.ts`)
-npm run db:generate       # new migration from schema changes
-npm run db:migrate        # apply migrations
-npm run assign-buildings  # match listings/transactions to OSM buildings
-npm run geocode-addresses # geocode listings that carry only an address
-npm run build:powiats     # regenerate src/data/malopolska-powiats.ts (Overpass)
+bun run db:generate       # new migration from schema changes
+bun run db:migrate        # apply migrations
+bun run assign-buildings  # match listings/transactions to OSM buildings
+bun run geocode-addresses # geocode listings that carry only an address
+bun run build:powiats     # regenerate src/data/malopolska-powiats.ts (Overpass)
 ```
 
 ### Fresh clone: zero-setup bootstrap
 
-`npm install && npm run dev` must work on a clone with no `.env.local` and no
+`bun install && bun run dev` must work on a clone with no `.env.local` and no
 database:
 
 - `src/db/index.ts` defaults `DATABASE_URL` to `./dev.db` (empty value in
@@ -61,10 +78,18 @@ load and *every* page 500'd. Never un-anchor those rules, and keep route-level
 imports of optional datasets lazy (`await import()`) so a missing data file
 degrades one endpoint instead of the whole app.
 
-Optional dependencies that are not part of `npm install` (their absence must
-stay non-fatal, and is reported once by `src/crawler/browser-check.ts`):
-`npx playwright install chromium` for booking/komornik, `npx camoufox fetch`
-for Booking's DataDome.
+Browser binaries are a separate download and their absence must stay
+non-fatal (reported once per refresh by `src/crawler/browser.ts`). Every
+JS-rendered source — booking, licytacje-komornik, and the booking/airbnb
+calendar tasks — goes through that one module, which prefers **camoufox**
+(`bunx camoufox-js fetch`, ~660 MB, the anti-detect Firefox that also gets
+past Booking's DataDome) and falls back to Playwright chromium only if it is
+installed (`bunx playwright install chromium`). Camoufox is a Playwright
+driver (playwright-core launches its Firefox build), so the library stays;
+what is optional is Playwright's *browser download*. `camoufox-js` is a
+runtime dependency for that reason. Adapters that need a browser declare
+`launchBrowser` (`CustomLaunchAdapter`), which `crawler.ts` calls instead of
+letting Crawlee launch chromium.
 
 Crawling is triggered from the UI, not the terminal: the **/sources** page
 ("Refresh now" → `POST /api/refresh`) runs the same `refreshAll()` as the
@@ -152,7 +177,7 @@ history is pruned to the 7-day cap. Dev-start runs are also first-page-only.
   changed, only rows that are actually NEW are inserted
   (`INSERT OR IGNORE ... RETURNING`), so each run imports exactly the
   diff the registry added.
-  Run `npm run assign-buildings` after an RCN refresh to anchor the new
+  Run `bun run assign-buildings` after an RCN refresh to anchor the new
   transactions.
 - The crawler paces requests (3 concurrent, ~350 ms delay) and retries
   403s with backoff to stay under portal throttling. Note: Crawlee swaps
@@ -168,7 +193,7 @@ The index covers **all of małopolska** (not just Kraków), so region-wide
 sources (booking, airbnb: Zakopane, Oświęcim, ...) anchor too.
 Point-in-polygon matching then runs in-memory via RBush — the public
 Overpass API is far too rate-limited for the ~84k RCN transactions. The
-index is rebuilt automatically when missing; `npm run assign-buildings`
+index is rebuilt automatically when missing; `bun run assign-buildings`
 assigns all 84k transactions in minutes, not hours.
 
 ## Data sources
@@ -185,7 +210,7 @@ assigns all 84k transactions in minutes, not hours.
 | investmap.pl | **Every registered Krakow investment with its flats** (incl. small private ones) | Public JSON API `GET /api/investment/search?withEstates=1&categorySlug=mieszkania&citySlug=krakow&offset=N` — flats inline (`es[].list`): area, price, price_m2, floor, rooms; coordinates from the investment |
 | licytacje.komornik.pl | Court auction notices (Małopolska real estate, all subcategories) | Playwright only (WAF blocks non-browser TLS); anonymous JSON API `POST /services/item-back/rest/item/search` (same-origin, `termFilters` + `fullTextFilters` city, `offset` pagination); every REAL_ESTATE subcategory kept |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
-| GUGiK RCN (Usługa Transakcje) | Same, but ALL other małopolska powiaty (per-powiat GeoPackages; parcel/building/lokal transactions) | `https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip` — imported by `import-rcn-gugik.ts` (`npm run import:rcn-gugik`) |
+| GUGiK RCN (Usługa Transakcje) | Same, but ALL other małopolska powiaty (per-powiat GeoPackages; parcel/building/lokal transactions) | `https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip` — imported by `import-rcn-gugik.ts` (`bun run import:rcn-gugik`) |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
 
 ### RCN GML structure (import-rcn.ts)
@@ -314,7 +339,7 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   changes.
 - The RCN importer skips the download when `RCN_GML_PATH` points at an
   already-extracted file (handy for testing with a partial slice).
-- `src/data/malopolska-powiats.ts` is generated (`npm run build:powiats`,
+- `src/data/malopolska-powiats.ts` is generated (`bun run build:powiats`,
   cached Overpass response in `data/powiats/`): one closed ring per entry,
   outer boundaries first then holes, matched with an **even-odd** rule so
   Tarnów/Nowy Sącz are not double-counted into the powiat around them.

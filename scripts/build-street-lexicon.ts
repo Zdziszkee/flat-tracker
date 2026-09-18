@@ -4,7 +4,7 @@
  * TS module used by the address parser to normalize declined street forms
  * (e.g. "Karmelickiej" -> "Karmelicka").
  *
- * Usage: npm run tsx scripts/build-street-lexicon.ts [path-to-pdf]
+ * Usage: bunx tsx scripts/build-street-lexicon.ts [path-to-pdf]
  * With no path it downloads the PDF from the KAS site into $JCODE_SCRATCH_DIR.
  */
 import { execFile } from "node:child_process";

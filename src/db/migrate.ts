@@ -67,7 +67,7 @@ export function autoMigrate(sqlite: Database.Database): MigrateResult {
 	const dir = resolveMigrationsFolder();
 	if (!dir) {
 		console.warn(
-			"[db] no drizzle/ migration folder found; skipping auto-migrate (run `npm run db:migrate`)",
+			"[db] no drizzle/ migration folder found; skipping auto-migrate (run `bun run db:migrate`)",
 		);
 		return { created: false, applied: 0 };
 	}
@@ -79,7 +79,7 @@ export function autoMigrate(sqlite: Database.Database): MigrateResult {
 		console.warn(
 			"[db] database has tables but no drizzle migration journal " +
 				"(created by db:push?); skipping auto-migrate. " +
-				"Use `npm run db:push` for schema changes, or delete the DB to rebuild from migrations.",
+				"Use `bun run db:push` for schema changes, or delete the DB to rebuild from migrations.",
 		);
 		return { created, applied: 0 };
 	}

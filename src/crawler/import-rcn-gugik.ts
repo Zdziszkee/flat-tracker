@@ -23,7 +23,7 @@
  * so re-imports are harmless diffs.
  *
  * Run daily via the refresh pipeline, or manually:
- *   npx tsx src/crawler/import-rcn-gugik.ts [--force]
+ *   bunx tsx src/crawler/import-rcn-gugik.ts [--force]
  */
 
 import "dotenv/config";
@@ -480,7 +480,7 @@ export async function importRcnGugik(): Promise<number> {
 	return totalNew;
 }
 
-// CLI: npx tsx src/crawler/import-rcn-gugik.ts [--force]
+// CLI: bunx tsx src/crawler/import-rcn-gugik.ts [--force]
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("import-rcn-gugik.ts")) {
 	importRcnGugik()
 		.then((n) => {

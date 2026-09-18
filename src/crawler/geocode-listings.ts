@@ -29,7 +29,7 @@ import {
  *    validated to Małopolska, per-address result cache).
  *
  * `nominatimLimit` bounds external calls for the hourly refresh; the CLI
- * (`npm run geocode-addresses`) passes no limit to drain the backlog.
+ * (`bun run geocode-addresses`) passes no limit to drain the backlog.
  */
 
 const PHOTON = "https://photon.komoot.io/api/";
@@ -264,7 +264,7 @@ export async function geocodeUnlocatedListings(
 		/**
 		 * Drop stored coordinates first for these source ids so the whole
 		 * address-only feed is re-anchored with the current matcher. Used by
-		 * `npm run geocode-addresses -- --reset` to repair stale/wrong pins.
+		 * `bun run geocode-addresses -- --reset` to repair stale/wrong pins.
 		 */
 		resetSources?: string[];
 	} = {},

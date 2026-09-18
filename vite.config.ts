@@ -69,8 +69,9 @@ const config = defineConfig({
 						"Import Booking.com availability calendars and fold occupancy stats",
 				},
 			},
-			// Hourly data refresh (same program as `npm run crawl:all`, which
-			// does an incremental RCN diff check before any 2 GB download).
+			// Hourly data refresh: the same refreshAll() the /sources page and
+			// the dev boot use, including the incremental RCN diff check that
+			// skips the 2 GB download when the registry is unchanged.
 			scheduledTasks: {
 				"0 * * * *": "refresh",
 				"0 3 * * *": "airbnb-calendar",

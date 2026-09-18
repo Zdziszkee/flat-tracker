@@ -26,7 +26,7 @@ import {
  * street + housenumber among the building's transactions) when the
  * building has no OSM address.
  *
- * Usage: npm run assign-buildings
+ * Usage: bun run assign-buildings
  */
 export async function assignBuildings(): Promise<{
 	listings: number;
@@ -48,7 +48,7 @@ export async function assignBuildings(): Promise<{
 	return { listings, transactions, addressBackfilled };
 }
 
-/** CLI alias kept for `npm run assign-buildings`. */
+/** CLI alias kept for `bun run assign-buildings`. */
 async function main() {
 	await assignBuildings();
 }

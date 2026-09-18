@@ -10,8 +10,8 @@
  * into the powiat around them.
  *
  * GENERATED FILE — do not edit by hand. Regenerate with:
- *   npm run build:powiats            # cached Overpass response
- *   npm run build:powiats -- --refresh
+ *   bun run build:powiats            # cached Overpass response
+ *   bun run build:powiats -- --refresh
  *
  * Source: OpenStreetMap via Overpass API, © OpenStreetMap contributors (ODbL).
  * Rings are simplified (Douglas-Peucker, ~89 m) and rounded to 4 decimals.

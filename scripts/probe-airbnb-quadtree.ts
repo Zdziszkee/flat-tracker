@@ -4,7 +4,7 @@
  * tile whose cursor chain saturates (15 cursors + full last page), counting
  * unique listings reachable. Mirrors the intended adapter logic.
  *
- * Usage: npx tsx scripts/probe-airbnb-quadtree.ts [col,row] [maxRequests]
+ * Usage: bunx tsx scripts/probe-airbnb-quadtree.ts [col,row] [maxRequests]
  */
 const COLS = 6;
 const ROWS = 6;

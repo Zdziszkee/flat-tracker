@@ -776,7 +776,7 @@ async function insertParcels(
 	return inserted.length;
 }
 
-/** CLI entry: RCN_FORCE_PARSE=1 npx tsx src/crawler/import-rcn.ts */
+/** CLI entry: RCN_FORCE_PARSE=1 bunx tsx src/crawler/import-rcn.ts */
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("import-rcn.ts")) {
 	importRcn(process.argv.includes("--force")).catch((err) => {
 		console.error(err);

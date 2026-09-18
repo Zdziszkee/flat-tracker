@@ -5,7 +5,7 @@
  * Coverage grows run over run via the persistent tile frontier in
  * data/crawler/airbnb-quadtree.json; saturated tiles split automatically.
  *
- * Usage: AIRBNB_MAX_REQUESTS=4000 npx tsx scripts/drain-airbnb.ts [budget]
+ * Usage: AIRBNB_MAX_REQUESTS=4000 bunx tsx scripts/drain-airbnb.ts [budget]
  */
 import "dotenv/config";
 

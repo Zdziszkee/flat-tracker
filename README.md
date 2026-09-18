@@ -8,14 +8,14 @@ OpenStreetMap building.
 ## Quick start
 
 ```bash
-npm install
-npm run dev                 # web app at http://localhost:3000
+bun install
+bun run dev                 # web app at http://localhost:3000
 ```
 
 That is the whole setup. No `.env.local`, no manual migration step:
 
 - `dev.db` is created on first use and every migration in `drizzle/` is
-  applied automatically (same for `npm run ...` scripts).
+  applied automatically (same for `bun run ...` scripts).
 - The dev server then kicks off a background crawl of every portal, so the
   database fills up on its own; the hourly scheduled task keeps it current
   (`/sources` shows progress and has a "Refresh now" button).
@@ -32,9 +32,12 @@ says the token is missing, everything else works.
 Optional, for the browser-rendered portals (booking.com, licytacje.komornik.pl):
 
 ```bash
-npx playwright install chromium   # browser binaries are not part of npm install
-npx camoufox fetch                # anti-detect browser for Booking.com's DataDome
+bunx camoufox-js fetch   # ~660 MB anti-detect Firefox; also what gets past Booking's DataDome
 ```
+
+`bunx playwright install chromium` works as a lighter fallback browser (the
+rendered sources use whichever is present), but camoufox is the one the
+portals are fought with.
 
 Skip it and those two sources just report a failed crawl on `/sources`; every
 other source is unaffected.
@@ -54,11 +57,11 @@ prices) in February 2026. Krakow publishes a GML export:
 `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB)
 
 ```bash
-npm run assign-buildings   # re-anchor listings/transactions onto OSM buildings
+bun run assign-buildings   # re-anchor listings/transactions onto OSM buildings
 ```
 
 The import runs as part of every refresh (`importRcn()` in the pipeline, plus
-the region-wide GUGiK per-powiat packages via `npm run import:rcn-gugik`). It
+the region-wide GUGiK per-powiat packages via `bun run import:rcn-gugik`). It
 only takes sales of apartments (`rodzajTransakcji=1`, `funkcjaLokalu=1`) and
 stores price, price/m², area, rooms, floor, address, date and coordinates.
 Re-runs are idempotent: a HEAD request skips the download when the registry
@@ -69,8 +72,10 @@ hasn't changed.
 TanStack Start (React 19) · Crawlee 3 + Cheerio · SQLite + Drizzle ·
 Effect TS pipeline · OSM/Overpass geocoding · mapbox-gl (3D buildings)
 
-**Note:** `better-sqlite3` does not work under Bun. All DB scripts must run
-with Node via tsx (`npm run ...`), never `bun run ...`.
+**Note:** bun is the toolchain here (`bun install`, `bunx`, `bun run <script>`);
+`npx` is not used. The one hard rule: `better-sqlite3` crashes under bun's own
+runtime, so never execute a DB-touching file *with* bun (`bun src/...`). The
+package scripts go through tsx/Node, so `bun run assign-buildings` is correct.
 
 ## Documentation
 
