@@ -557,6 +557,27 @@ export default function MapView({
 					<span className="inline-block h-2.5 w-2.5 rounded-sm border border-amber-700/50 bg-amber-400/25" />{" "}
 					działka z historią RCN
 				</span>
+				{showOccupancy && (
+					<>
+						<span className="mx-1 h-3 w-px bg-gray-300" />
+						<span className="flex items-center gap-1">
+							<span className="inline-block h-2.5 w-2.5 rounded-sm bg-blue-500" />{" "}
+							niskie
+						</span>
+						<span className="flex items-center gap-1">
+							<span className="inline-block h-2.5 w-2.5 rounded-sm bg-green-500" />{" "}
+							średnie
+						</span>
+						<span className="flex items-center gap-1">
+							<span className="inline-block h-2.5 w-2.5 rounded-sm bg-yellow-500" />{" "}
+							wysokie
+						</span>
+						<span className="flex items-center gap-1">
+							<span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-500" />{" "}
+							bardzo wysokie
+						</span>
+					</>
+				)}
 				<span className="mx-1 h-3 w-px bg-gray-300" />
 				<span className="flex items-center gap-1">
 					<span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />{" "}
@@ -940,6 +961,47 @@ function MapCanvas({
 				},
 			});
 
+			map.on("click", "occupancy-heat", (e) => {
+				const props = (
+					e.features?.[0] as unknown as { properties?: OccupancyCell }
+				)?.properties;
+				if (!props || props.occupancyRate == null) return;
+				popupRef.current?.remove();
+				const popup = new mapboxgl.Popup({
+					offset: 8,
+					closeButton: false,
+					maxWidth: "260px",
+				})
+					.setLngLat(e.lngLat)
+					.setHTML(
+						`<div class="min-w-48 space-y-1 text-sm">
+							<div class="font-semibold">Obłożenie STR</div>
+							<div class="text-gray-500">${props.lat.toFixed(3)}, ${props.lng.toFixed(3)}</div>
+							<div class="flex justify-between gap-3 pt-1">
+								<span>Obłożenie</span>
+								<span class="font-medium">${props.occupancyRate.toFixed(1)}%</span>
+							</div>
+							<div class="flex justify-between gap-3">
+								<span>Ofert w komórce</span>
+								<span class="font-medium">${props.listings}</span>
+							</div>
+							<div class="flex justify-between gap-3">
+								<span>Zarezerwowane noce</span>
+								<span class="font-medium">${props.bookedNights}</span>
+							</div>
+							${props.avgPrice != null ? `<div class="flex justify-between gap-3"><span>Śr. cena/noc</span><span class="font-medium">${Math.round(props.avgPrice).toLocaleString("pl-PL")} zł</span></div>` : ""}
+						</div>`,
+					)
+					.addTo(map);
+				popupRef.current = popup;
+			});
+			map.on("mouseenter", "occupancy-heat", () => {
+				map.getCanvas().style.cursor = "pointer";
+			});
+			map.on("mouseleave", "occupancy-heat", () => {
+				map.getCanvas().style.cursor = "";
+			});
+
 			// Click a 3D building to see its RCN price history.
 			const showBuildingHistory = (e: mapboxgl.MapLayerMouseEvent) => {
 				// If a listing marker is under the cursor, the listing popup wins.
@@ -1042,10 +1104,9 @@ function MapCanvas({
 				id: "parcel-fill",
 				type: "fill",
 				source: "parcels",
-				// `middle` slot so hit-testing priority matches the drawing order
-				// (above basemap fills, below labels). With terrain enabled the
-				// geometry drapes onto the DEM, so clicks track the relief.
-				slot: "middle",
+				// No slot: Mapbox Standard puts slot-free layers above the
+				// basemap, which is where cadastral lines belong (the "middle"
+				// slot buried them under the landcover/building fills).
 				layout: { visibility: "none" },
 				paint: {
 					"fill-color": ["case", ["get", "hasRcn"], "#f59e0b", "#000000"],
@@ -1059,16 +1120,16 @@ function MapCanvas({
 				source: "parcels",
 				layout: { visibility: "none" },
 				paint: {
-					"line-color": "#26303b",
-					"line-width": ["interpolate", ["linear"], ["zoom"], 14, 0.9, 17, 1.6],
+					"line-color": "#1f2937",
+					"line-width": ["interpolate", ["linear"], ["zoom"], 14, 1.5, 17, 2.4],
 					"line-opacity": [
 						"interpolate",
 						["linear"],
 						["zoom"],
 						13.5,
-						0.5,
+						0.7,
 						15,
-						0.85,
+						0.9,
 						17,
 						1,
 					],
@@ -1079,7 +1140,6 @@ function MapCanvas({
 				id: "parcel-labels",
 				type: "symbol",
 				source: "parcels",
-				slot: "middle",
 				minzoom: 15,
 				layout: {
 					visibility: "none",
@@ -1156,7 +1216,10 @@ function MapCanvas({
 					bbox[2] <= parcelBounds[2] &&
 					bbox[3] <= parcelBounds[3];
 				if (!force && covered) {
-					console.log("DBG skip (covered), src feats=", (map.getSource("parcels") as any)?._data?.features?.length);
+					console.log(
+						"DBG skip (covered), src feats=",
+						(map.getSource("parcels") as any)?._data?.features?.length,
+					);
 					setParcelsVisible(true);
 					return;
 				}
@@ -1183,7 +1246,14 @@ function MapCanvas({
 							| mapboxgl.GeoJSONSource
 							| undefined;
 						src?.setData(fc);
-						console.log("DBG setData", fc.features.length, "-> src has", (map.getSource("parcels") as any)?._data?.features?.length, "srcUndefined=", !src);
+						console.log(
+							"DBG setData",
+							fc.features.length,
+							"-> src has",
+							(map.getSource("parcels") as any)?._data?.features?.length,
+							"srcUndefined=",
+							!src,
+						);
 						parcelBounds = bbox;
 						setParcelsVisible(true);
 						document.title = `DBG src=${(map.getSource("parcels") as any)?._data?.features?.length} layers=${JSON.stringify(
