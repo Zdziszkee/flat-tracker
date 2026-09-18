@@ -6,6 +6,7 @@ import { Effect } from "effect";
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
 import { enrichAirbnbDetails } from "./airbnb-enrich.ts";
+import { warnIfBrowserSourcesUnavailable } from "./browser-check.ts";
 import { pruneOldListings, recordCrawlRun } from "./db-sink.ts";
 import { geocodeUnlocatedListings } from "./geocode-listings.ts";
 import { importRcn } from "./import-rcn.ts";
@@ -127,6 +128,11 @@ export async function refreshAll(
 		"rcn-import",
 		"building-assign",
 	]);
+	// Fresh clone: the npm package ships without browser binaries, so
+	// browser-rendered portals would fail with a stack trace each.
+	await warnIfBrowserSourcesUnavailable(
+		siteAdapters.filter((a) => a.kind === "playwright").map((a) => a.id),
+	);
 
 	const sinceDays = opts.sinceDays ?? DEFAULT_SINCE_DAYS;
 	const firstPageOnly = opts.firstPageOnly ?? true;

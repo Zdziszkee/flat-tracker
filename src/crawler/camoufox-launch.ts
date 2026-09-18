@@ -19,20 +19,43 @@ type AppBrowser = import("playwright").Browser;
  * (which still yields the first ~25 cards) when camoufox is unavailable.
  */
 
-let camoufoxAvailable: boolean | null = null;
+/** Resolved once per process: null = not probed yet, false = unusable. */
+let camoufoxOpts: Record<string, unknown> | null | false = null;
 
-async function detectCamoufox(): Promise<boolean> {
-	if (camoufoxAvailable !== null) return camoufoxAvailable;
+/** First line of an error, for one-line logs. */
+function brief(err: unknown): string {
+	const message = err instanceof Error ? err.message : String(err);
+	return message.split("\n")[0];
+}
+
+/**
+ * Cached camoufox launch options, or null when camoufox is not usable
+ * (package or browser binary missing). Probing is cached: without it, a
+ * fresh clone logs a full stack trace for every Booking page.
+ */
+async function getCamoufoxOptions(): Promise<Record<string, unknown> | null> {
+	if (camoufoxOpts === false) return null;
+	if (camoufoxOpts !== null) return camoufoxOpts;
 	try {
-		// Resolving the module is enough to know whether it was installed.
-		// @vite-ignore keeps the dependency optimizer from scanning
-		// camoufox-js (its impit native binary cannot be prebundled).
-		await import(/* @vite-ignore */ "camoufox-js");
-		camoufoxAvailable = true;
-	} catch {
-		camoufoxAvailable = false;
+		// Lazy + @vite-ignore: never let the bundler touch camoufox-js (its
+		// impit native binary cannot be prebundled). `launchOptions` also
+		// resolves the downloaded camoufox build, so a missing browser is
+		// detected here rather than at launch time.
+		const { launchOptions } = await import(/* @vite-ignore */ "camoufox-js");
+		const opts = (await launchOptions({ os: ["linux"] })) as Record<
+			string,
+			unknown
+		>;
+		camoufoxOpts = opts;
+		return opts;
+	} catch (err) {
+		camoufoxOpts = false;
+		console.warn(
+			`[camoufox] unavailable, using plain Playwright chromium: ${brief(err)} ` +
+				"(enable with `npx camoufox fetch`)",
+		);
+		return null;
 	}
-	return camoufoxAvailable;
 }
 
 /**
@@ -42,24 +65,20 @@ async function detectCamoufox(): Promise<boolean> {
 export async function bookingLauncherFactory(
 	headless = true,
 ): Promise<AppBrowser> {
-	const useCamoufox = await detectCamoufox();
-	if (useCamoufox) {
+	const opts = await getCamoufoxOptions();
+	if (opts) {
 		try {
 			// `launchOptions` produces a Playwright Firefox launch config that
 			// points at the downloaded camoufox binary. It injects a `viewport`
 			// object Playwright's launcher schema rejects, so strip it.
-			// Lazy + @vite-ignore: never let the bundler touch camoufox-js.
-			const { launchOptions } = await import(/* @vite-ignore */ "camoufox-js");
-			const opts = await launchOptions({ os: ["linux"] });
-			const { viewport: _omit, ...rest } = opts as Record<string, unknown>;
+			const { viewport: _omit, ...rest } = opts;
 			return (await firefox.launch({
 				...rest,
 				headless,
 			})) as unknown as AppBrowser;
 		} catch (err) {
 			console.warn(
-				"[camoufox] launch failed, falling back to plain Playwright:",
-				err,
+				`[camoufox] launch failed, falling back to plain Playwright chromium: ${brief(err)}`,
 			);
 		}
 	}

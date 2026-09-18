@@ -30,7 +30,41 @@ npm run db:generate       # new migration from schema changes
 npm run db:migrate        # apply migrations
 npm run assign-buildings  # match listings/transactions to OSM buildings
 npm run geocode-addresses # geocode listings that carry only an address
+npm run build:powiats     # regenerate src/data/malopolska-powiats.ts (Overpass)
 ```
+
+### Fresh clone: zero-setup bootstrap
+
+`npm install && npm run dev` must work on a clone with no `.env.local` and no
+database:
+
+- `src/db/index.ts` defaults `DATABASE_URL` to `./dev.db` (empty value in
+  `.env.local` counts as unset) and creates the parent directory if the path
+  has one.
+- The same module auto-applies `drizzle/` migrations on first use
+  (`src/db/migrate.ts`), so every entry point — dev server, Nitro task, tsx
+  scripts — gets a working schema. Re-runs are no-ops via drizzle's
+  `__drizzle_migrations` journal. A DB that has tables but no journal (made
+  with `db:push`) is skipped with a warning instead of failing mid-migration.
+- The dev-start refresh then crawls every portal and fills the DB gradually;
+  reference layers (RCN zip, Geofabrik PBF, GUGiK powiat packages) download
+  into `data/` on first run.
+
+Keep it that way: nothing user-facing may require an `.env.local` or a manual
+migration step to boot.
+
+**`.gitignore` trap:** the crawl-data rules are `/data/` and `/storage/`
+(root-anchored). A bare `data/` also matches `src/data/**`, which silently
+kept `src/data/malopolska-powiats.ts` out of every clone while
+`src/routes/api/powiat-map.ts` imported it — the route tree then failed to
+load and *every* page 500'd. Never un-anchor those rules, and keep route-level
+imports of optional datasets lazy (`await import()`) so a missing data file
+degrades one endpoint instead of the whole app.
+
+Optional dependencies that are not part of `npm install` (their absence must
+stay non-fatal, and is reported once by `src/crawler/browser-check.ts`):
+`npx playwright install chromium` for booking/komornik, `npx camoufox fetch`
+for Booking's DataDome.
 
 Crawling is triggered from the UI, not the terminal: the **/sources** page
 ("Refresh now" → `POST /api/refresh`) runs the same `refreshAll()` as the
@@ -280,6 +314,14 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   changes.
 - The RCN importer skips the download when `RCN_GML_PATH` points at an
   already-extracted file (handy for testing with a partial slice).
+- `src/data/malopolska-powiats.ts` is generated (`npm run build:powiats`,
+  cached Overpass response in `data/powiats/`): one closed ring per entry,
+  outer boundaries first then holes, matched with an **even-odd** rule so
+  Tarnów/Nowy Sącz are not double-counted into the powiat around them.
+  Rings are simplified to ~90 m — enough for point-in-polygon bucketing.
+- DB access goes through `#/db/index` only. It migrates on import, so a new
+  script never needs a manual `db:migrate`; don't open `better-sqlite3`
+  directly (except throwaway tools in `scripts/`).
 - `scripts/` holds throwaway utilities (db-state, overpass-test).
 
 ## Roadmap ideas
