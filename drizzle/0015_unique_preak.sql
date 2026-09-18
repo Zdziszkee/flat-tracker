@@ -1,0 +1,1 @@
+CREATE INDEX `transactions_malopolska_price_idx` ON `transactions` (`pricePerM2`,`date`) WHERE lat between 49.15 and 50.55 and lng between 19.05 and 21.45;

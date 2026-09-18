@@ -194,6 +194,37 @@ under `1261-G/...` ids would double-count Kraków in the building price
 history. Rows outside małopolska keep their registry coordinates but stay
 unbound — the `osm_buildings` index only covers the region.
 
+### Transaction scope: małopolska, explicitly
+
+`transactions` holds the country, but **every screen is regional** —
+listings come from małopolska portals, the map is bounded to Kraków, the
+powiat choropleth uses małopolska boundaries. So a bare
+`FROM transactions` in a route is a bug waiting for the next national
+drain: it silently turns a Kraków chart into a national average, and the
+choropleth would push ~20M out-of-region rows through point-in-polygon on
+every request. Regional queries therefore carry `inMalopolska` from
+`src/db/region.ts` (a coordinate box; every małopolska row with geometry
+is inside it and nothing else is).
+
+Two consequences worth knowing:
+
+- **`MALOPOLSKA_BBOX_SQL` is shared text, not a helper call**: SQLite only
+  matches a partial index when the query predicate and the index predicate
+  are structurally identical, and `transactions_malopolska_price_idx`
+  (schema.ts) is partial on exactly that string. Reusing it keeps
+  `transactions_malopolska_price_idx` in play, which is what makes the
+  chart aggregations independent of how much national data is loaded
+  (measured 1.07 s → 0.10 s at 3.7M rows). After touching either side,
+  check with `explain query plan`.
+- Around 10% of małopolska GUGiK rows carry no geometry (no `lat`/`lng`),
+  so they drop out of region-scoped aggregates. They could never be
+  attributed to a powiat anyway.
+
+`/api/powiat-map` is the slow one (~9 s): it is O(points × powiat
+polygons) over ~1M transactions. That is proportional to małopolska data
+only, not to national load; the honest fix is a grid/rollup, not a bigger
+query.
+
 **Server refreshes fetch only the first, newest-sorted page per site**
 (`firstPageOnly: true`, the default in `refreshAll`): each hourly run
 captures just the offers that appeared on page 1 and skips pagination and

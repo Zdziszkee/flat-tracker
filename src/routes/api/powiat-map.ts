@@ -3,6 +3,7 @@ import { json } from "@tanstack/react-start";
 import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
+import { inMalopolska } from "#/db/region";
 import { listings, transactions } from "#/db/schema";
 
 /**
@@ -224,7 +225,7 @@ export const Route = createFileRoute("/api/powiat-map")({
 					})
 					.from(transactions)
 					.where(
-						sql`${transactions.pricePerM2} is not null and ${transactions.lat} is not null and ${transactions.lng} is not null`,
+						sql`${transactions.pricePerM2} is not null and ${transactions.lat} is not null and ${transactions.lng} is not null and ${inMalopolska}`,
 					)
 					.all();
 				const rcn = new Map<string, { sum: number; n: number }>();

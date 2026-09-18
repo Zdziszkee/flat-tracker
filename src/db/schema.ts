@@ -8,6 +8,8 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
+import { MALOPOLSKA_BBOX_SQL } from "./region.ts";
+
 export const todos = sqliteTable("todos", {
 	id: integer({ mode: "number" }).primaryKey({
 		autoIncrement: true,
@@ -176,6 +178,17 @@ export const transactions = sqliteTable(
 		index("transactions_district_date_idx").on(t.district, t.date),
 		index("transactions_price_m2_date_idx").on(t.pricePerM2, t.date),
 		index("transactions_building_date_idx").on(t.buildingId, t.date),
+		/**
+		 * Partial index over the region the app tracks (`src/db/region.ts`):
+		 * the RCN import is national, so every regional aggregation would
+		 * otherwise scan ~20M out-of-region rows. Partial means the index
+		 * only holds małopolska rows (bounded) and SQLite only uses it for
+		 * queries that carry the identical predicate — see the note there
+		 * before editing this text.
+		 */
+		index("transactions_malopolska_price_idx")
+			.on(t.pricePerM2, t.date)
+			.where(sql.raw(MALOPOLSKA_BBOX_SQL)),
 	],
 );
 

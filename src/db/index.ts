@@ -37,14 +37,22 @@ export const sqlite = new Database(databasePath);
 // The server and the standalone importers (RCN drains, assign-buildings)
 // share one file, so writers meet writers and readers meet writers. WAL
 // keeps readers from queuing behind a bulk import (an RCN drain writes for
-// hours), and busy_timeout makes the remaining writer-vs-writer case wait
-// for the lock instead of failing the batch with SQLITE_BUSY.
-sqlite.pragma("journal_mode = WAL");
-// NORMAL is the usual WAL pairing: commits stop fsyncing the journal on
-// every batch (a crawl/RCN drain commits thousands of them), and a power
-// cut can only cost the most recent commits, never the database.
-sqlite.pragma("synchronous = NORMAL");
-sqlite.pragma("busy_timeout = 10000");
+// hours). busy_timeout comes first: switching the journal mode needs a
+// brief exclusive lock, and it must wait for an in-flight import batch
+// rather than fail. None of these may be fatal — a pragma that loses a
+// race is not a reason to refuse to serve.
+try {
+	sqlite.pragma("busy_timeout = 10000");
+	sqlite.pragma("journal_mode = WAL");
+	// NORMAL is the usual WAL pairing: commits stop fsyncing the journal on
+	// every batch (a crawl/RCN drain commits thousands of them), and a power
+	// cut can only cost the most recent commits, never the database.
+	sqlite.pragma("synchronous = NORMAL");
+} catch (err) {
+	console.warn(
+		`[db] could not apply tuning pragmas (continuing): ${String(err).slice(0, 120)}`,
+	);
+}
 
 // Fresh clone bootstrap: create the schema from `drizzle/` migrations on
 // first use, so `bun install && bun run dev` works with no DB and no
