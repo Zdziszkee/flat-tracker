@@ -307,6 +307,12 @@ Gotchas:
   northing in `EPSG:2180` (`+proj=tmerc +lon_0=21 +k=0.999923 +x_0=7500000`).
   `parsePos` converts with `proj4`; sanity bounds are easting
   7_400_000..7_460_000, northing 5_520_000..5_580_000.
+- **Dates can be registry typos**: GUGiK ships a handful of rows with
+  impossible `dok_data` (year 9202, year 14 — 104 future-dated and 509
+  pre-1990 rows in 4.77M). They are imported as-is (the table mirrors the
+  registry), and every chart filters by date range so they never show up;
+  the building price history does not filter, so a single bogus date there
+  is cosmetic, not broken.
 - **Geometry lives on `RCN_Dzialka`/`RCN_Budynek`**, not on the
   `RCN_Nieruchomosc` (which only carries xlink refs). The importer resolves
   pos via `nieruchomosc -> dzialka|budynek`.
