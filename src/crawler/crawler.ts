@@ -38,7 +38,7 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 	const firstPageOnly =
 		adapter.firstPageOnly === true && !adapter.alwaysFullCrawl;
 	const maxRequestsPerCrawl = firstPageOnly
-		? 1
+		? (adapter.firstPageOnlyRequests ?? 1)
 		: (adapter.maxRequestsPerCrawl ?? 100);
 
 	if (adapter.kind === "playwright") {

@@ -96,6 +96,12 @@ interface AdapterBase {
 	 * entries past the first page are still discovered.
 	 */
 	alwaysFullCrawl?: boolean;
+	/**
+	 * Requests a first-page-only run may spend (default 1 = the first page
+	 * only). Adapters raise it to follow a few detail pages per run — the only
+	 * way to fill detail-only attributes (coordinates, build year) over time.
+	 */
+	firstPageOnlyRequests?: number;
 }
 
 /**

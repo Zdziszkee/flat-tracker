@@ -1,4 +1,36 @@
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
+
+import { db } from "#/db/index";
+import { listings as listingsTable } from "#/db/schema";
 import type { CheerioAdapter, Listing } from "../types.ts";
+
+/**
+ * Detail pages an incremental run may follow. A detail page is the only
+ * source of a flat's coordinates, build year, building material/floors and
+ * condition (db-sink promotes those out of the `features` JSON), and otodom
+ * rate-limits bulk detail crawls — so each run drains a few offers that have
+ * never been enriched, newest first.
+ */
+const DETAIL_BUDGET = 8;
+
+/** Ids whose detail page was already parsed (its `features` are stored). */
+async function enrichedDetailIds(
+	source: string,
+	ids: string[],
+): Promise<Set<string>> {
+	if (ids.length === 0) return new Set();
+	const rows = await db
+		.select({ externalId: listingsTable.externalId })
+		.from(listingsTable)
+		.where(
+			and(
+				eq(listingsTable.source, source),
+				inArray(listingsTable.externalId, ids),
+				isNotNull(listingsTable.features),
+			),
+		);
+	return new Set(rows.map((r) => r.externalId));
+}
 
 interface NextData {
 	props?: {
@@ -218,6 +250,8 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 		kind: "cheerio",
 		startUrls: [listPageUrl(undefined, 1)],
 		maxRequestsPerCrawl: 6000,
+		// The list page plus a few detail pages per incremental run.
+		firstPageOnlyRequests: 1 + DETAIL_BUDGET,
 
 		async extractHtml(html, url, enqueue) {
 			const data = parseOtodomHtml(html);
@@ -236,10 +270,15 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 
 			// The static start URL carries the default window. Re-seed page 1 with
 			// this run's exact window so every page uses the same daysSinceCreated
-			// and pagination metadata stays consistent.
+			// and pagination metadata stays consistent. A first-page-only run
+			// cannot afford that: it gets exactly one request (crawler.ts), so
+			// re-seeding only threw the page away — otodom contributed 0 listings
+			// to every server refresh. Those runs filter by `since` below anyway,
+			// and `by=DEFAULT` is newest-first, so page 1 is still the newest page.
 			const { page, days } = parseListPage(url);
 			const wantDays = daysSinceCreated(this.since);
-			if (days !== wantDays) {
+			const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
+			if (days !== wantDays && !pageOnly) {
 				await enqueue([listPageUrl(this.since, page)]);
 				return [];
 			}
@@ -268,10 +307,21 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 				const d = itemDate(item);
 				return d !== null && d.getTime() >= detailSinceMs;
 			});
+			// Incremental runs spend their small budget on offers that were never
+			// enriched; a full crawl still walks every recent detail.
+			const enriched = pageOnly
+				? await enrichedDetailIds(
+						opts.sourceId ?? opts.id,
+						detailItems.map((item) => String(item.id)),
+					)
+				: null;
+			const queued = enriched
+				? detailItems
+						.filter((item) => !enriched.has(String(item.id)))
+						.slice(0, DETAIL_BUDGET)
+				: detailItems;
 			await enqueue(
-				detailItems.map(
-					(item) => `https://www.otodom.pl/pl/oferta/${item.slug}`,
-				),
+				queued.map((item) => `https://www.otodom.pl/pl/oferta/${item.slug}`),
 			);
 
 			const newest = items.reduce<Date | null>((max, item) => {
