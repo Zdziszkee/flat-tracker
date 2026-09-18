@@ -14,20 +14,20 @@ import { foldOccupancy } from "./occupancy.ts";
 /**
  * Booking.com availability/price calendar importer.
  *
- * Mirrors the Airbnb calendar flow but for Booking's property pages: for a
- * ROTATION of listings (oldest-observed first, never-observed first) open
- * the property page with a 7-night stay pinned to each of the next
- * MONTHS month-starts and read the payable total. A page that renders no
- * bookable price for the stay is treated as unavailable for that window
- * ("Termin niedostępny" / no "Zarezerwuj" CTA).
+ * For each active listing, open the property page with a 7-night stay pinned
+ * to the 1st of each of the next 12 months and read the payable total. The
+ * whole 7-night window is expanded into day-by-day `calendar` observations so
+ * the occupancy classifier can detect booked vs blocked runs. A separate
+ * `7_nights_2_adults` observation per window is kept for price-config
+ * analytics.
  *
  * Cadence: the "booking-calendar" task runs it daily at 03:30 (right
  * after the Airbnb calendar pass) and walks ALL active listings —
- * ~1.7k x 4 loads per night; rate limiting is accepted as an experiment
+ * ~1.7k x 12 loads per night; rate limiting is accepted as an experiment
  * (tune with BOOKING_CALENDAR_DELAY_MS).
  */
 
-const MONTHS = 4;
+const MONTHS = 12;
 /** Politeness pause between listings (ms). */
 const LISTING_DELAY_MS = Number(process.env.BOOKING_CALENDAR_DELAY_MS ?? 250);
 
@@ -43,6 +43,18 @@ function propertyUrl(externalId: string, start: string, end: string): string {
 			lang: "pl",
 		}).toString()
 	);
+}
+
+/** Generate all night dates in [start, end) as YYYY-MM-DD. */
+function nightsBetween(start: string, end: string): string[] {
+	const dates: string[] = [];
+	const d = new Date(start);
+	const limit = new Date(end);
+	while (d < limit) {
+		dates.push(d.toISOString().slice(0, 10));
+		d.setDate(d.getDate() + 1);
+	}
+	return dates;
 }
 
 /**
@@ -94,8 +106,7 @@ async function scrapeStayTotal(
 
 export async function main(): Promise<void> {
 	// Rotation: never-observed first, then oldest-observed.
-	const rows = await db
-		.all<{ id: number; externalId: string }>(sql`
+	const rows = await db.all<{ id: number; externalId: string }>(sql`
 		SELECT l.id, l.external_id AS externalId
 		FROM listings l
 		LEFT JOIN (
@@ -143,6 +154,27 @@ export async function main(): Promise<void> {
 					})
 					.catch(() => {});
 				const total = await scrapeStayTotal(page);
+				const nightly = total != null ? total / 7 : null;
+				const available = total != null;
+				// Expand the 7-night window into day-by-day observations so the
+				// occupancy classifier can distinguish booked vs blocked runs.
+				for (const date of nightsBetween(range.start, range.end)) {
+					obs.push({
+						listingId: row.id,
+						source: "booking",
+						date,
+						priceConfig: "calendar",
+						listedPrice: nightly,
+						totalPrice: total,
+						stayNights: 7,
+						effectiveNightlyPrice: nightly,
+						taxes: null,
+						fees: null,
+						available,
+						minimumNights: null,
+					});
+				}
+				// Also keep a 7-night configuration row for price-config analytics.
 				obs.push({
 					listingId: row.id,
 					source: "booking",
@@ -151,10 +183,10 @@ export async function main(): Promise<void> {
 					listedPrice: null,
 					totalPrice: total,
 					stayNights: 7,
-					effectiveNightlyPrice: total != null ? total / 7 : null,
+					effectiveNightlyPrice: nightly,
 					taxes: null,
 					fees: null,
-					available: total != null,
+					available,
 					minimumNights: null,
 				});
 			}
