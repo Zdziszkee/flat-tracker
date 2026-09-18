@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { listings as listingsTable } from "#/db/schema";
@@ -30,6 +30,33 @@ async function enrichedDetailIds(
 			),
 		);
 	return new Set(rows.map((r) => r.externalId));
+}
+
+/**
+ * Detail URLs of offers that were listed before this feature existed and
+ * still lack their detail data, newest-seen first. Without this the budget
+ * would only ever cover offers that happen to sit on page 1, so the map
+ * would never learn the age of anything already on it.
+ */
+async function detailBacklog(
+	source: string,
+	offerType: string,
+	limit: number,
+): Promise<string[]> {
+	const rows = await db
+		.select({ url: listingsTable.url })
+		.from(listingsTable)
+		.where(
+			and(
+				eq(listingsTable.source, source),
+				eq(listingsTable.offerType, offerType),
+				isNull(listingsTable.features),
+				isNotNull(listingsTable.url),
+			),
+		)
+		.orderBy(desc(listingsTable.lastSeenAt))
+		.limit(limit);
+	return rows.map((r) => r.url).filter((u): u is string => u !== null);
 }
 
 interface NextData {
@@ -308,21 +335,30 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 				return d !== null && d.getTime() >= detailSinceMs;
 			});
 			// Incremental runs spend their small budget on offers that were never
-			// enriched; a full crawl still walks every recent detail.
-			const enriched = pageOnly
-				? await enrichedDetailIds(
-						opts.sourceId ?? opts.id,
-						detailItems.map((item) => String(item.id)),
-					)
-				: null;
-			const queued = enriched
-				? detailItems
-						.filter((item) => !enriched.has(String(item.id)))
-						.slice(0, DETAIL_BUDGET)
-				: detailItems;
-			await enqueue(
-				queued.map((item) => `https://www.otodom.pl/pl/oferta/${item.slug}`),
-			);
+			// enriched — the newest page-1 ones first, then the backlog of older
+			// active offers. A full crawl still walks every recent detail.
+			if (!pageOnly) {
+				await enqueue(
+					detailItems.map(
+						(item) => `https://www.otodom.pl/pl/oferta/${item.slug}`,
+					),
+				);
+			} else {
+				const source = opts.sourceId ?? opts.id;
+				const enriched = await enrichedDetailIds(
+					source,
+					detailItems.map((item) => String(item.id)),
+				);
+				const fresh = detailItems
+					.filter((item) => !enriched.has(String(item.id)))
+					.map((item) => `https://www.otodom.pl/pl/oferta/${item.slug}`);
+				const backlog = await detailBacklog(
+					source,
+					opts.offerType,
+					DETAIL_BUDGET,
+				);
+				await enqueue([...fresh, ...backlog].slice(0, DETAIL_BUDGET));
+			}
 
 			const newest = items.reduce<Date | null>((max, item) => {
 				const d = itemDate(item);

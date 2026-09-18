@@ -1,6 +1,15 @@
 import "dotenv/config";
 
-import { and, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import {
+	and,
+	eq,
+	gte,
+	inArray,
+	isNotNull,
+	isNull,
+	lte,
+	sql,
+} from "drizzle-orm";
 import { db } from "#/db/index";
 import { buildings, listings, osmBuildings, transactions } from "#/db/schema";
 import { buildStreetIndex, matchByAddress } from "./address-index.ts";
