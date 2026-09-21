@@ -130,14 +130,21 @@ lat/lng (morizon, gratka, domiporta, nieruchomosci-online,
 licytacje-komornik): the adapters parse a street address
 into `listings.address`, this script matches it against the local
 `osm_buildings` index (exact street+housenumber → building centroid,
-street-only → street centroid) and falls back to Nominatim (1 req/s,
-descriptive UA, validated to Krakow) for street-level points. Listings
+street-only → street centroid) and falls back to Photon (1 req/s,
+validated to Małopolska) for street-level points. Listings
 WITHOUT a stored address get one mined from their title (ad speak like
 "Łokietka 57B - mieszkanie 30 m²") — the extracted address is persisted.
-Re-run `assign-buildings` afterwards to anchor the new points.
+Re-run `assign-buildings` afterwards to anchor the new points. Komornik
+titles are legal notices ("... przy ul. Szkolnej dla której SR dla
+Krakowa-Krowodrzy w Krakowie ..."), so geocoding cuts the court
+boilerplate ("dla której", "Sąd/SR", "Wydział", "KW nr", "z siedzibą")
+before mining a street or city — the court's seat is not the property's
+location. For the same reason a city mined from a title only overrides a
+generic hint (Kraków/małopolskie/a district); a specific town from the
+structured address always wins.
 
 The same pass runs automatically inside every `refreshAll()` with a
-Nominatim budget of 20/run (local index matches are instant), so the
+Photon budget of 100/run (local index matches are instant), so the
 map stays populated between manual drains. Geocoded positions survive
 re-crawls: `saveListings` coalesces coordinates, so address-only
 adapters never overwrite them with NULL. Street-only addresses anchor
