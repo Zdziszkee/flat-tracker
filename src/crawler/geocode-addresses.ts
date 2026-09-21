@@ -18,12 +18,17 @@ import {
  * The hourly refresh runs the same pass with a small Nominatim budget
  * (see refresh.ts), so the backlog here is normally empty. Pass
  * `--local-only` to skip Nominatim entirely (e.g. while the shared
- * instance is throttling), or `--reset` to drop every address-only
- * source's stored coordinates first and re-anchor the whole feed.
+ * instance is throttling), `--reset` to drop every address-only
+ * source's stored coordinates first and re-anchor the whole feed, and
+ * `--source=<id>` to scope either run to one source (targeted repair,
+ * e.g. licytacje-komornik after a matcher fix).
  */
 async function main(): Promise<void> {
 	const localOnly = process.argv.includes("--local-only");
 	const reset = process.argv.includes("--reset");
+	const only = process.argv
+		.find((a) => a.startsWith("--source="))
+		?.slice("--source=".length);
 
 	if (reset) {
 		// Old cached Nominatim results may reflect the previous matcher; a
@@ -31,11 +36,15 @@ async function main(): Promise<void> {
 		await rm(NOM_CACHE_PATH, { force: true });
 	}
 
-	const sources = reset ? [...ADDRESS_ONLY_SOURCES] : undefined;
+	const sources = only ? [only] : reset ? [...ADDRESS_ONLY_SOURCES] : undefined;
 	const report = await geocodeUnlocatedListings({
 		nominatimLimit: localOnly ? 0 : undefined,
 		sources,
-		resetSources: reset ? [...ADDRESS_ONLY_SOURCES] : undefined,
+		resetSources: reset
+			? only
+				? [only]
+				: [...ADDRESS_ONLY_SOURCES]
+			: undefined,
 	});
 	console.log(
 		`done: local=${report.localHits} nominatim=${report.nomHits} ` +

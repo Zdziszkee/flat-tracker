@@ -64,6 +64,25 @@ const TITLE_CITY_FORMS: Record<string, string> = {
 /** Demo adapters whose fixtures must never be geocoded. */
 const DEMO_SOURCES = new Set(["books", "quotes"]);
 
+/**
+ * Court-notice boilerplate (licytacje komornicze): "… przy ul. Szkolnej dla
+ * której SR dla Krakowa-Krowodrzy w Krakowie … prowadzi KW nr …". The
+ * property description comes first; everything after these markers is
+ * about the court, its seat and the land register — never about where the
+ * property sits. Cut the title before mining it for a street or city, or
+ * the court's seat city hijacks the geocode ("w Krakowie" pinned a
+ * Nawojowa Góra plot on the Kraków centroid).
+ */
+const COURT_MARK_RE =
+	/\b(?:dla któr\w*|sąd\w*|sr\b|wydział\w*|ksi[ąa]g wieczyst\w*|kw nr|nr kw|z siedzib\w*|komornik\w*)/iu;
+
+/** The property-describing front of a title (court boilerplate removed). */
+function propertyPartOf(title: string | null | undefined): string {
+	if (!title) return "";
+	const m = COURT_MARK_RE.exec(title);
+	return (m ? title.slice(0, m.index) : title).replace(/\s+/g, " ").trim();
+}
+
 function normalizeWord(s: string): string {
 	return s
 		.toLowerCase()
@@ -332,14 +351,24 @@ export async function geocodeUnlocatedListings(
 
 		// A portal title often names the real town while the structured
 		// address carries a generic "Kraków" fallback ("w Zakopanem przy ul.
-		// Paryskich, Kraków"). Trust the title city in that case.
-		const titleLower = row.title.toLowerCase();
-		for (const [form, city] of Object.entries(TITLE_CITY_FORMS)) {
-			if (titleLower.includes(form)) {
-				if (!cityHint || normStreet(cityHint) !== normStreet(city)) {
-					cityHint = city;
+		// Paryskich, Kraków"). Trust the title city in that case — but only
+		// then: a specific town the offline city index knows ("Tenczynek",
+		// "Nawojowa Góra") is always more trustworthy than a title mention,
+		// which in court notices is the court's seat, not the property
+		// ("Sąd Rejonowy dla Krakowa-Krowodrzy w Krakowie").
+		const titleScope = propertyPartOf(row.title);
+		const titleLower = titleScope.toLowerCase();
+		const hintKey = normStreet(cityHint ?? "");
+		const hintIsSpecificTown =
+			hintKey !== "krakow" && cityCentroids.has(hintKey);
+		if (!hintIsSpecificTown) {
+			for (const [form, city] of Object.entries(TITLE_CITY_FORMS)) {
+				if (titleLower.includes(form)) {
+					if (!cityHint || normStreet(cityHint) !== normStreet(city)) {
+						cityHint = city;
+					}
+					break;
 				}
-				break;
 			}
 		}
 
@@ -354,7 +383,7 @@ export async function geocodeUnlocatedListings(
 			// free-text mining — ad speak like "Przytulne 27" would otherwise
 			// geocode to a random street. Stored addresses come from
 			// structured portal data and are trusted.
-			const titlePart = parseAddressFromText(row.title);
+			const titlePart = parseAddressFromText(titleScope);
 			const descPart = parseAddressFromText(row.description);
 			// Descriptions are full of numbers ("45 m²", "rok 2014"), so the
 			// digit-based plausibleAddress gate is meaningless for them. Only
@@ -362,8 +391,8 @@ export async function geocodeUnlocatedListings(
 			// lexicon or carries a housenumber; otherwise the title result (or
 			// nothing) wins.
 			const mined =
-				titlePart && plausibleAddress(row.title)
-					? { part: titlePart, text: row.title }
+				titlePart && plausibleAddress(titleScope)
+					? { part: titlePart, text: titleScope }
 					: descPart &&
 							(isKnownKrakowStreet(descPart.street) || descPart.number)
 						? { part: descPart, text: row.description }
@@ -497,8 +526,13 @@ export async function geocodeUnlocatedListings(
 				continue;
 			}
 			nomBudget--;
-			const query =
-				hasStoredAddress && row.address
+			const query = extractedAddress
+				? // A mined street must not fall back to the stored street-less
+					// address ("32-065, Nawojowa Góra") — query what we mined.
+					[streetPart, cityHint ?? row.district, "Małopolska"]
+						.filter(Boolean)
+						.join(", ")
+				: hasStoredAddress && row.address
 					? row.address
 					: [streetPart, row.district, "Małopolska"].filter(Boolean).join(", ");
 			geo = await photonGeocode(query, namePart);
