@@ -230,7 +230,9 @@ query.
 captures just the offers that appeared on page 1 and skips pagination and
 detail-page follow-ups. `alwaysFullCrawl` opts a source back into full
 pagination (investmap: small private investments sit past pages that have
-no flats, so skipping page 1 would hide them).
+no flats, so skipping page 1 would hide them; licytacje-komornik: the
+Małopolska court-auction feed is tiny, so every run re-syncs the whole
+list).
 
 **Dev-start runs are diff-only** (`payload: { mode: "dev" }`): each site's
 `since` window is `max(now - 7 days, last successful crawl)` — per-site

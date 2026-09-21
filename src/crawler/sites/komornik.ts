@@ -21,6 +21,11 @@ import type { CustomLaunchAdapter, Listing } from "../types.ts";
  *
  * Every REAL_ESTATE notice is kept (flats, houses, plots, garages and
  * "inne"/other), so the crawler mirrors the whole Małopolska search feed.
+ *
+ * The feed is tiny (a few dozen notices province-wide), so the adapter is
+ * `alwaysFullCrawl`: every refresh walks all pages and re-syncs the complete
+ * feed instead of just the newest page — discovery does not depend on the
+ * hourly first-page window here.
  */
 
 const SEARCH_URL =
@@ -62,16 +67,18 @@ export const komornikAdapter: CustomLaunchAdapter = {
 	startUrls: [SEARCH_URL],
 	maxRequestsPerCrawl: 3,
 	listingSelector: "a.auction",
+	// Few notices in Małopolska: pull the whole feed every run (like
+	// investmap) instead of the firstPageOnly incremental window.
+	alwaysFullCrawl: true,
 
 	async extractListings(page: Page): Promise<Listing[]> {
-		const firstPageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
 		const items = await page.evaluate(
-			async ({ apiPath, pageSize, firstPageOnly }) => {
+			async ({ apiPath, pageSize }) => {
 				const body = {
 					limit: pageSize,
-					// Newest notices first, so the first page is the incremental
-					// window the hourly refresh needs. Matches the search URL's
-					// sort=dateCreated DESC.
+					// Newest notices first. alwaysFullCrawl walks every page
+					// anyway; the order keeps the feed stable and matches the
+					// search URL's sort=dateCreated DESC.
 					orderBy: "DESC",
 					orderByField: "dateCreated",
 					aggregations: [],
@@ -94,12 +101,11 @@ export const komornikAdapter: CustomLaunchAdapter = {
 					}
 					const data = (await res.json()) as KomornikPage;
 					all.push(...(data.items ?? []));
-					if (firstPageOnly) break;
 					if (!data.count || all.length >= data.count) break;
 				}
 				return all;
 			},
-			{ apiPath: API_PATH, pageSize: PAGE_SIZE, firstPageOnly },
+			{ apiPath: API_PATH, pageSize: PAGE_SIZE },
 		);
 
 		const listings: Listing[] = [];
