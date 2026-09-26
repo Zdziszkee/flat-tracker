@@ -1535,10 +1535,11 @@ function MapCanvas({
 		syncParcelsRef.current?.();
 	}, [showParcels]);
 
-	// Occupancy heatmap: keep the ref in sync and push new data into the source.
+	// Occupancy heatmap visibility toggle. Data updates live in the effect
+	// below — kept separate so flipping visibility never re-serializes or
+	// re-pushes the payload into the source.
 	useEffect(() => {
 		showOccupancyRef.current = showOccupancy;
-		occupancyRef.current = occupancy;
 		const map = mapRef.current;
 		if (!map) return;
 		const layer = map.getLayer("occupancy-heat");
@@ -1549,13 +1550,20 @@ function MapCanvas({
 				showOccupancy ? "visible" : "none",
 			);
 		}
+	}, [showOccupancy]);
+
+	// Occupancy data updates: push new GeoJSON when the cells change.
+	useEffect(() => {
+		occupancyRef.current = occupancy;
+		const map = mapRef.current;
+		if (!map) return;
 		const src = map.getSource("occupancy") as
 			| mapboxgl.GeoJSONSource
 			| undefined;
 		if (src && "setData" in src) {
 			src.setData(occupancyGeoJson);
 		}
-	}, [showOccupancy, occupancy, occupancyGeoJson]);
+	}, [occupancy, occupancyGeoJson]);
 
 	// Push updated listings into the source whenever the filter changes.
 	// setData is safe even while the style is still streaming, so apply it
