@@ -9,4 +9,5 @@ export const ADDRESS_ONLY_SOURCES = [
 	"domiporta",
 	"nieruchomosci-online",
 	"licytacje-komornik",
+	"budujesie",
 ] as const;

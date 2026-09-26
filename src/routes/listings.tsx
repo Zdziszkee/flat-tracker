@@ -49,12 +49,19 @@ const SOURCE_LABELS: Record<string, string> = {
 	"nieruchomosci-online": "Nieruchomosci-online",
 	rynekpierwotny: "Rynekpierwotny",
 	"licytacje-komornik": "Licytacje komornicze",
+	budujesie: "BudujeSie (w budowie)",
 	airbnb: "Airbnb",
 	booking: "Booking",
 };
 
 interface OfferValuation {
-	offer: { id: number; price: number | null; pricePerM2: number | null; areaM2: number | null; offerType: string };
+	offer: {
+		id: number;
+		price: number | null;
+		pricePerM2: number | null;
+		areaM2: number | null;
+		offerType: string;
+	};
 	comps: {
 		building: { avgM2: number; n: number } | null;
 		area: { avgM2: number; n: number } | null;
@@ -89,10 +96,16 @@ function ValuationPanel({ id }: { id: number }) {
 		queryFn: () => fetch(`/api/valuation/offer?id=${id}`).then((r) => r.json()),
 	});
 	if (isLoading) {
-		return <div className="px-6 py-3 text-xs text-gray-500">Liczenie wyceny…</div>;
+		return (
+			<div className="px-6 py-3 text-xs text-gray-500">Liczenie wyceny…</div>
+		);
 	}
 	if (!data || !data.offer) {
-		return <div className="px-6 py-3 text-xs text-gray-500">Brak danych do wyceny.</div>;
+		return (
+			<div className="px-6 py-3 text-xs text-gray-500">
+				Brak danych do wyceny.
+			</div>
+		);
 	}
 	const c = data.comps;
 	const compRow = (label: string, v: { avgM2: number; n: number } | null) =>
@@ -115,15 +128,19 @@ function ValuationPanel({ id }: { id: number }) {
 						{data.offer.pricePerM2 != null && (
 							<span className="text-gray-500">
 								{" "}
-								(oferta {Math.round(data.offer.pricePerM2).toLocaleString("pl-PL")})
+								(oferta{" "}
+								{Math.round(data.offer.pricePerM2).toLocaleString("pl-PL")})
 							</span>
 						)}
 					</span>
 				)}
 				{data.rating && (
-					<span className={`rounded px-1.5 py-0.5 font-medium ${data.rating.tone} bg-white`}>
+					<span
+						className={`rounded px-1.5 py-0.5 font-medium ${data.rating.tone} bg-white`}
+					>
 						{data.rating.label}
-						{data.overUnderPct != null && ` ${data.overUnderPct > 0 ? "+" : ""}${data.overUnderPct}%`}
+						{data.overUnderPct != null &&
+							` ${data.overUnderPct > 0 ? "+" : ""}${data.overUnderPct}%`}
 					</span>
 				)}
 			</div>
@@ -135,33 +152,42 @@ function ValuationPanel({ id }: { id: number }) {
 			<div className="grid grid-cols-2 gap-2 border-t pt-2">
 				{data.lt && (
 					<div>
-						<div className="font-medium text-emerald-700">Najem długoterminowy (netto)</div>
+						<div className="font-medium text-emerald-700">
+							Najem długoterminowy (netto)
+						</div>
 						<div className="text-gray-600">
-							{data.lt.rentAvg.toLocaleString("pl-PL")} zł − {data.lt.czynszAvg.toLocaleString("pl-PL")} opłaty =
+							{data.lt.rentAvg.toLocaleString("pl-PL")} zł −{" "}
+							{data.lt.czynszAvg.toLocaleString("pl-PL")} opłaty =
 							<b> {data.lt.netMonthly.toLocaleString("pl-PL")} zł/mies.</b>
 						</div>
 						<div className="text-gray-500">
 							rocznie netto {data.lt.netYearly.toLocaleString("pl-PL")} zł · ROI{" "}
-							<b>{data.lt.netYieldPct?.toFixed(1) ?? "—"}%</b> ({data.lt.basis}, {data.lt.n})
+							<b>{data.lt.netYieldPct?.toFixed(1) ?? "—"}%</b> ({data.lt.basis},{" "}
+							{data.lt.n})
 						</div>
 					</div>
 				)}
 				{data.str && (
 					<div>
-						<div className="font-medium text-rose-700">Najem krótkoterminowy (netto, szac.)</div>
+						<div className="font-medium text-rose-700">
+							Najem krótkoterminowy (netto, szac.)
+						</div>
 						<div className="text-gray-600">
 							{data.str.nightlyAvg.toLocaleString("pl-PL")} zł/noc ×{" "}
 							{(data.str.occupancy * 100).toFixed(0)}% obłożenia =
 							<b> {data.str.netMonthly.toLocaleString("pl-PL")} zł/mies.</b>
 						</div>
 						<div className="text-gray-500">
-							rocznie netto {data.str.netYearly.toLocaleString("pl-PL")} zł · ROI{" "}
-							<b>{data.str.netYieldPct?.toFixed(1) ?? "—"}%</b> ({data.str.basis}, {data.str.n})
+							rocznie netto {data.str.netYearly.toLocaleString("pl-PL")} zł ·
+							ROI <b>{data.str.netYieldPct?.toFixed(1) ?? "—"}%</b> (
+							{data.str.basis}, {data.str.n})
 						</div>
 					</div>
 				)}
 				{!data.lt && !data.str && (
-					<div className="text-gray-500">Brak porównywalnych najmów w okolicy.</div>
+					<div className="text-gray-500">
+						Brak porównywalnych najmów w okolicy.
+					</div>
 				)}
 			</div>
 		</div>
@@ -200,8 +226,12 @@ function ListingsPage() {
 	const allRows = data?.listings ?? [];
 	// Counts must respect the active time window so every option shows how
 	// many offers it would actually list when selected.
-	const daysRows = allRows.filter((r) =>
-		addedWithin(r.listedAt ?? r.firstSeenAt, days),
+	const daysRows = allRows.filter(
+		// Construction investments are long-lived inventory: the fresh-offers
+		// window must not hide them (same rule as the map).
+		(r) =>
+			r.source === "budujesie" ||
+			addedWithin(r.listedAt ?? r.firstSeenAt, days),
 	);
 	const countsBySource = new Map<string, number>();
 	for (const r of daysRows) {
@@ -272,68 +302,70 @@ function ListingsPage() {
 						)}
 						{!isLoading &&
 							rows.map((r) => (
-							<>
-								<tr
-									key={`${r.source}-${r.id}`}
-									className={`border-t ${r.offerType === "sale" || r.offerType === "long_term_rental" ? "cursor-pointer hover:bg-gray-50" : ""}`}
-									onClick={() => {
-										if (
-											r.offerType !== "sale" &&
-											r.offerType !== "long_term_rental"
-										) {
-											return;
-										}
-										setExpanded(expanded === r.id ? null : r.id);
-									}}
-								>
-									<td className="px-3 py-1.5">
-										<span
-											className={
-												r.source === "otodom"
-													? "rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700"
-													: "rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700"
+								<>
+									<tr
+										key={`${r.source}-${r.id}`}
+										className={`border-t ${r.offerType === "sale" || r.offerType === "long_term_rental" ? "cursor-pointer hover:bg-gray-50" : ""}`}
+										onClick={() => {
+											if (
+												r.offerType !== "sale" &&
+												r.offerType !== "long_term_rental"
+											) {
+												return;
 											}
-										>
-											{r.source}
-										</span>
-									</td>
-									<td className="max-w-96 truncate px-3 py-1.5">
-										<a
-											href={r.url}
-											target="_blank"
-											rel="noreferrer"
-											className="hover:text-blue-600 hover:underline"
-										>
-											{r.title}
-										</a>
-									</td>
-									<td className="px-3 py-1.5 text-right font-medium">
-										{fmt(r.price)}
-									</td>
-									<td className="px-3 py-1.5 text-right">
-										{fmt(r.pricePerM2)}
-									</td>
-									<td className="px-3 py-1.5 text-right">{fmt(r.areaM2)}</td>
-									<td className="px-3 py-1.5 text-right">{r.rooms ?? ""}</td>
-									<td className="px-3 py-1.5">{r.district ?? ""}</td>
-									<td className="px-3 py-1.5 text-gray-500">{addedLabel(r)}</td>
-									<td className="px-2 py-1.5 text-center text-gray-400">
-										{r.offerType === "sale" ||
-										r.offerType === "long_term_rental"
-											? expanded === r.id
-												? "▾"
-												: "▸"
-											: ""}
-									</td>
-								</tr>
-								{expanded === r.id && (
-									<tr key={`${r.source}-${r.id}-x`}>
-										<td colSpan={9} className="border-t bg-gray-50 p-0">
-											<ValuationPanel id={r.id} />
+											setExpanded(expanded === r.id ? null : r.id);
+										}}
+									>
+										<td className="px-3 py-1.5">
+											<span
+												className={
+													r.source === "otodom"
+														? "rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700"
+														: "rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700"
+												}
+											>
+												{r.source}
+											</span>
+										</td>
+										<td className="max-w-96 truncate px-3 py-1.5">
+											<a
+												href={r.url}
+												target="_blank"
+												rel="noreferrer"
+												className="hover:text-blue-600 hover:underline"
+											>
+												{r.title}
+											</a>
+										</td>
+										<td className="px-3 py-1.5 text-right font-medium">
+											{fmt(r.price)}
+										</td>
+										<td className="px-3 py-1.5 text-right">
+											{fmt(r.pricePerM2)}
+										</td>
+										<td className="px-3 py-1.5 text-right">{fmt(r.areaM2)}</td>
+										<td className="px-3 py-1.5 text-right">{r.rooms ?? ""}</td>
+										<td className="px-3 py-1.5">{r.district ?? ""}</td>
+										<td className="px-3 py-1.5 text-gray-500">
+											{addedLabel(r)}
+										</td>
+										<td className="px-2 py-1.5 text-center text-gray-400">
+											{r.offerType === "sale" ||
+											r.offerType === "long_term_rental"
+												? expanded === r.id
+													? "▾"
+													: "▸"
+												: ""}
 										</td>
 									</tr>
-								)}
-							</>
+									{expanded === r.id && (
+										<tr key={`${r.source}-${r.id}-x`}>
+											<td colSpan={9} className="border-t bg-gray-50 p-0">
+												<ValuationPanel id={r.id} />
+											</td>
+										</tr>
+									)}
+								</>
 							))}
 					</tbody>
 				</table>

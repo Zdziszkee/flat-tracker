@@ -80,6 +80,7 @@ const SOURCE_COLORS: Record<string, string> = {
 	books: "#8b5cf6",
 	skaleczna: "#d946ef",
 	"licytacje-komornik": "#6b7280",
+	budujesie: "#f59e0b",
 };
 
 /** Mapbox match expression coloring each point by its source. */
@@ -112,6 +113,43 @@ function makeKomornikIcon(): ImageData {
 		ctx.lineTo(size - 2, size / 2);
 		ctx.lineTo(size / 2, size - 2);
 		ctx.lineTo(2, size / 2);
+		ctx.closePath();
+		ctx.fill();
+		ctx.stroke();
+		return ctx.getImageData(0, 0, size, size);
+	}
+	return new ImageData(size, size);
+}
+
+/** Construction hard-hat marker for budujesie.pl investments (amber). */
+function makeBudujesieIcon(): ImageData {
+	const size = 28;
+	const canvas = document.createElement("canvas");
+	canvas.width = size;
+	canvas.height = size;
+	const ctx = canvas.getContext("2d");
+	if (ctx) {
+		ctx.fillStyle = "#f59e0b";
+		ctx.strokeStyle = "#ffffff";
+		ctx.lineWidth = 2;
+		// Dome (upper half circle).
+		ctx.beginPath();
+		ctx.arc(size / 2, 16, 8, Math.PI, 2 * Math.PI);
+		ctx.closePath();
+		ctx.fill();
+		ctx.stroke();
+		// Brim (rounded bar).
+		const w = 22;
+		const h = 5;
+		const x = (size - w) / 2;
+		const y = 15;
+		const r = 2.5;
+		ctx.beginPath();
+		ctx.moveTo(x + r, y);
+		ctx.arcTo(x + w, y, x + w, y + h, r);
+		ctx.arcTo(x + w, y + h, x, y + h, r);
+		ctx.arcTo(x, y + h, x, y, r);
+		ctx.arcTo(x, y, x + w, y, r);
 		ctx.closePath();
 		ctx.fill();
 		ctx.stroke();
@@ -212,6 +250,23 @@ function popupHtml(l: ApiListing): string {
 	const heating = l.heatingType ? `Ogrzewanie: ${l.heatingType}` : "";
 	const utilities = formatUtilities(l.utilities);
 
+	// Forum-sourced investments are construction threads, not offers: no
+	// price row, show thread activity instead of a valuation.
+	const isBudujesie = l.source === "budujesie";
+	let threadStats = "";
+	if (isBudujesie && l.features) {
+		try {
+			const f = JSON.parse(l.features) as { replies?: number; views?: number };
+			const parts: string[] = [];
+			if (typeof f.replies === "number") parts.push(`${f.replies} odp.`);
+			if (typeof f.views === "number")
+				parts.push(`${f.views.toLocaleString("pl-PL")} wyśw.`);
+			threadStats = parts.join(" · ");
+		} catch {
+			// malformed features JSON: skip thread stats silently
+		}
+	}
+
 	// Short-term-rental context lines.
 	const stayLines: string[] = [];
 	if (l.minimumStayNights != null && l.minimumStayNights > 1)
@@ -253,12 +308,22 @@ function popupHtml(l: ApiListing): string {
       <div class="font-semibold leading-tight">${escapeHtml(l.title)}</div>
       <div class="text-gray-500">${escapeHtml(location)}</div>
       <div class="flex justify-between gap-4 pt-1">
-        <span class="font-medium">${formatPln(l.price)}${
-					l.pricePeriod === "night"
-						? '<span class="text-xs font-normal text-gray-400"> /noc</span>'
-						: ""
+        <span class="font-medium${isBudujesie ? " text-amber-700" : ""}">${
+					isBudujesie
+						? "Inwestycja w budowie"
+						: `${formatPln(l.price)}${
+								l.pricePeriod === "night"
+									? '<span class="text-xs font-normal text-gray-400"> /noc</span>'
+									: ""
+							}`
 				}</span>
-        <span>${l.pricePerM2 ? `${l.pricePerM2.toFixed(0)} zł/m²` : ""}</span>
+        <span>${
+					isBudujesie
+						? escapeHtml(threadStats)
+						: l.pricePerM2
+							? `${l.pricePerM2.toFixed(0)} zł/m²`
+							: ""
+				}</span>
       </div>
       <div class="text-gray-500">${escapeHtml(details)}</div>
       ${
@@ -283,7 +348,9 @@ function popupHtml(l: ApiListing): string {
         </div>`
 					: ""
 			}
-      <a href="${l.url}" target="_blank" rel="noreferrer" class="mt-1 block text-blue-600 underline">Otwórz ogłoszenie</a>
+      <a href="${l.url}" target="_blank" rel="noreferrer" class="mt-1 block text-blue-600 underline">${
+				isBudujesie ? "Otwórz wątek na BudujeSie.pl" : "Otwórz ogłoszenie"
+			}</a>
     </div>`;
 }
 
@@ -513,7 +580,10 @@ export default function MapView({
 			(data?.listings ?? []).filter(
 				(l) =>
 					(source === "all" || l.source === source) &&
-					addedWithin(l.listedAt ?? l.firstSeenAt, days) &&
+					// Long-lived construction investments are inventory, not fresh
+					// offers: the "listed within N days" window must not hide them.
+					(l.source === "budujesie" ||
+						addedWithin(l.listedAt ?? l.firstSeenAt, days)) &&
 					(offerType === "all" ||
 						(offerType === "rental"
 							? l.offerType !== "sale"
@@ -856,8 +926,13 @@ function MapCanvas({
 				id: "listings-circle",
 				type: "circle",
 				source: "listings",
-				// Komornik offers get their own symbol layer below.
-				filter: ["!=", ["get", "source"], "licytacje-komornik"],
+				// Komornik offers and budujesie investments get their own symbol
+				// layers below.
+				filter: [
+					"all",
+					["!=", ["get", "source"], "licytacje-komornik"],
+					["!=", ["get", "source"], "budujesie"],
+				],
 				paint: {
 					"circle-color": sourceColorExpr(),
 					"circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 4, 16, 9],
@@ -878,6 +953,24 @@ function MapCanvas({
 					filter: ["==", ["get", "source"], "licytacje-komornik"],
 					layout: {
 						"icon-image": "komornik-icon",
+						"icon-size": 0.65,
+						"icon-allow-overlap": true,
+					},
+				});
+			}
+
+			// Investments under construction (budujesie.pl) render as a hard hat.
+			if (!map.hasImage("budujesie-icon")) {
+				map.addImage("budujesie-icon", makeBudujesieIcon());
+			}
+			if (!map.getLayer("budujesie-listings")) {
+				map.addLayer({
+					id: "budujesie-listings",
+					type: "symbol",
+					source: "listings",
+					filter: ["==", ["get", "source"], "budujesie"],
+					layout: {
+						"icon-image": "budujesie-icon",
 						"icon-size": 0.65,
 						"icon-allow-overlap": true,
 					},
@@ -1465,9 +1558,12 @@ function MapCanvas({
 				const listing = props as ApiListing;
 				// Sale + LT-rental offers get a live valuation/ROI section
 				// (fetched after the popup opens; STR popups stay as-is).
+				// Price-less rows (budujesie construction threads) have nothing
+				// to value.
 				const wantValuation =
-					listing.offerType === "sale" ||
-					listing.offerType === "long_term_rental";
+					listing.price != null &&
+					(listing.offerType === "sale" ||
+						listing.offerType === "long_term_rental");
 				popupRef.current?.remove();
 				const popup = new mapboxgl.Popup({
 					offset: 16,
@@ -1499,7 +1595,11 @@ function MapCanvas({
 				}
 			};
 
-			for (const layer of ["listings-circle", "komornik-listings"]) {
+			for (const layer of [
+				"listings-circle",
+				"komornik-listings",
+				"budujesie-listings",
+			]) {
 				map.on("mouseenter", layer, () => {
 					map.getCanvas().style.cursor = "pointer";
 				});

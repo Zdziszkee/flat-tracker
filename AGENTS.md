@@ -242,7 +242,8 @@ detail-page follow-ups. `alwaysFullCrawl` opts a source back into full
 pagination (investmap: small private investments sit past pages that have
 no flats, so skipping page 1 would hide them; licytacje-komornik: the
 Małopolska court-auction feed is tiny, so every run re-syncs the whole
-list).
+list; budujesie: the forum list is sorted by last-post activity, so the
+deep pages hold the corpus and every run re-syncs all ~52 topic pages).
 
 **Dev-start runs are diff-only** (`payload: { mode: "dev" }`): each site's
 `since` window is `max(now - 7 days, last successful crawl)` — per-site
@@ -299,6 +300,7 @@ assigns all 84k transactions in minutes, not hours.
 | rynekpierwotny.pl | New-development projects (osiedla) | `window.__INITIAL_STATE__` `offerList.list.offers` with geo points + price ranges; pagination `?page=N` (all pages) |
 | investmap.pl | **Every registered Krakow investment with its flats** (incl. small private ones) | Public JSON API `GET /api/investment/search?withEstates=1&categorySlug=mieszkania&citySlug=krakow&offset=N` — flats inline (`es[].list`): area, price, price_m2, floor, rooms; coordinates from the investment |
 | licytacje.komornik.pl | Court auction notices (Małopolska real estate, all subcategories) | Playwright only (WAF blocks non-browser TLS); anonymous JSON API `POST /services/item-back/rest/item/search` (same-origin, `termFilters` + `fullTextFilters` city, `offset` pagination); every REAL_ESTATE subcategory kept |
+| budujesie.pl | Investments under construction (Kraków housing), one phpBB topic per investment | Plain prosilver DOM cards (`viewforum.php?f=5`, 25 topics/page, `start=N` pagination); rows are long-lived inventory with no price — the map renders them as their own hard-hat symbol layer, address mined from the thread title and geocoded like the other address-only sources |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
 | GUGiK RCN (Usługa Transakcje) | Same, but every powiat in Poland: małopolska by default, the other ~358 on demand (per-powiat GeoPackages; parcel/building/lokal transactions) | `https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip` — imported by `import-rcn-gugik.ts` (`bun run import:rcn-gugik`, `bun run import:rcn-gugik:all`) |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
