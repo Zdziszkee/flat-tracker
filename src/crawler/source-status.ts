@@ -76,6 +76,11 @@ const PORTAL_SOURCES: SourceDescriptor[] = [
 		name: "Investmap - Krakow investments with flats",
 		kind: "portal",
 	},
+	{
+		id: "budujesie",
+		name: "BudujeSie - Krakow investments under construction (forum)",
+		kind: "portal",
+	},
 ];
 
 const PIPELINE_SOURCES: SourceDescriptor[] = [
