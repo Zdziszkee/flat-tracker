@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
 
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { HIDDEN_SOURCES } from "#/crawler/hidden-sources";
 import { db } from "#/db/index";
 import { buildings, listings, transactions } from "#/db/schema";
@@ -51,7 +51,8 @@ function parseStreetNumber(address: string | null): {
 	return { street, number };
 }
 
-function transactionSummary(): Promise<BuildingSummary[]> {
+function transactionSummary(buildingIds: number[]): Promise<BuildingSummary[]> {
+	if (buildingIds.length === 0) return Promise.resolve([]);
 	return db
 		.select({
 			buildingId: transactions.buildingId,
@@ -69,9 +70,13 @@ function transactionSummary(): Promise<BuildingSummary[]> {
 		})
 		.from(transactions)
 		.innerJoin(buildings, eq(transactions.buildingId, buildings.id))
-		.where(and(isNotNull(transactions.buildingId), isNotNull(transactions.lat)))
-		.groupBy(transactions.buildingId)
-		.orderBy(sql`count(${transactions.id}) desc`);
+		.where(
+			and(
+				inArray(transactions.buildingId, buildingIds),
+				isNotNull(transactions.lat),
+			),
+		)
+		.groupBy(transactions.buildingId);
 }
 
 export const Route = createFileRoute("/api/listings")({
@@ -122,12 +127,6 @@ export const Route = createFileRoute("/api/listings")({
 					.orderBy(sql`${listings.scrapedAt} desc`);
 
 				const visibleRows = rows.filter((r) => !HIDDEN_SOURCES.has(r.source));
-
-				const summary = await transactionSummary();
-
-				const summaryByBuilding = new Map(
-					summary.map((s) => [String(s.buildingId), s]),
-				);
 
 				// Investmap covers rynekpierwotny's investments with per-flat
 				// detail, so a rynekpierwotny project row is dropped when the
@@ -182,6 +181,24 @@ export const Route = createFileRoute("/api/listings")({
 					return true;
 				});
 
+				// Scope the aggregation to the buildings actually referenced by
+				// the surviving rows: only per-listing transactionStats is read
+				// downstream, so a region-wide GROUP BY (and shipping it) was
+				// pure overhead.
+				const buildingIds = [
+					...new Set(
+						unique
+							.map((r) => r.buildingId)
+							.filter((x): x is number => x != null),
+					),
+				];
+				const summaryByBuilding = new Map(
+					(await transactionSummary(buildingIds)).map((s) => [
+						String(s.buildingId),
+						s,
+					]),
+				);
+
 				return json({
 					listings: unique.map((r) => ({
 						...r,
@@ -193,7 +210,6 @@ export const Route = createFileRoute("/api/listings")({
 							? (summaryByBuilding.get(String(r.buildingId)) ?? null)
 							: null,
 					})),
-					summary,
 					generatedAt: new Date().toISOString(),
 				});
 			},

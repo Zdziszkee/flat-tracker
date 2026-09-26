@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import mapboxgl from "mapbox-gl";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import "mapbox-gl/dist/mapbox-gl.css";
 
@@ -53,7 +53,6 @@ interface ApiListing {
 
 interface ListingsResponse {
 	listings: ApiListing[];
-	summary: unknown[];
 	generatedAt: string;
 }
 
@@ -432,14 +431,14 @@ type GeoJsonFeatureCollection = {
 	}>;
 };
 
-type AddressLabelFeatureCollection = {
-	type: "FeatureCollection";
-	features: Array<{
-		type: "Feature";
-		geometry: { type: "Point"; coordinates: number[] };
-		properties: { osmId: number; address: string };
-	}>;
-};
+/**
+ * Absolute URL for mapbox-managed GeoJSON sources. Mapbox hands the URL to
+ * its web worker, which fetches + parses the payload off the UI thread —
+ * relative paths are not resolvable from the worker context, so absolute.
+ */
+function apiUrl(path: string): string {
+	return new URL(path, window.location.origin).href;
+}
 
 interface OccupancyCell {
 	lat: number;
@@ -506,14 +505,25 @@ export default function MapView({
 		staleTime: 5 * 60 * 1000,
 	});
 
-	const listings = (data?.listings ?? []).filter(
-		(l) =>
-			(source === "all" || l.source === source) &&
-			addedWithin(l.listedAt ?? l.firstSeenAt, days) &&
-			(offerType === "all" ||
-				(offerType === "rental"
-					? l.offerType !== "sale"
-					: l.offerType === "sale")),
+	// Memoized so MapCanvas's data-sync effects only re-run on real changes
+	// (a fresh array identity every render used to re-serialize + re-push the
+	// whole GeoJSON payload into mapbox on every parent render).
+	const listings = useMemo(
+		() =>
+			(data?.listings ?? []).filter(
+				(l) =>
+					(source === "all" || l.source === source) &&
+					addedWithin(l.listedAt ?? l.firstSeenAt, days) &&
+					(offerType === "all" ||
+						(offerType === "rental"
+							? l.offerType !== "sale"
+							: l.offerType === "sale")),
+			),
+		[data, source, days, offerType],
+	);
+	const occupancyCells = useMemo(
+		() => occupancyData?.cells ?? [],
+		[occupancyData],
 	);
 
 	if (!TOKEN) {
@@ -541,7 +551,7 @@ export default function MapView({
 				listings={listings}
 				showParcels={showParcels}
 				showOccupancy={showOccupancy}
-				occupancy={occupancyData?.cells ?? []}
+				occupancy={occupancyCells}
 			/>
 
 			<footer className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-4 rounded-lg bg-white/90 px-4 py-1.5 text-xs text-gray-600 shadow">
@@ -726,12 +736,14 @@ function MapCanvas({
 			// flat ground footprint while the extruded model stays gray.
 			// A dedicated extrusion colors the actual volume. The click and
 			// hover handlers below target this "3d-building" layer id.
-			const amberByOsmId = new Map<number, number>();
 			// Mapbox Standard exposes each basemap building's REAL height
 			// (props.height) keyed by OSM id; our OSM-tag estimates default
 			// to 12 m when tags are missing, so tall blocks would show
 			// uncolored gray tops poking through the shell. Copy real
 			// heights into per-feature states whenever the viewport changes.
+			// Our features carry the OSM id as their GeoJSON `id` (see
+			// /api/buildings/geojson), so the basemap's OSM id keys the state
+			// directly; ids outside the source are a silent no-op.
 			//
 			// Queue + self-healing retry: a target-featureset query can throw
 			// while the basemap import is still resolving; leaving the queue
@@ -752,13 +764,11 @@ function MapCanvas({
 					});
 					for (const b of blds) {
 						const h = b.properties?.height;
-						const dbId =
-							typeof b.id === "number" ? amberByOsmId.get(b.id) : undefined;
-						if (dbId === undefined || typeof h !== "number" || h <= 0) {
+						if (typeof b.id !== "number" || typeof h !== "number" || h <= 0) {
 							continue;
 						}
 						map.setFeatureState(
-							{ source: "buildings-rcn", id: dbId },
+							{ source: "buildings-rcn", id: b.id },
 							{ baseHeight: h },
 						);
 					}
@@ -771,105 +781,71 @@ function MapCanvas({
 			map.on("moveend", () => {
 				amberSyncQueued = true;
 			});
-			void fetch("/api/buildings/geojson")
-				.then((r) => r.json())
-				.then(
-					(fc: {
-						type: "FeatureCollection";
-						features: Array<{
-							type: "Feature";
-							id: number;
-							geometry: { type: "Polygon"; coordinates: number[][][] };
-							properties: { height: number; osmId: number };
-						}>;
-					}) => {
-						// The Standard style extrudes the SAME OSM footprints, so
-						// identical walls z-fight/interleave (stripes). Expand
-						// each ring ~2% about its centroid so our amber shell
-						// fully encloses the basemap volume, and raise the roof
-						// +1.5 m for the same reason.
-						for (const f of fc.features) {
-							amberByOsmId.set(f.properties.osmId, f.id);
-							const ring = f.geometry.coordinates[0];
-							let cx = 0;
-							let cy = 0;
-							for (const [x, y] of ring) {
-								cx += x;
-								cy += y;
-							}
-							cx /= ring.length;
-							cy /= ring.length;
-							for (const c of ring) {
-								c[0] = cx + (c[0] - cx) * 1.02;
-								c[1] = cy + (c[1] - cy) * 1.02;
-							}
-						}
-						map.addSource("buildings-rcn", { type: "geojson", data: fc });
-						map.addLayer({
-							id: "3d-building",
-							type: "fill-extrusion",
-							source: "buildings-rcn",
-							paint: {
-								"fill-extrusion-color": "#f59e0b",
-								// Prefer the basemap's own real height for this
-								// building (set via feature-state by
-								// syncAmberHeights); fall back to the OSM estimate.
-								// Both get +2 m so walls clear co-planar surfaces.
-								"fill-extrusion-height": [
-									// Take whichever is taller: the OSM-tag estimate or
-									// the basemap's own real height for this building
-									// (synced via feature-state; 0 until then). +2 m
-									// keeps our walls above the co-planar surfaces.
-									"max",
-									["+", ["get", "height"], 2],
-									["+", ["number", ["feature-state", "baseHeight"], 0], 2],
-								],
-								"fill-extrusion-base": 0,
-								// Fully opaque: any transparency lets the Standard
-								// style's own extrusion bleed through as stripes.
-								"fill-extrusion-opacity": 1,
-								"fill-extrusion-vertical-gradient": false,
-							},
-						});
-						// Sync right away for the initial viewport (the persistent
-						// idle handler re-runs it on every camera change).
-						// Queue a height sync for the initial viewport (the
-						// idle handler consumes it once the style is ready).
-						amberSyncQueued = true;
-					},
-				)
-				.catch(() => {
-					// Coloring is optional; the map works without it.
-				});
+			// URL-based GeoJSON source on purpose: mapbox's web worker does the
+			// fetch + JSON.parse, so the multi-MB response never touches the UI
+			// thread (an inline `data` object gets JSON.stringify'd on the main
+			// thread first and blocked the map). Server-side, the route expands
+			// each ring ~2% about its centroid — the Standard style extrudes the
+			// SAME OSM footprints, so identical walls z-fight/interleave
+			// (stripes), and the expanded shell encloses the basemap volume —
+			// and keys every feature by OSM id (used by the feature-state height
+			// sync above). If the request fails the layer just stays empty; the
+			// map works without it.
+			map.addSource("buildings-rcn", {
+				type: "geojson",
+				data: apiUrl("/api/buildings/geojson"),
+			});
+			map.addLayer({
+				id: "3d-building",
+				type: "fill-extrusion",
+				source: "buildings-rcn",
+				paint: {
+					"fill-extrusion-color": "#f59e0b",
+					"fill-extrusion-height": [
+						// Take whichever is taller: the OSM-tag estimate or
+						// the basemap's own real height for this building
+						// (synced via feature-state; 0 until then). +2 m
+						// keeps our walls above the co-planar surfaces.
+						"max",
+						["+", ["get", "height"], 2],
+						["+", ["number", ["feature-state", "baseHeight"], 0], 2],
+					],
+					"fill-extrusion-base": 0,
+					// Fully opaque: any transparency lets the Standard
+					// style's own extrusion bleed through as stripes.
+					"fill-extrusion-opacity": 1,
+					"fill-extrusion-vertical-gradient": false,
+				},
+			});
+			// Queue a height sync for the initial viewport (the
+			// idle handler consumes it once the style is ready).
+			amberSyncQueued = true;
 
 			// Address labels on 3D footprints (street + housenumber),
-			// visible when zoomed in close.
-			void fetch("/api/buildings/labels")
-				.then((r) => r.json())
-				.then((fc: AddressLabelFeatureCollection) => {
-					map.addSource("building-labels", { type: "geojson", data: fc });
-					map.addLayer({
-						id: "building-address-labels",
-						type: "symbol",
-						source: "building-labels",
-						minzoom: 15.2,
-						layout: {
-							"text-field": ["get", "address"],
-							"text-size": 10,
-							"text-offset": [0, 0.6],
-							"text-anchor": "top",
-							"text-allow-overlap": false,
-						},
-						paint: {
-							"text-color": "#3d3d3d",
-							"text-halo-color": "#ffffff",
-							"text-halo-width": 1.5,
-						},
-					});
-				})
-				.catch(() => {
-					// Labels are optional; the map works without them.
-				});
+			// visible when zoomed in close. URL-based for the same
+			// reason as above; a failed load just means no labels.
+			map.addSource("building-labels", {
+				type: "geojson",
+				data: apiUrl("/api/buildings/labels"),
+			});
+			map.addLayer({
+				id: "building-address-labels",
+				type: "symbol",
+				source: "building-labels",
+				minzoom: 15.2,
+				layout: {
+					"text-field": ["get", "address"],
+					"text-size": 10,
+					"text-offset": [0, 0.6],
+					"text-anchor": "top",
+					"text-allow-overlap": false,
+				},
+				paint: {
+					"text-color": "#3d3d3d",
+					"text-halo-color": "#ffffff",
+					"text-halo-width": 1.5,
+				},
+			});
 
 			// Listings as a GeoJSON circle layer (fast with thousands of points).
 			map.addSource("listings", {
@@ -1542,6 +1518,15 @@ function MapCanvas({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
+	// GeoJSON serialized once per data change (not per render / visibility
+	// toggle) — the stringify of the big payloads is what used to block the
+	// map, so effects below only push it into the source.
+	const listingsGeoJson = useMemo(() => toGeoJson(listings), [listings]);
+	const occupancyGeoJson = useMemo(
+		() => occupancyToGeoJson(occupancy),
+		[occupancy],
+	);
+
 	// "Granice działek" toggle: hide/show at once, and refresh when switched
 	// on (the layer is zoom-gated, so turning it on while zoomed out simply
 	// keeps it hidden until the camera is close enough).
@@ -1568,9 +1553,9 @@ function MapCanvas({
 			| mapboxgl.GeoJSONSource
 			| undefined;
 		if (src && "setData" in src) {
-			src.setData(occupancyToGeoJson(occupancy));
+			src.setData(occupancyGeoJson);
 		}
-	}, [showOccupancy, occupancy]);
+	}, [showOccupancy, occupancy, occupancyGeoJson]);
 
 	// Push updated listings into the source whenever the filter changes.
 	// setData is safe even while the style is still streaming, so apply it
@@ -1583,9 +1568,9 @@ function MapCanvas({
 		if (!map) return;
 		const src = map.getSource("listings");
 		if (src && "setData" in src) {
-			(src as mapboxgl.GeoJSONSource).setData(toGeoJson(listings));
+			(src as mapboxgl.GeoJSONSource).setData(listingsGeoJson);
 		}
-	}, [listings]);
+	}, [listings, listingsGeoJson]);
 
 	return <div ref={containerRef} className="h-full w-full" />;
 }

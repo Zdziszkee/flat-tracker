@@ -36,6 +36,32 @@ function buildingHeight(tagsJson: string | null): number {
 	return 12;
 }
 
+/**
+ * Grow a ring ~2% about its centroid. The Standard style extrudes the SAME
+ * OSM footprints, so identical walls z-fight/interleave (stripes); the amber
+ * shell must fully enclose the basemap volume. Done server-side (was
+ * client-side) so the map can hand the URL to mapbox's GeoJSON source and let
+ * the mapbox web worker fetch+parse the payload off the UI thread.
+ */
+function expandRing(
+	ring: Array<{ lat: number; lng: number }>,
+): [number, number][] {
+	const pts = ring.map((p) => [p.lng, p.lat] as [number, number]);
+	let cx = 0;
+	let cy = 0;
+	for (const [x, y] of pts) {
+		cx += x;
+		cy += y;
+	}
+	cx /= pts.length;
+	cy /= pts.length;
+	for (const p of pts) {
+		p[0] = cx + (p[0] - cx) * 1.02;
+		p[1] = cy + (p[1] - cy) * 1.02;
+	}
+	return pts;
+}
+
 // Memoized per process, but with a TTL: building assignments and RCN
 // imports land while the dev/prod server keeps running, and a permanent
 // cache would serve a stale txCount map (missing amber buildings).
@@ -75,16 +101,17 @@ async function getFeatures(): Promise<CachedFeature[]> {
 			txCount: txByBuilding.get(r.id) ?? 0,
 			height: buildingHeight(r.tags),
 			// The stored geometry is a ring of {lat, lng}; wrap it into a
-			// GeoJSON Polygon ([lng, lat] coordinate order).
+			// GeoJSON Polygon ([lng, lat] coordinate order), pre-expanded so
+			// the client never has to touch the coordinates.
 			geometry: {
 				type: "Polygon" as const,
 				coordinates: [
-					(
+					expandRing(
 						JSON.parse(r.geometry as string) as Array<{
 							lat: number;
 							lng: number;
-						}>
-					).map((p) => [p.lng, p.lat]),
+						}>,
+					),
 				],
 			},
 		}))
@@ -102,7 +129,10 @@ export const Route = createFileRoute("/api/buildings/geojson")({
 					type: "FeatureCollection",
 					features: features.map((f) => ({
 						type: "Feature",
-						id: f.id,
+						// Feature id = OSM id: the map keys fill-extrusion
+						// feature-state (basemap height sync) and click
+						// lookups (/api/buildings/lookup?osmId=) by it.
+						id: f.osmId,
 						geometry: f.geometry,
 						properties: {
 							osmId: f.osmId,
