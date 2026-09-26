@@ -274,7 +274,6 @@ export function matchAddressString(
  * the right twin).
  */
 const TOWN_CELL = 0.02; // ~2 km grid
-const TOWN_MIN_COMPONENT = 5; // stray buildings don't count as a cluster
 const TOWN_DOMINANT_SHARE = 0.8; // one cluster must hold this share of buildings
 
 /**
@@ -288,7 +287,7 @@ const TOWN_DOMINANT_SHARE = 0.8; // one cluster must hold this share of building
 function dominantCluster(
 	points: Array<{ lat: number; lng: number }>,
 ): Array<{ lat: number; lng: number }> | null {
-	if (points.length < 10) return points; // too few to judge; trust the average
+	if (points.length <= 1) return points;
 	const cellOf = (p: { lat: number; lng: number }) =>
 		`${Math.floor(p.lat / TOWN_CELL)}:${Math.floor(p.lng / TOWN_CELL)}`;
 	const counts = new Map<string, number>();
@@ -320,15 +319,12 @@ function dominantCluster(
 		const size = [...cells].reduce((s, k) => s + (counts.get(k) ?? 0), 0);
 		clusters.push({ size, cells });
 	}
-	const significant = clusters.filter((c) => c.size >= TOWN_MIN_COMPONENT);
-	if (significant.length === 0) return points; // too few to judge
-	const dominant = significant.reduce((a, b) => (a.size >= b.size ? a : b));
-	// Twins with no clear majority are ambiguous.
-	if (
-		significant.length > 1 &&
-		dominant.size / points.length < TOWN_DOMINANT_SHARE
-	)
-		return null;
+	if (clusters.length === 1) return points;
+	const dominant = clusters.reduce((a, b) => (a.size >= b.size ? a : b));
+	// Twins with no clear majority are ambiguous. Even a handful of
+	// buildings splits into distinct cells ("73, 33-230, Dąbrowica" was 2+2
+	// houses in two villages 60 km apart).
+	if (dominant.size / points.length < TOWN_DOMINANT_SHARE) return null;
 	// One settlement plus stray mislabels (a handful of buildings tagged
 	// into the wrong county): keep the settlement only — a plain mean over
 	// all points is exactly what dragged the "Krzeczow" pin 8 km out.
