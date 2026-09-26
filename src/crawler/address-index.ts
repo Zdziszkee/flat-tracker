@@ -251,9 +251,89 @@ export function matchAddressString(
 		);
 		if (cities.size > 1) return null;
 	}
-	const lat = buildings.reduce((s, b) => s + b.lat, 0) / buildings.length;
-	const lng = buildings.reduce((s, b) => s + b.lng, 0) / buildings.length;
+	// Twin-town guard: a city hint cannot disambiguate same-name villages
+	// (both "Dąbrowica" tag addr:city=Dąbrowica), so a street set spanning
+	// several geographic clusters would average into the empty middle ("73,
+	// 33-230, Dąbrowica" landed 30 km from every real house). Drop it so
+	// the caller falls through to the geocoder, whose postcode picks the
+	// right twin. A single elongated street chains together and survives.
+	const core = dominantCluster(buildings);
+	if (!core) return null;
+	const lat = core.reduce((s, b) => s + b.lat, 0) / core.length;
+	const lng = core.reduce((s, b) => s + b.lng, 0) / core.length;
 	return { lat, lng, building: null };
+}
+
+/**
+ * Same-name town disambiguation for the city centroid fallback. Małopolska
+ * has several pairs of villages with the same name (two "Leśnica", two
+ * "Przybysławice", ...); averaging all their buildings pins listings in the
+ * empty middle between the twins. Towns whose buildings form more than one
+ * geographic cluster are therefore dropped from the centroid map so the
+ * caller falls through to the geocoder (which the postal code can steer to
+ * the right twin).
+ */
+const TOWN_CELL = 0.02; // ~2 km grid
+const TOWN_MIN_COMPONENT = 5; // stray buildings don't count as a cluster
+const TOWN_DOMINANT_SHARE = 0.8; // one cluster must hold this share of buildings
+
+/**
+ * The points of the town's main flood-fill cluster, or null when the town is
+ * ambiguous (several significant clusters, none dominant — twins must fall
+ * through to the geocoder, whose postal code can pick the right one).
+ * Centroids must be averaged over THIS, not over all points: a handful of
+ * mislabeled buildings a county away drags a plain mean kilometres out of
+ * the village (a "Krzeczow" pin landed 8 km from every real building).
+ */
+function dominantCluster(
+	points: Array<{ lat: number; lng: number }>,
+): Array<{ lat: number; lng: number }> | null {
+	if (points.length < 10) return points; // too few to judge; trust the average
+	const cellOf = (p: { lat: number; lng: number }) =>
+		`${Math.floor(p.lat / TOWN_CELL)}:${Math.floor(p.lng / TOWN_CELL)}`;
+	const counts = new Map<string, number>();
+	for (const p of points)
+		counts.set(cellOf(p), (counts.get(cellOf(p)) ?? 0) + 1);
+	// Flood-fill 8-neighbourhoods of occupied cells; an elongated village
+	// chains together, twin villages kilometres apart do not.
+	const seen = new Set<string>();
+	const clusters: Array<{ size: number; cells: Set<string> }> = [];
+	for (const start of counts.keys()) {
+		if (seen.has(start)) continue;
+		const cells = new Set<string>();
+		const stack = [start];
+		seen.add(start);
+		while (stack.length > 0) {
+			const key = stack.pop() as string;
+			cells.add(key);
+			const [r, c] = key.split(":").map(Number);
+			for (let dr = -1; dr <= 1; dr++) {
+				for (let dc = -1; dc <= 1; dc++) {
+					const nk = `${r + dr}:${c + dc}`;
+					if (counts.has(nk) && !seen.has(nk)) {
+						seen.add(nk);
+						stack.push(nk);
+					}
+				}
+			}
+		}
+		const size = [...cells].reduce((s, k) => s + (counts.get(k) ?? 0), 0);
+		clusters.push({ size, cells });
+	}
+	const significant = clusters.filter((c) => c.size >= TOWN_MIN_COMPONENT);
+	if (significant.length === 0) return points; // too few to judge
+	const dominant = significant.reduce((a, b) => (a.size >= b.size ? a : b));
+	// Twins with no clear majority are ambiguous.
+	if (
+		significant.length > 1 &&
+		dominant.size / points.length < TOWN_DOMINANT_SHARE
+	)
+		return null;
+	// One settlement plus stray mislabels (a handful of buildings tagged
+	// into the wrong county): keep the settlement only — a plain mean over
+	// all points is exactly what dragged the "Krzeczow" pin 8 km out.
+	const core = points.filter((p) => dominant.cells.has(cellOf(p)));
+	return core.length > 0 ? core : points;
 }
 
 /** cityNorm -> centroid of that city's buildings (offline fallback). */
@@ -269,7 +349,7 @@ export async function buildCityCentroids(): Promise<
 		.from(osmBuildings)
 		.where(isNotNull(osmBuildings.tags));
 
-	const sums = new Map<string, { lat: number; lng: number; n: number }>();
+	const points = new Map<string, Array<{ lat: number; lng: number }>>();
 	for (const r of rows) {
 		let city: string | undefined;
 		if (r.tags) {
@@ -283,16 +363,19 @@ export async function buildCityCentroids(): Promise<
 		if (!city) continue;
 		const key = normStreet(city);
 		if (!key) continue;
-		const s = sums.get(key) ?? { lat: 0, lng: 0, n: 0 };
-		s.lat += r.centroidLat;
-		s.lng += r.centroidLng;
-		s.n += 1;
-		sums.set(key, s);
+		const list = points.get(key) ?? [];
+		list.push({ lat: r.centroidLat, lng: r.centroidLng });
+		points.set(key, list);
 	}
-	return new Map(
-		[...sums.entries()].map(([k, s]) => [
-			k,
-			{ lat: s.lat / s.n, lng: s.lng / s.n },
-		]),
-	);
+
+	const out = new Map<string, { lat: number; lng: number }>();
+	for (const [key, list] of points) {
+		const core = dominantCluster(list);
+		if (!core) continue;
+		out.set(key, {
+			lat: core.reduce((s, p) => s + p.lat, 0) / core.length,
+			lng: core.reduce((s, p) => s + p.lng, 0) / core.length,
+		});
+	}
+	return out;
 }

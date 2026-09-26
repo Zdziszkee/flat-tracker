@@ -141,7 +141,10 @@ boilerplate ("dla której", "Sąd/SR", "Wydział", "KW nr", "z siedzibą")
 before mining a street or city — the court's seat is not the property's
 location. For the same reason a city mined from a title only overrides a
 generic hint (Kraków/małopolskie/a district); a specific town from the
-structured address always wins.
+structured address always wins. The offline town centroid is only used
+for unambiguous names: where one village name exists twice in the region
+(two "Leśnica"), the centroid map skips it and Photon resolves the name
+together with the postal code from the address.
 
 The same pass runs automatically inside every `refreshAll()` with a
 Photon budget of 100/run (local index matches are instant), so the

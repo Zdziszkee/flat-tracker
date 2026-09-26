@@ -77,7 +77,7 @@ const COURT_MARK_RE =
 	/\b(?:dla któr\w*|sąd\w*|sr\b|wydział\w*|ksi[ąa]g wieczyst\w*|kw nr|nr kw|z siedzib\w*|komornik\w*)/iu;
 
 /** The property-describing front of a title (court boilerplate removed). */
-function propertyPartOf(title: string | null | undefined): string {
+export function propertyPartOf(title: string | null | undefined): string {
 	if (!title) return "";
 	const m = COURT_MARK_RE.exec(title);
 	return (m ? title.slice(0, m.index) : title).replace(/\s+/g, " ").trim();
@@ -91,6 +91,16 @@ function normalizeWord(s: string): string {
 		.replace(/[^a-z0-9 ]/g, "")
 		.replace(/\s+/g, " ")
 		.trim();
+}
+
+/** First postal-code segment of a stored address ("32-065, Nawojowa Góra"). */
+function zipOf(address: string | null | undefined): string | null {
+	return (
+		address
+			?.split(",")
+			.map((s) => s.trim())
+			.find((s) => /^\d{2}-\d{3}$/.test(s)) ?? null
+	);
 }
 
 /**
@@ -141,7 +151,9 @@ async function photonGeocode(
 		const wanted = normalizeWord(streetPart)
 			.split(" ")
 			.filter((w) => w.length >= 3);
-		if (wanted.length > 0 && !wanted.some((w) => shown.includes(w)))
+		// No meaningful word to check ("73", a bare house number): accepting
+		// any in-bounds result is how listings end up on random points.
+		if (wanted.length === 0 || !wanted.some((w) => shown.includes(w)))
 			return null;
 		return { lat, lng };
 	} catch {
@@ -167,12 +179,15 @@ const PLACE_VALUES = new Set([
  * The offline city index only knows cities tagged on OSM buildings, so small
  * villages must fall back to Photon's place nodes. Restricts to place-typed
  * features (a church/house with a similar name must not win) and requires the
- * result to contain every significant query word.
+ * result to contain every significant query word. `zip` disambiguates
+ * same-name towns ("Leśnica" in gm. Stryszów vs. near Krościenko).
  */
 async function geocodeLocality(
 	name: string,
+	zip?: string | null,
 ): Promise<{ lat: number; lng: number } | null> {
-	const url = `${PHOTON}?q=${encodeURIComponent(`${name}, małopolskie`)}&limit=5`;
+	const query = `${zip ? `${zip} ` : ""}${name}, małopolskie`;
+	const url = `${PHOTON}?q=${encodeURIComponent(query)}&limit=5`;
 	try {
 		const res = await fetch(url, {
 			headers: { accept: "application/json" },
@@ -465,7 +480,12 @@ export async function geocodeUnlocatedListings(
 		// failed to match locally must never collapse to the city centroid —
 		// that is how whole districts pile up on one wrong point.
 		const isZipOnly = /^\d{2}-\d{3}$/.test(streetPart.trim());
-		const hasNoStreet = !parsed && (!streetPart || isZipOnly);
+		// A bare house number ("73, 33-230, Dąbrowica" — street unknown) is
+		// not a street name; treat the row as street-less so it lands on the
+		// town instead of whatever the geocoder makes of "73".
+		const isBareNumber = /^\d{1,4}[A-Za-z]?$/.test(streetPart.trim());
+		const hasNoStreet =
+			!parsed && (!streetPart || isZipOnly || isBareNumber);
 		if (hasNoStreet) {
 			const cityCentroid = cityCentroids.get(normStreet(cityHint ?? ""));
 			if (cityCentroid) {
@@ -481,7 +501,8 @@ export async function geocodeUnlocatedListings(
 			// only knows cities tagged on OSM buildings, so resolve the name
 			// against Photon's place nodes (cached, budgeted, ~1 req/s).
 			if (cityHint) {
-				const localityKey = normStreet(`loc:${cityHint}`);
+				const zip = zipOf(row.address);
+				const localityKey = normStreet(`loc:${cityHint} ${zip ?? ""}`);
 				let locality =
 					localityKey in nomCache ? nomCache[localityKey] : undefined;
 				if (locality === undefined) {
@@ -490,7 +511,13 @@ export async function geocodeUnlocatedListings(
 						continue;
 					}
 					nomBudget--;
-					locality = await geocodeLocality(cityHint);
+					locality = await geocodeLocality(cityHint, zip);
+					// Fall back to the bare name when the zip-qualified lookup
+					// finds nothing (postcode not indexed for that village).
+					if (!locality && zip && nomBudget > 0) {
+						nomBudget--;
+						locality = await geocodeLocality(cityHint);
+					}
 					nomCache[localityKey] = locality;
 					nomWrites++;
 					await new Promise((r) => setTimeout(r, 1050));

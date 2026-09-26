@@ -32,6 +32,20 @@ const BARE_RE = new RegExp(
 
 /** Words that never start a street name (ad-speak, real-estate jargon). */
 const STOPWORDS = new Set([
+	// Phase ordinals ("etap 1" is not a street; Photon matches it to
+	// Oświęcim's "Ostatni Etap" street and pins Kraków estates there).
+	"etap",
+	"etapie",
+	"etapu",
+	"etapem",
+	"etapy",
+	"etapow",
+	"etapom",
+	"etapowy",
+	"etapowe",
+	"etapowa",
+	"etapowej",
+	"etapowego",
 	"mieszkanie",
 	"mieszkania",
 	"mieszkaniowe",
@@ -243,7 +257,15 @@ function validStreet(street: string): boolean {
 	// powierzchni użytkowej") that the bare regex otherwise accepts.
 	if (words.length > 4) return false;
 	return words.every((w) => {
-		const clean = w.replace(/\.$/, ""); // "ul." -> "ul"
+		// Normalize diacritics before the stopword check: the lexicon is
+		// ASCII-only ("krakow", "male"), and an un-normalized "Kraków" /
+		// "Małe" slips past it, letting "Kołłątajówka Kraków od Spravia"
+		// pass as a street name.
+		const clean = w
+			.normalize("NFD")
+			.replace(/[\u0300-\u036f]/g, "")
+			.toLowerCase()
+			.replace(/\.$/, ""); // "ul." -> "ul"
 		if (FUNCTION_WORDS.has(clean)) return true;
 		return !STOPWORDS.has(clean);
 	});
@@ -307,7 +329,7 @@ export function isKnownKrakowStreet(street: string): boolean {
  * "Arciszewski" -> "Arciszewskiego". Falls back to the input when no
  * canonical match is found, so the caller can still try Nominatim.
  */
-function resolveStreetName(street: string): string {
+export function resolveStreetName(street: string): string {
 	const key = streetKey(street);
 	if (!key) return street;
 	const exact = STREET_KEYS.get(key);
