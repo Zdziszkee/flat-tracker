@@ -391,7 +391,7 @@ function popupHtml(l: ApiListing): string {
       ${threadHtml}
       ${amenitiesHtml}
       ${
-				stats
+				stats?.txCount
 					? `<div class="border-t pt-1 text-xs">
           <div class="font-medium text-amber-700">RCN history: ${stats.txCount} transakcji</div>
           <div>Śr. ${formatPln(stats.txAvgPricePerM2)}/m²${range}</div>

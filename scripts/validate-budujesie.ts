@@ -222,6 +222,12 @@ const threadHtml = `<div id="page-body">
 		"Budowa przy ul. Kwiatowej 3 w Tarnowie, dobra komunikacja z Krakowem",
 	);
 	check(town === "Tarnów", "town prose: Tarnów", `got ${town}`);
+	check(
+		mineTownInText(
+			"Wygląda na to, że w okolicy zmieni się sporo, zwłaszcza w okolicach centrum",
+		) == null,
+		"town prose: substring (zwłaszcza) not a town",
+	);
 
 	// Guards: prose fragments never become street names, build verbs get
 	// stripped, and a post about an unrelated place never displaces the

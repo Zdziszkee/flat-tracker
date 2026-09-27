@@ -497,14 +497,16 @@ export function parseThreadPosts($: CheerioSelection): ThreadPost[] {
 }
 
 /** Town mention in post prose ("w Wieliczce", "Wieliczka k. Krakowa"):
- * inflected forms match by last-word stem ("Wieliczka" -> "wielic").
- * Kraków is excluded — every post mentions it and it is the default. */
+ * inflected forms match by last-word stem ("Wieliczka" -> "wielic"), at
+ * word starts only ("zwłaszcza" must not match "Szczawnica"). Kraków is
+ * excluded — every post mentions it and it is the default. */
 export function mineTownInText(text: string): string | null {
 	const fold = foldForCompare(text);
 	for (const town of MAŁOPOLSKA_TOWNS) {
 		if (town === "Kraków") continue;
 		const stem = foldForCompare(town.split(" ").pop() ?? town).slice(0, 5);
-		if (stem.length >= 4 && fold.includes(stem)) return town;
+		if (stem.length >= 4 && new RegExp(`\\b${stem}`, "u").test(fold))
+			return town;
 	}
 	return null;
 }
