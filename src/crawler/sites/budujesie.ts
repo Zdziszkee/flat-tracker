@@ -190,6 +190,7 @@ function investmentNameFallback(title: string): string | null {
 	const name = seg
 		.replace(TYPE_NOISE_RE, "")
 		.replace(/\s+\bKrak[oó]w\w*\b.*$/iu, "")
+		.replace(/\s+\bk\.?$/iu, "")
 		.replace(/\s+/g, " ")
 		.trim();
 	const words = name.split(" ").filter(Boolean);
@@ -244,7 +245,7 @@ function mineTownName(title: string): string | null {
 	const head = (title.split(/\s+[-–—(]/u)[0] ?? "").replace(TYPE_NOISE_RE, " ");
 	for (const segment of [head, title]) {
 		for (const word of segment.split(/\s+/u)) {
-			const clean = word.replace(/[.,;:]+$/u, "");
+			const clean = word.replace(/^[("'«]+/u, "").replace(/[.,;:)]+$/u, "");
 			if (MAŁOPOLSKA_TOWNS.has(clean)) return clean;
 		}
 	}
@@ -305,13 +306,6 @@ export interface ThreadPost {
 	text: string;
 }
 
-/** Thread-page enrichment cache (data/crawler/budujesie-topics.json):
- * keyed by topic id, it records what the last successful thread fetch saw
- * (`lastPostAt`) so re-crawls only fetch topics whose thread moved, and
- * what it learned (OP-mined address, description, posts) so list-page rows
- * keep the enrichment without a refetch. */
-const TOPIC_CACHE_PATH = "data/crawler/budujesie-topics.json";
-
 interface CachedTopic {
 	lastPostAt: string | null;
 	address: string | null;
@@ -321,11 +315,23 @@ interface CachedTopic {
 
 let topicCacheState: Record<string, CachedTopic> | null = null;
 
+/** Thread-page enrichment cache (data/crawler/budujesie-topics.json,
+ * overridable via BUDUJESIE_TOPIC_CACHE for the fixture harness): keyed by
+ * topic id, it records what the last successful thread fetch saw
+ * (`lastPostAt`) so re-crawls only fetch topics whose thread moved, and
+ * what it learned (OP-mined address, description, posts) so list-page rows
+ * keep the enrichment without a refetch. */
+function topicCachePath(): string {
+	return (
+		process.env.BUDUJESIE_TOPIC_CACHE ?? "data/crawler/budujesie-topics.json"
+	);
+}
+
 function loadTopicCache(): Record<string, CachedTopic> {
 	if (topicCacheState) return topicCacheState;
 	let parsed: Record<string, Partial<CachedTopic>> = {};
 	try {
-		parsed = JSON.parse(readFileSync(TOPIC_CACHE_PATH, "utf8"));
+		parsed = JSON.parse(readFileSync(topicCachePath(), "utf8"));
 	} catch {
 		// Missing or corrupt cache: start empty, threads simply re-fetch.
 	}
@@ -343,8 +349,9 @@ function loadTopicCache(): Record<string, CachedTopic> {
 }
 
 function saveTopicCache(cache: Record<string, CachedTopic>): void {
-	mkdirSync(dirname(TOPIC_CACHE_PATH), { recursive: true });
-	writeFileSync(TOPIC_CACHE_PATH, JSON.stringify(cache));
+	const path = topicCachePath();
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, JSON.stringify(cache));
 }
 
 function parseFeaturesJson(s: string | null): Record<string, unknown> {
@@ -421,22 +428,7 @@ export function parseTopicCard(
 		if (street)
 			address = formatAddressForGeocode(street, undefined, area, city);
 	}
-	// Name/street mining can leak a trailing preposition ("Nad Stawem w
-	// Krakowie" -> "Nad Stawem w") or a sub-3-char fragment of an
-	// investment name ("Apartamenty Go", "Osiedle Fi"). A junk head is
-	// worse than no address: it pollutes the row and can pin to an
-	// unrelated street. Strip the preposition, drop tiny fragments.
-	if (address) {
-		const parts = address.split(",");
-		const head = (parts[0] ?? "")
-			.replace(/\s+(?:w|z|i|na|przy|do|od|u|oraz|we|ze)$/iu, "")
-			.trim();
-		if (head.length < 3) address = null;
-		else {
-			parts[0] = head;
-			address = parts.join(",");
-		}
-	}
+	address = sanitizeAddressHead(address);
 
 	const features: Record<string, unknown> = {};
 	if (author) features.author = author;
@@ -517,16 +509,74 @@ export function mineTownInText(text: string): string | null {
 	return null;
 }
 
+/** A junk head is worse than no address: it pollutes the row and can pin
+ * to an unrelated street. Strip trailing prepositions ("Nad Stawem w"),
+ * build-state verbs ("Dobrego Pasterza powstała") and noun debris
+ * ("domków i segmentów", "z czego 2"); drop sub-3-char fragments
+ * ("Apartamenty Go", "Osiedle Fi"). */
+function sanitizeAddressHead(address: string | null): string | null {
+	if (!address) return null;
+	const parts = address.split(",");
+	const head = (parts[0] ?? "")
+		.replace(
+			/\s+(?:w|z|i|na|przy|do|od|u|oraz|we|ze|powstała|powstały|powstaje|powstanie|zlokalizowana|znajduje)$/iu,
+			"",
+		)
+		.trim();
+	if (head.length < 3) return null;
+	if (
+		/^(?:domków|segmentów|mieszkań|lokali|budynków|etap\w*|czego|tych|tym|tego|wszystkich|każdego|nowych|nowe)\b/iu.test(
+			head,
+		)
+	)
+		return null;
+	parts[0] = head;
+	return parts.join(",");
+}
+
+/** Street candidates that are really prose fragments ("z czego 2"). */
+const PROSE_HEAD_RE =
+	/^(?:z|w|we|na|do|i|o|od|u|za|po|co|jak|że|by|się|oraz|ale|nie|tak|tu|jest|są|które|który|czego)\b/iu;
+
 /** The OP usually states the real location in prose — far more reliable
- * than title mining. */
-export function minePostAddress(text: string): string | null {
+ * than title mining. `townOverride` (the title's town) wins over a town
+ * guessed from the post. */
+export function minePostAddress(
+	text: string,
+	townOverride?: string,
+): string | null {
 	const parsed = parseAddressFromText(text);
 	if (!parsed) return null;
-	return formatAddressForGeocode(
-		resolveStreetName(parsed.street),
-		parsed.number,
-		null,
-		mineTownInText(text) ?? undefined,
+	if (PROSE_HEAD_RE.test(parsed.street.trim())) return null;
+	return sanitizeAddressHead(
+		formatAddressForGeocode(
+			resolveStreetName(parsed.street),
+			parsed.number,
+			null,
+			townOverride ?? mineTownInText(text) ?? undefined,
+		),
+	);
+}
+
+/** Address for a thread row: the OP prose wins when it names a place that
+ * agrees with the title's town (or when the title names none). A post
+ * mentioning an unrelated place (a sales office in another town) never
+ * displaces the title's location. */
+export function chooseThreadAddress(
+	title: string,
+	cardAddress: string | null,
+	opText: string | null,
+): string | null {
+	if (!opText) return cardAddress;
+	const titleTown = mineTownName(title);
+	const opTown = mineTownInText(opText);
+	const townsAgree =
+		!titleTown ||
+		!opTown ||
+		foldForCompare(titleTown) === foldForCompare(opTown);
+	if (!townsAgree) return cardAddress;
+	return (
+		minePostAddress(opText, titleTown ?? opTown ?? undefined) ?? cardAddress
 	);
 }
 
@@ -568,9 +618,7 @@ export const budujesieAdapter: CheerioAdapter = {
 			features.posts = posts;
 			const merged: Listing = {
 				...card,
-				address: opText
-					? (minePostAddress(opText) ?? card.address)
-					: card.address,
+				address: chooseThreadAddress(card.title, card.address, opText),
 				description: opText ? opText.slice(0, 2000) : card.description,
 				features: JSON.stringify(features),
 			};

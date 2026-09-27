@@ -11,10 +11,15 @@
 import * as cheerio from "cheerio";
 import {
 	budujesieAdapter,
+	chooseThreadAddress,
 	minePostAddress,
 	mineTownInText,
 	parseThreadPosts,
 } from "../src/crawler/sites/budujesie";
+
+// Fixtures must not read (or write) the live per-topic thread cache — the
+// pinned rows use small topic ids that would collide with real entries.
+process.env.BUDUJESIE_TOPIC_CACHE = `/tmp/budujesie-topics-fixtures-${process.pid}.json`;
 
 let failures = 0;
 const check = (ok: boolean, label: string, extra = ""): void => {
@@ -114,6 +119,15 @@ const rows: Array<[string, string | null, string | null, string | null]> = [
 		"Skawina",
 		"2024-05-19T11:35:00",
 	],
+	[
+		// Town behind an opening paren still matches ("(Wieliczka / Kraków)").
+		`<li class="row"><a class="topictitle" href="./viewtopic.php?f=5&amp;t=8">Aleja Zbożowa (Wieliczka / Kraków) - WBG Development forum</a>
+		 <div class="responsive-hide">autor: x » 19 maja 2024</div>
+		 <dd class="lastpost">Ostatni post autor: x Wyświetl najnowszy post 19 maja 2024, 11:35</dd></li>`,
+		"2024-05-19T00:00:00",
+		"Wieliczka!Kraków",
+		"2024-05-19T11:35:00",
+	],
 ];
 
 for (const [html, wantListedAt, wantAddressPart, wantLastPost] of rows) {
@@ -208,6 +222,43 @@ const threadHtml = `<div id="page-body">
 		"Budowa przy ul. Kwiatowej 3 w Tarnowie, dobra komunikacja z Krakowem",
 	);
 	check(town === "Tarnów", "town prose: Tarnów", `got ${town}`);
+
+	// Guards: prose fragments never become street names, build verbs get
+	// stripped, and a post about an unrelated place never displaces the
+	// title's town.
+	check(
+		minePostAddress("W ofercie mamy 12 mieszkań z czego 2 to kawalerki.") ==
+			null,
+		"OP guard: prose fragment rejected",
+	);
+	const verbStripped = minePostAddress(
+		"W Krakowie przy ulicy Dobrego Pasterza powstała / powstaje nowa inwestycja.",
+	);
+	check(
+		verbStripped === "Dobrego Pasterza, Kraków",
+		"OP address: build verb stripped",
+		`got ${verbStripped}`,
+	);
+	const kept = chooseThreadAddress(
+		"Magnoliowa Polana 2, Wieliczka (ul. Magnoliowa) od Techniq",
+		"Magnoliowa, Wieliczka",
+		"Biuro sprzedaży mieści się przy ul. Ochota 3 w Proszowicach.",
+	);
+	check(
+		kept === "Magnoliowa, Wieliczka",
+		"OP town conflict: title address kept",
+		`got ${kept}`,
+	);
+	const agreed = chooseThreadAddress(
+		"Magnoliowa Polana 2, Wieliczka (ul. Magnoliowa) od Techniq",
+		"Magnoliowa Polana, Wieliczka",
+		"Inwestycja powstaje przy ul. Magnoliowej 8 w Wieliczce.",
+	);
+	check(
+		(agreed ?? "").includes("Magnoliow"),
+		"OP town agrees: OP street wins",
+		`got ${agreed}`,
+	);
 }
 
 // --- live coverage ---------------------------------------------------------
