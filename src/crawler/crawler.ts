@@ -119,6 +119,7 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 						body.toString(),
 						request.url,
 						pushUrls,
+						$ as never,
 					);
 					listings.push(...pageListings);
 					return;

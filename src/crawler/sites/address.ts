@@ -410,7 +410,8 @@ export function formatAddressForGeocode(
 	street: string,
 	number?: string,
 	district?: string | null,
+	city: string | null = "Kraków",
 ): string {
 	const streetPart = number ? `${street} ${number}` : street;
-	return [streetPart, district, "Kraków"].filter(Boolean).join(", ");
+	return [streetPart, district, city].filter(Boolean).join(", ");
 }

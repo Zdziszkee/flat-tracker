@@ -267,6 +267,55 @@ function popupHtml(l: ApiListing): string {
 		}
 	}
 
+	// The investment description and the comments under it (scraped from
+	// the topic's first page, features.posts).
+	let threadHtml = "";
+	if (isBudujesie && l.features) {
+		try {
+			const f = JSON.parse(l.features) as {
+				posts?: { author?: string | null; at?: string | null; text?: string }[];
+			};
+			const posts = Array.isArray(f.posts) ? f.posts : [];
+			const opText = posts[0]?.text ?? "";
+			if (opText) {
+				const dateLabel = (at?: string | null): string => {
+					if (!at) return "";
+					const d = new Date(at);
+					return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("pl-PL");
+				};
+				const excerpt = opText.slice(0, 220);
+				const comments = posts.slice(1, 4);
+				threadHtml = `
+      <div class="border-t pt-1 text-xs">
+        <div class="font-medium text-amber-700">Inwestycja</div>
+        <div class="text-gray-600">${escapeHtml(excerpt)}${
+					opText.length > 220 ? "…" : ""
+				}</div>${
+					comments.length > 0
+						? `
+        <div class="mt-1 font-medium text-amber-700">Komentarze</div>${comments
+					.map((c) => {
+						const text = c.text ?? "";
+						const date = dateLabel(c.at);
+						return `
+        <div class="mt-1 text-gray-600"><span class="font-medium text-gray-700">${escapeHtml(
+					c.author ?? "anonim",
+				)}${
+					date ? ` · ${escapeHtml(date)}` : ""
+				}</span>: ${escapeHtml(text.slice(0, 160))}${
+					text.length > 160 ? "…" : ""
+				}</div>`;
+					})
+					.join("")}`
+						: ""
+				}
+      </div>`;
+			}
+		} catch {
+			// malformed features JSON: skip the section silently
+		}
+	}
+
 	// Short-term-rental context lines.
 	const stayLines: string[] = [];
 	if (l.minimumStayNights != null && l.minimumStayNights > 1)
@@ -339,6 +388,7 @@ function popupHtml(l: ApiListing): string {
       ${utilities ? `<div class="text-gray-500">${escapeHtml(utilities)}</div>` : ""}
       ${stayLines.join("\n      ")}
       <div class="text-gray-400">Dodano: ${addedLabel}</div>
+      ${threadHtml}
       ${amenitiesHtml}
       ${
 				stats

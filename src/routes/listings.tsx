@@ -205,6 +205,67 @@ function addedLabel(row: Row): string {
 	return added ? new Date(added).toLocaleDateString("pl-PL") : "";
 }
 
+interface ThreadPostView {
+	author?: string | null;
+	at?: string | null;
+	text?: string;
+}
+
+/** Forum investment detail: the topic description with the comments under
+ * it (scraped from the thread's first page into features.posts). */
+function BudujesieThreadPanel({ row }: { row: Row }) {
+	let posts: ThreadPostView[] = [];
+	try {
+		const f: unknown = row.features ? JSON.parse(row.features) : null;
+		const raw =
+			f && typeof f === "object" ? (f as { posts?: unknown }).posts : null;
+		if (Array.isArray(raw)) posts = raw as ThreadPostView[];
+	} catch {
+		// malformed features JSON: no posts
+	}
+	const opText = posts[0]?.text ?? "";
+	const comments = posts.slice(1, 8);
+	const dateLabel = (at?: string | null): string => {
+		if (!at) return "";
+		const d = new Date(at);
+		return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("pl-PL");
+	};
+	if (!opText && comments.length === 0)
+		return (
+			<div className="p-4 text-sm text-gray-500">
+				Brak pobranej treści wątku — odśwież źródło, aby pobrać opis inwestycji
+				i komentarze.
+			</div>
+		);
+	return (
+		<div className="p-4 text-sm">
+			{opText && (
+				<div>
+					<div className="font-medium text-amber-700">Inwestycja</div>
+					<p className="mt-1 whitespace-pre-wrap text-gray-700">{opText}</p>
+				</div>
+			)}
+			{comments.length > 0 && (
+				<div className="mt-3">
+					<div className="font-medium text-amber-700">Komentarze</div>
+					{comments.map((c, i) => (
+						<div
+							key={`${c.author ?? "anonim"}-${c.at ?? i}`}
+							className="mt-2 border-l-2 border-amber-200 pl-2 text-gray-700"
+						>
+							<span className="font-medium">{c.author ?? "anonim"}</span>
+							{dateLabel(c.at) ? (
+								<span className="text-gray-400"> · {dateLabel(c.at)}</span>
+							) : null}
+							<p className="whitespace-pre-wrap">{c.text ?? ""}</p>
+						</div>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
 export const Route = createFileRoute("/listings")({
 	component: ListingsPage,
 });
@@ -361,7 +422,11 @@ function ListingsPage() {
 									{expanded === r.id && (
 										<tr key={`${r.source}-${r.id}-x`}>
 											<td colSpan={9} className="border-t bg-gray-50 p-0">
-												<ValuationPanel id={r.id} />
+												{r.source === "budujesie" ? (
+													<BudujesieThreadPanel row={r} />
+												) : (
+													<ValuationPanel id={r.id} />
+												)}
 											</td>
 										</tr>
 									)}

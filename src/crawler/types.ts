@@ -120,13 +120,16 @@ export interface CheerioAdapter extends AdapterBase {
 	parseListingCard?: ($: CheerioSelection, el: unknown) => Listing | null;
 	/**
 	 * Strategy B: whole-page extraction from raw HTML. Used by sites that
-	 * embed structured JSON (otodom __NEXT_DATA__, olx __PRERENDERED_STATE__).
-	 * `enqueue` accepts additional URLs to crawl (detail pages, page 2...).
+	 * embed structured JSON (otodom __NEXT_DATA__, olx __PRERENDERED_STATE__)
+	 * and by DOM sites that need follow-up requests (budujesie thread pages).
+	 * `enqueue` accepts additional URLs to crawl (detail pages, page 2...);
+	 * `root` is the parsed Cheerio selection Crawlee built for the page.
 	 */
 	extractHtml?: (
 		html: string,
 		url: string,
 		enqueue: (urls: string[]) => void | Promise<void>,
+		root?: CheerioSelection,
 	) => Promise<Listing[]>;
 }
 

@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { CheerioAdapter, CheerioSelection, Listing } from "../types.ts";
 import {
 	formatAddressForGeocode,
@@ -21,12 +23,12 @@ import {
  * years ago surfaces when someone bumps it. Rows are never pruned
  * (`pruneOldListings` only removes otodom/olx).
  *
- * Coordinates: the portal has none. The adapter mines a street address out
- * of the topic title (the strict shared parser first, then a forum-title
- * preprocessing pass) and falls back to the investment name as an
- * address-like locality, so `geocode-addresses` can place the row via the
- * local OSM street index or Photon. Rows that mine nothing stay unlocated
- * rather than piling onto the Kraków centroid.
+ * Coordinates: the portal has none. The topic's first post states the
+ * real location in prose ("powstaje przy ul. Magnoliowej 8 w Wieliczce"),
+ * so the thread fetch mines the address out of the post text first and the
+ * title mining above is only the fallback. The same fetch stores the
+ * posts (the investment description plus the comments under it) in the
+ * listing's features JSON for the map popup and the listings panel.
  */
 
 const BASE = "https://budujesie.pl";
@@ -167,6 +169,14 @@ function mineForumAddress(
 	return null;
 }
 
+/** Diacritic-insensitive lowercase for name/town comparisons. */
+function foldForCompare(s: string): string {
+	return s
+		.normalize("NFD")
+		.replace(/\p{Diacritic}/gu, "")
+		.toLowerCase();
+}
+
 /**
  * Investment-name fallback ("Osiedle Kołłątajówka Kraków od Spravia" ->
  * "Kołłątajówka"): the head segment stripped of type nouns and the city
@@ -223,12 +233,20 @@ const MAŁOPOLSKA_TOWNS = new Set([
 	"Zakopane",
 ]);
 
-/** Last-resort town mining: the head segment naming a known town. */
+/**
+ * Town mining: a known town in the title ("Inwestycja Magnoliowa -
+ * Wieliczka", "Enklava Skawina"). Head segment first for precision, then
+ * the whole title — forum titles put the town after a " - " commentary
+ * split often enough that the head alone lost it ("Pod Jabłoniami -
+ * Tarnów" geocoded with the default city and landed in Kraków).
+ */
 function mineTownName(title: string): string | null {
 	const head = (title.split(/\s+[-–—(]/u)[0] ?? "").replace(TYPE_NOISE_RE, " ");
-	for (const word of head.split(/\s+/u)) {
-		const clean = word.replace(/[.,;:]+$/u, "");
-		if (MAŁOPOLSKA_TOWNS.has(clean)) return clean;
+	for (const segment of [head, title]) {
+		for (const word of segment.split(/\s+/u)) {
+			const clean = word.replace(/[.,;:]+$/u, "");
+			if (MAŁOPOLSKA_TOWNS.has(clean)) return clean;
+		}
 	}
 	return null;
 }
@@ -273,107 +291,320 @@ function extractDistrict(title: string): string | null {
 	return m ? m[1] : null;
 }
 
+/** Card rows on a forum list page. */
+const LIST_SELECTOR = "ul.topiclist.topics li.row";
+/** Scoped to the forum-level pagination: topic rows embed their own
+ * page-number links inside `.list-inner .pagination`, which must never
+ * be enqueued as forum pages. */
+const NEXT_PAGE_SELECTOR = ".action-bar .pagination li.next a";
+
+/** One forum post (the topic description or a comment under it). */
+export interface ThreadPost {
+	author: string | null;
+	at: string | null;
+	text: string;
+}
+
+/** Thread-page enrichment cache (data/crawler/budujesie-topics.json):
+ * keyed by topic id, it records what the last successful thread fetch saw
+ * (`lastPostAt`) so re-crawls only fetch topics whose thread moved, and
+ * what it learned (OP-mined address, description, posts) so list-page rows
+ * keep the enrichment without a refetch. */
+const TOPIC_CACHE_PATH = "data/crawler/budujesie-topics.json";
+
+interface CachedTopic {
+	lastPostAt: string | null;
+	address: string | null;
+	description: string | null;
+	posts: ThreadPost[];
+}
+
+let topicCacheState: Record<string, CachedTopic> | null = null;
+
+function loadTopicCache(): Record<string, CachedTopic> {
+	if (topicCacheState) return topicCacheState;
+	let parsed: Record<string, Partial<CachedTopic>> = {};
+	try {
+		parsed = JSON.parse(readFileSync(TOPIC_CACHE_PATH, "utf8"));
+	} catch {
+		// Missing or corrupt cache: start empty, threads simply re-fetch.
+	}
+	const cache: Record<string, CachedTopic> = {};
+	for (const [id, entry] of Object.entries(parsed)) {
+		cache[id] = {
+			lastPostAt: entry.lastPostAt ?? null,
+			address: entry.address ?? null,
+			description: entry.description ?? null,
+			posts: Array.isArray(entry.posts) ? entry.posts : [],
+		};
+	}
+	topicCacheState = cache;
+	return cache;
+}
+
+function saveTopicCache(cache: Record<string, CachedTopic>): void {
+	mkdirSync(dirname(TOPIC_CACHE_PATH), { recursive: true });
+	writeFileSync(TOPIC_CACHE_PATH, JSON.stringify(cache));
+}
+
+function parseFeaturesJson(s: string | null): Record<string, unknown> {
+	if (!s) return {};
+	try {
+		const v: unknown = JSON.parse(s);
+		return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+	} catch {
+		return {};
+	}
+}
+
+/** Cards on a forum list page (kept exported: the validator runs pinned
+ * fixtures through it and `extractHtml` re-emits cards through it). */
+export function parseTopicCard(
+	$: CheerioSelection,
+	el: unknown,
+): Listing | null {
+	const $el = $(el as never);
+	// The announcements block reuses the same row markup; only real
+	// topics are investments.
+	if (/\bannounce\b/u.test($el.attr("class") ?? "")) return null;
+
+	const href = $el.find("a.topictitle").attr("href");
+	const title = $el.find("a.topictitle").text().trim();
+	if (!href || !title) return null;
+
+	const topicId = new URL(href, BASE).searchParams.get("t");
+	if (!topicId) return null;
+	const url = `${BASE}/viewtopic.php?${new URLSearchParams({
+		f: "5",
+		t: topicId,
+	}).toString()}`;
+
+	// Topic start ("autor: Master » 25 wrz 2026, 12:44") is only in the
+	// non-responsive author line; the responsive variant repeats the
+	// LAST post date instead, so target `.responsive-hide` precisely.
+	const metaText = $el.find(".responsive-hide").text();
+	const listedAt = parsePlDate(metaText);
+	const author = metaText.match(/autor:\s*([^»]+?)\s*»/u)?.[1]?.trim() ?? null;
+	const lastPostAt = parsePlDate($el.find("dd.lastpost").text());
+	const replies = countOf($el.find("dd.posts").text());
+	const views = countOf($el.find("dd.views").text());
+
+	const district = extractDistrict(title);
+	const town = mineTownName(title);
+	// A street in another małopolska town must not carry the Kraków
+	// district/city suffix ("ul. Magnoliowa" is in Wieliczka, not Kraków):
+	// the geocoder filters street matches by city, so the wrong city pins
+	// nothing.
+	const city = town ?? "Kraków";
+	const area = town ? null : district;
+	const mined = mineForumAddress(title);
+	let address = mined
+		? formatAddressForGeocode(mined.street, mined.number, area, city)
+		: null;
+	if (!address) {
+		const nameGuess = investmentNameFallback(title);
+		// Name that already contains the town ("Enklava Skawina") pins
+		// through the validated bare-town shape ("Skawina, Kraków"); a
+		// name that does not ("Pod Jabłoniami" + "Tarnów") gets the town
+		// as its city instead of the Kraków default.
+		const nameMentionsTown =
+			town != null &&
+			foldForCompare(nameGuess ?? "").includes(foldForCompare(town));
+		if (town && nameGuess && !nameMentionsTown)
+			address = formatAddressForGeocode(nameGuess, undefined, null, town);
+		else if (town) address = formatAddressForGeocode(town, undefined, district);
+		else if (nameGuess)
+			address = formatAddressForGeocode(nameGuess, undefined, district);
+	}
+	if (!address) {
+		const street = mineStreetWindow(title);
+		if (street)
+			address = formatAddressForGeocode(street, undefined, area, city);
+	}
+	// Name/street mining can leak a trailing preposition ("Nad Stawem w
+	// Krakowie" -> "Nad Stawem w") or a sub-3-char fragment of an
+	// investment name ("Apartamenty Go", "Osiedle Fi"). A junk head is
+	// worse than no address: it pollutes the row and can pin to an
+	// unrelated street. Strip the preposition, drop tiny fragments.
+	if (address) {
+		const parts = address.split(",");
+		const head = (parts[0] ?? "")
+			.replace(/\s+(?:w|z|i|na|przy|do|od|u|oraz|we|ze)$/iu, "")
+			.trim();
+		if (head.length < 3) address = null;
+		else {
+			parts[0] = head;
+			address = parts.join(",");
+		}
+	}
+
+	const features: Record<string, unknown> = {};
+	if (author) features.author = author;
+	if (replies != null) features.replies = replies;
+	if (views != null) features.views = views;
+	if (lastPostAt) features.lastPostAt = lastPostAt;
+
+	// Thread-page enrichment (OP-mined address, the investment
+	// description, the parsed posts) rides along on every re-crawl so
+	// list-page rows never regress it.
+	const cachedTopic = loadTopicCache()[topicId];
+	let description: string | null = null;
+	if (cachedTopic) {
+		if (cachedTopic.address) address = cachedTopic.address;
+		description = cachedTopic.description;
+		if (cachedTopic.posts.length > 0) features.posts = cachedTopic.posts;
+	}
+
+	return {
+		source: "budujesie",
+		externalId: topicId,
+		url,
+		title,
+		price: null,
+		pricePerM2: null,
+		areaM2: null,
+		rooms: null,
+		floor: null,
+		district,
+		address,
+		description,
+		heatingType: null,
+		propertyType: "inwestycja",
+		features:
+			Object.keys(features).length > 0 ? JSON.stringify(features) : null,
+		lat: null,
+		lng: null,
+		listedAt,
+		scrapedAt: new Date().toISOString(),
+	};
+}
+
+/** prosilver thread posts: `<div class="post" id="p123">` blocks with the
+ * author in the profile aside and the body in `.content`. */
+export function parseThreadPosts($: CheerioSelection): ThreadPost[] {
+	const posts: ThreadPost[] = [];
+	$("div.post").each((_, el) => {
+		const $post = $(el as never);
+		if (!/^p\d+/u.test($post.attr("id") ?? "")) return;
+		const author =
+			$post.find("dl.postprofile dt a").eq(0).text().trim() ||
+			$post.find("p.author strong a").eq(0).text().trim() ||
+			null;
+		const rawAt = $post.find("time[datetime]").eq(0).attr("datetime");
+		// phpBB writes `+0200`; normalize to ISO `+02:00`.
+		const at = rawAt ? rawAt.replace(/([+-]\d{2}):?(\d{2})$/, "$1:$2") : null;
+		const text = $post
+			.find("div.postbody div.content")
+			.eq(0)
+			.text()
+			.replace(/\s+/g, " ")
+			.trim();
+		if (text) posts.push({ author, at, text: text.slice(0, 600) });
+	});
+	return posts;
+}
+
+/** Town mention in post prose ("w Wieliczce", "Wieliczka k. Krakowa"):
+ * inflected forms match by last-word stem ("Wieliczka" -> "wielic").
+ * Kraków is excluded — every post mentions it and it is the default. */
+export function mineTownInText(text: string): string | null {
+	const fold = foldForCompare(text);
+	for (const town of MAŁOPOLSKA_TOWNS) {
+		if (town === "Kraków") continue;
+		const stem = foldForCompare(town.split(" ").pop() ?? town).slice(0, 5);
+		if (stem.length >= 4 && fold.includes(stem)) return town;
+	}
+	return null;
+}
+
+/** The OP usually states the real location in prose — far more reliable
+ * than title mining. */
+export function minePostAddress(text: string): string | null {
+	const parsed = parseAddressFromText(text);
+	if (!parsed) return null;
+	return formatAddressForGeocode(
+		resolveStreetName(parsed.street),
+		parsed.number,
+		null,
+		mineTownInText(text) ?? undefined,
+	);
+}
+
+const cardCache = new Map<string, Listing>();
+
 export const budujesieAdapter: CheerioAdapter = {
 	id: "budujesie",
 	name: "BudujeSie.pl · inwestycje mieszkaniowe w budowie (Kraków)",
 	kind: "cheerio",
 	startUrls: [`${BASE}/${FORUM_PATH}`],
-	// 52 pages today; headroom for the forum to grow.
-	maxRequestsPerCrawl: 70,
+	// 52 list pages + one fetch per new/moved topic (all of them on the
+	// first run, a handful per hour afterwards).
+	maxRequestsPerCrawl: 1600,
 	// Re-sync the whole list every run (komornik precedent).
 	alwaysFullCrawl: true,
-	listingSelector: "ul.topiclist.topics li.row",
-	// Scoped to the forum-level pagination: topic rows embed their own
-	// page-number links inside `.list-inner .pagination`, which must never
-	// be enqueued as forum pages.
-	nextPageSelector: ".action-bar .pagination li.next a",
+	// Kept on the object for the validator; the dispatcher runs
+	// `extractHtml` instead when both are present.
+	listingSelector: LIST_SELECTOR,
+	nextPageSelector: NEXT_PAGE_SELECTOR,
+	parseListingCard: parseTopicCard,
 
-	parseListingCard($: CheerioSelection, el: unknown): Listing | null {
-		const $el = $(el as never);
-		// The announcements block reuses the same row markup; only real
-		// topics are investments.
-		if (/\bannounce\b/u.test($el.attr("class") ?? "")) return null;
-
-		const href = $el.find("a.topictitle").attr("href");
-		const title = $el.find("a.topictitle").text().trim();
-		if (!href || !title) return null;
-
-		const topicId = new URL(href, BASE).searchParams.get("t");
-		if (!topicId) return null;
-		const url = `${BASE}/viewtopic.php?${new URLSearchParams({
-			f: "5",
-			t: topicId,
-		}).toString()}`;
-
-		// Topic start ("autor: Master » 25 wrz 2026, 12:44") is only in the
-		// non-responsive author line; the responsive variant repeats the
-		// LAST post date instead, so target `.responsive-hide` precisely.
-		const metaText = $el.find(".responsive-hide").text();
-		const listedAt = parsePlDate(metaText);
-		const author =
-			metaText.match(/autor:\s*([^»]+?)\s*»/u)?.[1]?.trim() ?? null;
-		const lastPostAt = parsePlDate($el.find("dd.lastpost").text());
-		const replies = countOf($el.find("dd.posts").text());
-		const views = countOf($el.find("dd.views").text());
-
-		const district = extractDistrict(title);
-		const mined = mineForumAddress(title);
-		let address = mined
-			? formatAddressForGeocode(mined.street, mined.number, district)
-			: null;
-		if (!address) {
-			const name = mineTownName(title) ?? investmentNameFallback(title);
-			if (name) address = formatAddressForGeocode(name, undefined, district);
-		}
-		if (!address) {
-			const street = mineStreetWindow(title);
-			if (street)
-				address = formatAddressForGeocode(street, undefined, district);
-		}
-		// Name/street mining can leak a trailing preposition ("Nad Stawem w
-		// Krakowie" -> "Nad Stawem w") or a sub-3-char fragment of an
-		// investment name ("Apartamenty Go", "Osiedle Fi"). A junk head is
-		// worse than no address: it pollutes the row and can pin to an
-		// unrelated street. Strip the preposition, drop tiny fragments.
-		if (address) {
-			const parts = address.split(",");
-			const head = (parts[0] ?? "")
-				.replace(/\s+(?:w|z|i|na|przy|do|od|u|oraz|we|ze)$/iu, "")
-				.trim();
-			if (head.length < 3) address = null;
-			else {
-				parts[0] = head;
-				address = parts.join(",");
-			}
+	// Strategy B rides along on top of the cards: thread pages carry the
+	// OP (address + investment description) and the comments under it.
+	// The dispatcher short-circuits to extractHtml, so list pages are
+	// re-emitted here as cards.
+	async extractHtml(_html, url, enqueue, root) {
+		const $ = root;
+		if (!$) return [];
+		const topicId = new URL(url, BASE).searchParams.get("t");
+		if (/viewtopic\.php/u.test(url) && topicId) {
+			const card = cardCache.get(topicId);
+			if (!card) return [];
+			const posts = parseThreadPosts($).slice(0, 8);
+			// A topic always has at least one post; zero means the markup
+			// changed — keep the cache untouched so the next run retries.
+			if (posts.length === 0) return [card];
+			const opText = posts[0]?.text ?? null;
+			const features = parseFeaturesJson(card.features);
+			features.posts = posts;
+			const merged: Listing = {
+				...card,
+				address: opText
+					? (minePostAddress(opText) ?? card.address)
+					: card.address,
+				description: opText ? opText.slice(0, 2000) : card.description,
+				features: JSON.stringify(features),
+			};
+			const cache = loadTopicCache();
+			cache[topicId] = {
+				lastPostAt: (features.lastPostAt as string | undefined) ?? null,
+				address: merged.address,
+				description: merged.description,
+				posts,
+			};
+			saveTopicCache(cache);
+			return [merged];
 		}
 
-		const features: Record<string, unknown> = {};
-		if (author) features.author = author;
-		if (replies != null) features.replies = replies;
-		if (views != null) features.views = views;
-		if (lastPostAt) features.lastPostAt = lastPostAt;
-
-		return {
-			source: this.id,
-			externalId: topicId,
-			url,
-			title,
-			price: null,
-			pricePerM2: null,
-			areaM2: null,
-			rooms: null,
-			floor: null,
-			district,
-			address,
-			description: null,
-			heatingType: null,
-			propertyType: "inwestycja",
-			features:
-				Object.keys(features).length > 0 ? JSON.stringify(features) : null,
-			lat: null,
-			lng: null,
-			listedAt,
-			scrapedAt: new Date().toISOString(),
-		};
+		// Forum list page.
+		const cards: Listing[] = [];
+		$(LIST_SELECTOR).each((_, el) => {
+			const card = parseTopicCard($, el);
+			if (card) cards.push(card);
+		});
+		const cache = loadTopicCache();
+		const toFetch: string[] = [];
+		for (const card of cards) {
+			cardCache.set(card.externalId, card);
+			const lastPostAt =
+				(parseFeaturesJson(card.features).lastPostAt as string | undefined) ??
+				null;
+			const seen = cache[card.externalId];
+			// Only topics whose thread moved since the last fetch.
+			if (!seen || seen.lastPostAt !== lastPostAt) toFetch.push(card.url);
+		}
+		if (toFetch.length > 0) await enqueue(toFetch);
+		const next = $(NEXT_PAGE_SELECTOR).attr("href");
+		if (next) await enqueue([new URL(next, url).toString()]);
+		return cards;
 	},
 };

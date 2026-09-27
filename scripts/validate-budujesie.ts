@@ -9,7 +9,12 @@
  *   bunx tsx scripts/validate-budujesie.ts
  */
 import * as cheerio from "cheerio";
-import { budujesieAdapter } from "../src/crawler/sites/budujesie";
+import {
+	budujesieAdapter,
+	minePostAddress,
+	mineTownInText,
+	parseThreadPosts,
+} from "../src/crawler/sites/budujesie";
 
 let failures = 0;
 const check = (ok: boolean, label: string, extra = ""): void => {
@@ -80,6 +85,35 @@ const rows: Array<[string, string | null, string | null, string | null]> = [
 		null,
 		wallClock(-1, 15, 3),
 	],
+	[
+		// A town in the title overrides the default Kraków city — the street
+		// "ul. Magnoliowa" is in Wieliczka and must not carry ", Kraków".
+		`<li class="row"><a class="topictitle" href="./viewtopic.php?f=5&amp;t=5">Inwestycja Magnoliowa - Wieliczka - opinie na forum</a>
+		 <div class="responsive-hide">autor: x » 19 maja 2024</div>
+		 <dd class="lastpost">Ostatni post autor: x Wyświetl najnowszy post 19 maja 2024, 11:35</dd></li>`,
+		"2024-05-19T00:00:00",
+		"Wieliczka!Kraków",
+		"2024-05-19T11:35:00",
+	],
+	[
+		// Town after a " - " commentary split still wins over the default city.
+		`<li class="row"><a class="topictitle" href="./viewtopic.php?f=5&amp;t=6">Inwestycja Pod Jabłoniami - Tarnów opinie i forum o nowych mieszkaniach</a>
+		 <div class="responsive-hide">autor: x » 19 maja 2024</div>
+		 <dd class="lastpost">Ostatni post autor: x Wyświetl najnowszy post 19 maja 2024, 11:35</dd></li>`,
+		"2024-05-19T00:00:00",
+		"Tarnów!Kraków",
+		"2024-05-19T11:35:00",
+	],
+	[
+		// A name that already contains the town keeps the bare-town shape the
+		// geocoder's title-town override resolves ("Skawina, Kraków").
+		`<li class="row"><a class="topictitle" href="./viewtopic.php?f=5&amp;t=7">Enklava Skawina - nowe mieszkania od XYZ forum</a>
+		 <div class="responsive-hide">autor: x » 19 maja 2024</div>
+		 <dd class="lastpost">Ostatni post autor: x Wyświetl najnowszy post 19 maja 2024, 11:35</dd></li>`,
+		"2024-05-19T00:00:00",
+		"Skawina",
+		"2024-05-19T11:35:00",
+	],
 ];
 
 for (const [html, wantListedAt, wantAddressPart, wantLastPost] of rows) {
@@ -90,11 +124,19 @@ for (const [html, wantListedAt, wantAddressPart, wantLastPost] of rows) {
 		`got ${listing?.listedAt}`,
 	);
 	if (wantAddressPart) {
+		const [want, forbid] = wantAddressPart.split("!");
 		check(
-			(listing?.address ?? "").includes(wantAddressPart),
-			`address contains ${wantAddressPart}`,
+			(listing?.address ?? "").includes(want),
+			`address contains ${want}`,
 			`got ${listing?.address}`,
 		);
+		if (forbid) {
+			check(
+				!(listing?.address ?? "").includes(forbid),
+				`address excludes ${forbid}`,
+				`got ${listing?.address}`,
+			);
+		}
 	}
 	const lastPost = (listing?.features ? JSON.parse(listing.features) : {}).lastPostAt;
 	check(
@@ -102,6 +144,70 @@ for (const [html, wantListedAt, wantAddressPart, wantLastPost] of rows) {
 		`lastPostAt ${wantLastPost ?? "(none)"}`,
 		`got ${lastPost ?? "(none)"}`,
 	);
+}
+
+// --- thread pages: posts + OP address ------------------------------------
+
+const threadHtml = `<div id="page-body">
+  <div class="post has-profile" id="p101">
+    <p class="author"><time datetime="2024-05-19T10:00:00+0200">19 maja 2024</time></p>
+    <dl class="postprofile"><dt><a class="username">developer1</a></dt></dl>
+    <div class="postbody"><div class="content">Inwestycja Magnoliowa powstaje przy ul. Magnoliowej 8 w Wieliczce, 15 km od Krakowa. Budowa rozpoczęta w 2024 roku.</div></div>
+  </div>
+  <div class="post has-profile" id="p102">
+    <p class="author"><time datetime="2024-06-01T09:30:00+0200">1 cze 2024</time></p>
+    <dl class="postprofile"><dt><a class="username">mieszkanka</a></dt></dl>
+    <div class="postbody"><div class="content">Czy ktoś wie, kiedy planowane jest zakończenie budowy?</div></div>
+  </div>
+  <div class="post has-profile" id="p103">
+    <p class="author"><time datetime="2024-06-02T18:05:00+0200">2 cze 2024</time></p>
+    <dl class="postprofile"><dt><a class="username">developer1</a></dt></dl>
+    <div class="postbody"><div class="content">Zakończenie planowane jest na IV kwartał 2025.</div></div>
+  </div>
+</div>`;
+
+{
+	const $ = cheerio.load(threadHtml);
+	const posts = parseThreadPosts($ as never);
+	check(posts.length === 3, "thread: 3 posts parsed", `got ${posts.length}`);
+	check(
+		posts[0]?.author === "developer1",
+		"thread: OP author",
+		`got ${posts[0]?.author}`,
+	);
+	check(
+		posts[0]?.at === "2024-05-19T10:00:00+02:00",
+		"thread: OP at normalized",
+		`got ${posts[0]?.at}`,
+	);
+	check(
+		(posts[0]?.text ?? "").includes("ul. Magnoliowej 8"),
+		"thread: OP text",
+		`got ${(posts[0]?.text ?? "").slice(0, 60)}`,
+	);
+	check(
+		posts[1]?.author === "mieszkanka",
+		"thread: comment author",
+		`got ${posts[1]?.author}`,
+	);
+
+	const addr = posts[0] ? minePostAddress(posts[0].text) : null;
+	check((addr ?? "").includes("Magnoliow"), "OP address: street", `got ${addr}`);
+	check(
+		(addr ?? "").includes("Wieliczka"),
+		"OP address: town from prose",
+		`got ${addr}`,
+	);
+	check(
+		!(addr ?? "").includes("Kraków"),
+		"OP address: no Kraków default",
+		`got ${addr}`,
+	);
+
+	const town = mineTownInText(
+		"Budowa przy ul. Kwiatowej 3 w Tarnowie, dobra komunikacja z Krakowem",
+	);
+	check(town === "Tarnów", "town prose: Tarnów", `got ${town}`);
 }
 
 // --- live coverage ---------------------------------------------------------
