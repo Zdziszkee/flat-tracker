@@ -254,14 +254,35 @@ function popupHtml(l: ApiListing): string {
 	// price row, show thread activity instead of a valuation.
 	const isBudujesie = l.source === "budujesie";
 	let threadStats = "";
+	// A forum topic is not proof the building is still under construction:
+	// the site carries no status field, so the label claims "w budowie" only
+	// while the thread is alive (posts within 18 months) and degrades to a
+	// factual last-activity stamp for archived topics.
+	let budLabel = "Inwestycja";
 	if (isBudujesie && l.features) {
 		try {
-			const f = JSON.parse(l.features) as { replies?: number; views?: number };
+			const f = JSON.parse(l.features) as {
+				replies?: number;
+				views?: number;
+				lastPostAt?: string;
+			};
 			const parts: string[] = [];
 			if (typeof f.replies === "number") parts.push(`${f.replies} odp.`);
 			if (typeof f.views === "number")
 				parts.push(`${f.views.toLocaleString("pl-PL")} wyśw.`);
 			threadStats = parts.join(" · ");
+			const last = f.lastPostAt ? new Date(f.lastPostAt) : null;
+			const fresh =
+				last != null &&
+				!Number.isNaN(last.getTime()) &&
+				Date.now() - last.getTime() < 548 * 24 * 3600e3;
+			budLabel = fresh
+				? "Inwestycja w budowie"
+				: `Inwestycja · ostatnia aktywność ${
+						last && !Number.isNaN(last.getTime())
+							? `${String(last.getMonth() + 1).padStart(2, "0")}.${last.getFullYear()}`
+							: "?"
+					}`;
 		} catch {
 			// malformed features JSON: skip thread stats silently
 		}
@@ -359,7 +380,7 @@ function popupHtml(l: ApiListing): string {
       <div class="flex justify-between gap-4 pt-1">
         <span class="font-medium${isBudujesie ? " text-amber-700" : ""}">${
 					isBudujesie
-						? "Inwestycja w budowie"
+						? budLabel
 						: `${formatPln(l.price)}${
 								l.pricePeriod === "night"
 									? '<span class="text-xs font-normal text-gray-400"> /noc</span>'
