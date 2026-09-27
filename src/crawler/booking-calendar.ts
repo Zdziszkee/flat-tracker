@@ -3,12 +3,12 @@ import "dotenv/config";
 import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
-import { launchBrowser } from "./browser.ts";
 import {
+	type AvailabilityObservation,
 	foldMonthlyPrices,
 	saveAvailabilityObservations,
-	type AvailabilityObservation,
 } from "./availability.ts";
+import { launchBrowser } from "./browser.ts";
 import { foldOccupancy } from "./occupancy.ts";
 
 /**

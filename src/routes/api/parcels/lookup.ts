@@ -125,8 +125,10 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 				// Land price per m² of nearby transactions vs the parcel's own
 				// latest transaction: is this działka cheap or expensive for
 				// the area, and is the local market rising?
-				const anchorLat = row?.centroidLat ?? (Number.isFinite(lat) ? lat : null);
-				const anchorLng = row?.centroidLng ?? (Number.isFinite(lng) ? lng : null);
+				const anchorLat =
+					row?.centroidLat ?? (Number.isFinite(lat) ? lat : null);
+				const anchorLng =
+					row?.centroidLng ?? (Number.isFinite(lng) ? lng : null);
 				// Land parcels outside Kraków (GUGiK feed) quote prices per AR
 				// (100 m²) — the geodetic convention for działki. Kraków zip
 				// rows are flat transactions and stay per m².
@@ -149,7 +151,9 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 				// an order-of-magnitude higher price per ar.
 				const ownMeta = await db.get<{
 					landUse: string | null;
-				}>(sql`SELECT land_use AS landUse FROM parcel_meta WHERE parcel_id = ${parcelId}`);
+				}>(
+					sql`SELECT land_use AS landUse FROM parcel_meta WHERE parcel_id = ${parcelId}`,
+				);
 				const landGroup = (lu: string | null): string | null => {
 					if (lu == null) return null;
 					if (lu === "gruntyZabudowaneIZurbanizowane") return "zabudowana";
@@ -183,19 +187,18 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 						return sorted[Math.floor(sorted.length / 2)];
 					};
 					// Compare like with like: rolna->rolna, budowlana->budowlana.
-				// A sale WITH a house registers as gruntyZabudowane... with an
-				// order-of-magnitude higher price per ar, so mixing classes
-				// would poison the median.
-				const groupSql = ownGroup
-					? sql`AND (CASE m.land_use
+					// A sale WITH a house registers as gruntyZabudowane... with an
+					// order-of-magnitude higher price per ar, so mixing classes
+					// would poison the median.
+					const groupSql = ownGroup
+						? sql`AND (CASE m.land_use
 							WHEN 'gruntyZabudowaneIZurbanizowane' THEN 'zabudowana'
 							WHEN 'gruntyRolne' THEN 'rolna'
 							WHEN 'gruntyLesne' THEN 'lesna'
 							ELSE COALESCE(m.land_use, 'inne') END) = ${ownGroup}`
-					: sql``;
-				const nearby = ownGroup
-					? await db
-							.all<{
+						: sql``;
+					const nearby = ownGroup
+						? await db.all<{
 								pricePerM2: number;
 								date: number;
 								price: number;
@@ -212,8 +215,7 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 						  AND t.date >= ${cutoff5y}
 						  ${groupSql}
 					`)
-					: await db
-							.all<{
+						: await db.all<{
 								pricePerM2: number;
 								date: number;
 								price: number;
@@ -246,8 +248,7 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 						byYear: [...yearMap.entries()]
 							.map(([year, vals]) => ({
 								year,
-								medianM2:
-									Math.round((median(vals) ?? 0) * unitMul * 100) / 100,
+								medianM2: Math.round((median(vals) ?? 0) * unitMul * 100) / 100,
 								tx: vals.length,
 							}))
 							.sort((a, b) => a.year.localeCompare(b.year)),
@@ -262,8 +263,8 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 							})),
 						lastVsMedianPct:
 							lastTx?.pricePerM2 != null && areaMedian != null && areaMedian > 0
-								// ratio is unit-independent (raw per-m² on both sides)
-								? Math.round(
+								? // ratio is unit-independent (raw per-m² on both sides)
+									Math.round(
 										((lastTx.pricePerM2 - areaMedian) / areaMedian) * 1000,
 									) / 10
 								: null,

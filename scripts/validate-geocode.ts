@@ -1,7 +1,8 @@
-/** Throwaway deep-validation harness for the court-boilerplate geocode fix. */
+/** Deep-validation harness for address mining and geocode assignment. */
 import Database from "better-sqlite3";
 
 import {
+	minedStreetLooksReal,
 	parseAddressFromText,
 	plausibleAddress,
 } from "../src/crawler/sites/address.ts";
@@ -42,6 +43,30 @@ check(
 		"ul. Szkolna 3",
 	),
 );
+
+// ---------- mined-street shape gate ----------
+for (const bad of [
+	"a kończą na",
+	"informacyjna inwestycji Dobrego Pasterza",
+	"Przejrzano 2092",
+	"Kondygnacje. W budynku znajdzie się",
+	"to z pewnością Grzegórzecka",
+	"mieszkań liczących sobie ponad 70",
+	"Sołtysowskiej - Willa Sołtysowska. Łącznie",
+])
+	check(
+		`shape: rejects ${JSON.stringify(bad.slice(0, 32))}`,
+		!minedStreetLooksReal(bad),
+	);
+for (const good of [
+	"Zamoyskiego",
+	"Konstantego Brandla",
+	"Na Lotnisku",
+	"Bora-Komorowskiego",
+	"Piasta Kołodzieja",
+	"1 Maja",
+])
+	check(`shape: accepts ${JSON.stringify(good)}`, minedStreetLooksReal(good));
 
 // ---------- corpus over the live DB ----------
 const db = new Database("dev.db", { readonly: true });

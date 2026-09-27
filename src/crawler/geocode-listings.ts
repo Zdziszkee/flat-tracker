@@ -13,6 +13,7 @@ import {
 } from "./address-index.ts";
 import {
 	isKnownKrakowStreet,
+	minedStreetLooksReal,
 	parseAddressFromText,
 	plausibleAddress,
 } from "./sites/address.ts";
@@ -406,10 +407,13 @@ export async function geocodeUnlocatedListings(
 			// lexicon or carries a housenumber; otherwise the title result (or
 			// nothing) wins.
 			const mined =
-				titlePart && plausibleAddress(titleScope)
+				titlePart &&
+				plausibleAddress(titleScope) &&
+				minedStreetLooksReal(titlePart.street)
 					? { part: titlePart, text: titleScope }
 					: descPart &&
-							(isKnownKrakowStreet(descPart.street) || descPart.number)
+							(isKnownKrakowStreet(descPart.street) || descPart.number) &&
+							minedStreetLooksReal(descPart.street)
 						? { part: descPart, text: row.description }
 						: null;
 			if (mined) {
@@ -417,8 +421,16 @@ export async function geocodeUnlocatedListings(
 				streetPart = mined.part.number
 					? `${mined.part.street} ${mined.part.number}`
 					: mined.part.street;
-				extractedAddress = [streetPart, row.district, "Małopolska"]
-					.filter(Boolean)
+				// Show the real town when we know one ("Zielone Zarabie,
+				// Myślenice"); "Małopolska" is the region fallback placeholder.
+				const displayCity =
+					cityHint && cityCentroids.has(normStreet(cityHint))
+						? cityHint
+						: "Małopolska";
+				extractedAddress = [streetPart, row.district, displayCity]
+					.filter(
+						(s, i, arr): s is string => Boolean(s) && arr.indexOf(s) === i,
+					)
 					.join(", ");
 			}
 		}
@@ -484,8 +496,7 @@ export async function geocodeUnlocatedListings(
 		// not a street name; treat the row as street-less so it lands on the
 		// town instead of whatever the geocoder makes of "73".
 		const isBareNumber = /^\d{1,4}[A-Za-z]?$/.test(streetPart.trim());
-		const hasNoStreet =
-			!parsed && (!streetPart || isZipOnly || isBareNumber);
+		const hasNoStreet = !parsed && (!streetPart || isZipOnly || isBareNumber);
 		if (hasNoStreet) {
 			const cityCentroid = cityCentroids.get(normStreet(cityHint ?? ""));
 			if (cityCentroid) {

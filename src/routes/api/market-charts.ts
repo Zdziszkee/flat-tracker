@@ -43,7 +43,8 @@ const POWIAT_NAMES: Record<string, string> = {
 
 /** Epoch cutoffs computed in JS (SQLite int-vs-text comparison trap). */
 const now = Date.now();
-const daysAgo = (d: number): number => Math.floor((now - d * 86_400_000) / 1000);
+const daysAgo = (d: number): number =>
+	Math.floor((now - d * 86_400_000) / 1000);
 
 /** City buckets by lat/lng for rental-market analytics. */
 const CITY_CASE = sql`
@@ -402,7 +403,8 @@ export const Route = createFileRoute("/api/market-charts")({
 				const rentSorted = [...rentPrices].sort((a, b) => a - b);
 				const rentMeta = {
 					avg: Math.round(
-						rentPrices.reduce((a, b) => a + b, 0) / Math.max(1, rentPrices.length),
+						rentPrices.reduce((a, b) => a + b, 0) /
+							Math.max(1, rentPrices.length),
 					),
 					median:
 						rentSorted.length > 0
@@ -443,7 +445,8 @@ export const Route = createFileRoute("/api/market-charts")({
 				const czynszSorted = [...czynszVals].sort((a, b) => a - b);
 				const oplatyMeta = {
 					avg: Math.round(
-						czynszVals.reduce((a, b) => a + b, 0) / Math.max(1, czynszVals.length),
+						czynszVals.reduce((a, b) => a + b, 0) /
+							Math.max(1, czynszVals.length),
 					),
 					median:
 						czynszSorted.length > 0
@@ -483,7 +486,8 @@ export const Route = createFileRoute("/api/market-charts")({
 				const totalSorted = [...totalVals].sort((a, b) => a - b);
 				const totalMeta = {
 					avg: Math.round(
-						totalVals.reduce((a, b) => a + b, 0) / Math.max(1, totalVals.length),
+						totalVals.reduce((a, b) => a + b, 0) /
+							Math.max(1, totalVals.length),
 					),
 					median:
 						totalSorted.length > 0

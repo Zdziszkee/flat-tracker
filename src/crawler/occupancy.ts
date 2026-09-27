@@ -24,10 +24,7 @@
 import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
-import {
-	listingOccupancy,
-	listingWeekdayStats,
-} from "#/db/schema";
+import { listingOccupancy, listingWeekdayStats } from "#/db/schema";
 
 /** Interior unavailable runs longer than this are owner blocks, not stays. */
 const BLOCKED_RUN_DAYS = 45;
@@ -115,20 +112,38 @@ export async function foldOccupancy(): Promise<{
 
 		const months = new Map<
 			string,
-			{ sample: number; booked: number; blocked: number; available: number; priceSum: number; priceN: number }
+			{
+				sample: number;
+				booked: number;
+				blocked: number;
+				available: number;
+				priceSum: number;
+				priceN: number;
+			}
 		>();
 		const weekdays = new Map<
 			number,
-			{ sample: number; booked: number; available: number; priceSum: number; priceN: number }
+			{
+				sample: number;
+				booked: number;
+				available: number;
+				priceSum: number;
+				priceN: number;
+			}
 		>();
 		for (let k = 0; k < days.length; k++) {
 			const d = days[k];
 			const month = d.date.slice(0, 7);
 			const dow = (new Date(`${d.date}T12:00:00Z`).getUTCDay() + 6) % 7; // Mon=0
 			const cls = classes[k];
-			const m =
-				months.get(month) ??
-				{ sample: 0, booked: 0, blocked: 0, available: 0, priceSum: 0, priceN: 0 };
+			const m = months.get(month) ?? {
+				sample: 0,
+				booked: 0,
+				blocked: 0,
+				available: 0,
+				priceSum: 0,
+				priceN: 0,
+			};
 			m.sample++;
 			if (cls === "booked") m.booked++;
 			else if (cls === "blocked") m.blocked++;
@@ -139,9 +154,13 @@ export async function foldOccupancy(): Promise<{
 			}
 			months.set(month, m);
 
-			const w =
-				weekdays.get(dow) ??
-				{ sample: 0, booked: 0, available: 0, priceSum: 0, priceN: 0 };
+			const w = weekdays.get(dow) ?? {
+				sample: 0,
+				booked: 0,
+				available: 0,
+				priceSum: 0,
+				priceN: 0,
+			};
 			w.sample++;
 			if (cls === "booked") w.booked++;
 			else if (cls === "available") w.available++;

@@ -405,6 +405,31 @@ export function plausibleAddress(address: string | null | undefined): boolean {
 	);
 }
 
+/** A free-text-mined street must LOOK like a street name: a capitalized
+ * (or house-numbered) name of at most 3 words, no sentence punctuation,
+ * no prose opener ("a kończą na", "informacyjna inwestycji", "Przejrzano
+ * 2092"). Without this gate, mining returns sentence fragments that then
+ * pin to unrelated streets. */
+export function minedStreetLooksReal(
+	street: string | null | undefined,
+): boolean {
+	if (!street) return false;
+	const head = street
+		.replace(/^(?:przy\s+ulicy|przy\s+ul\.?|ulica|ul\.|przy|od|na|w)\s+/iu, "")
+		.trim();
+	if (head.length < 3 || /[.;:!?]/u.test(head)) return false;
+	// A spaced hyphen joins a prose tail ("Sołtysowskiej - Willa
+	// Sołtysowska"); this gate never rewrites the street, so reject —
+	// callers that can cut run their own sanitize first.
+	if (/\s+[-–—]\s+/u.test(head)) return false;
+	const words = head.split(/\s+/u).filter((w) => /\p{L}/u.test(w));
+	if (words.length > 3) return false;
+	if (!/^[\p{Lu}\p{N}]/u.test(head)) return false;
+	return !/^(?:przejrzano|odsłon|wyświetlono|szukano|informacyjna|strona|planie|razie|reszta|minut|koszt|cena|ceny|mieszkań|mieszkania|budowy|budynku|budynków|szkoły|drzwi|kończą|powstało|powstać|zbudowali|licząc\w*|mająca|mający|mające|większe|największe|zaczynają|kierowano)\b/iu.test(
+		head,
+	);
+}
+
 /** Build a geocodable address string, e.g. "Jakuba Bojki 12, Kraków". */
 export function formatAddressForGeocode(
 	street: string,

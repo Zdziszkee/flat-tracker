@@ -180,8 +180,7 @@ async function countListingsInBox(
 
 /** Delta mode: skip re-walking tiles whose supply hasn't changed (429s). */
 const DELTA_ENABLED =
-	(process.env.AIRBNB_DELTA ?? "1") !== "0" &&
-	typeof process !== "undefined";
+	(process.env.AIRBNB_DELTA ?? "1") !== "0" && typeof process !== "undefined";
 
 /**
  * Hours after which a tile earns a full cursor-chain sweep again even if
@@ -219,7 +218,7 @@ async function knownIdsInBox(
 function tileNeedsFullSweep(t: Tile | undefined): boolean {
 	if (!t?.drainedAt) return true; // never drained -> must walk fully
 	const ageMs = Date.now() - Date.parse(t.drainedAt);
-	return !(Number.isFinite(ageMs)) || ageMs > FULL_SWEEP_HOURS * 3600_000;
+	return !Number.isFinite(ageMs) || ageMs > FULL_SWEEP_HOURS * 3600_000;
 }
 
 function replaceTile(tile: Tile, kids: Tile[]): void {

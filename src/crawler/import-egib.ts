@@ -27,17 +27,22 @@
 
 import "dotenv/config";
 
-import { eq, sql } from "drizzle-orm";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { eq, sql } from "drizzle-orm";
+import { SaxesParser } from "saxes";
 import { db } from "#/db/index";
 import { parcels as parcelsTable } from "#/db/schema";
-import { SaxesParser } from "saxes";
 
 // ---------------------------------------------------------------------------
 // Config
 
 /** Małopolska voivodeship bounding box (lon/lat), slightly padded. */
-const MALOPOLSKA = { minLng: 19.13, minLat: 49.05, maxLng: 21.3, maxLat: 50.45 };
+const MALOPOLSKA = {
+	minLng: 19.13,
+	minLat: 49.05,
+	maxLng: 21.3,
+	maxLat: 50.45,
+};
 
 /** Tile size in degrees (~7.2 km × 8.9 km at 50°N). */
 const TILE_LNG = 0.1;
@@ -49,7 +54,8 @@ const PAGE_SIZE = 1000; // server-enforced cap
 const MAX_PAGES_PER_TILE = 400; // runaway guard (~400k parcels/tile)
 const REQUEST_DELAY_MS = 300;
 const MAX_RETRIES = 5;
-const UA = "flat-tracker/1.0 (cadastral parcel index; contact: zdziszkee@gmail.com)";
+const UA =
+	"flat-tracker/1.0 (cadastral parcel index; contact: zdziszkee@gmail.com)";
 
 const DB_PATH = process.env.DATABASE_URL?.replace(/^file:/, "") ?? "dev.db";
 const STATE_PATH = "data/crawler/egib-state.json";
@@ -244,7 +250,8 @@ function parsePage(xml: string): ParcelInsert[] {
 	parser.on("text", (t) => {
 		if (!member) return;
 		if (inPosList) member.posList += t;
-		else if (capture === "idDzialki") member.parcelId = (member.parcelId ?? "") + t;
+		else if (capture === "idDzialki")
+			member.parcelId = (member.parcelId ?? "") + t;
 		else if (capture === "obreb") member.obreb = (member.obreb ?? "") + t;
 		else if (capture === "gmina") member.gmina = (member.gmina ?? "") + t;
 	});
@@ -356,10 +363,34 @@ function splitTile(tile: Tile): Tile[] {
 	const midLng = (tile.minLng + tile.maxLng) / 2;
 	const midLat = (tile.minLat + tile.maxLat) / 2;
 	return [
-		{ key: `${tile.key}a`, minLng: tile.minLng, minLat: tile.minLat, maxLng: midLng, maxLat: midLat },
-		{ key: `${tile.key}b`, minLng: midLng, minLat: tile.minLat, maxLng: tile.maxLng, maxLat: midLat },
-		{ key: `${tile.key}c`, minLng: tile.minLng, minLat: midLat, maxLng: midLng, maxLat: tile.maxLat },
-		{ key: `${tile.key}d`, minLng: midLng, minLat: midLat, maxLng: tile.maxLng, maxLat: tile.maxLat },
+		{
+			key: `${tile.key}a`,
+			minLng: tile.minLng,
+			minLat: tile.minLat,
+			maxLng: midLng,
+			maxLat: midLat,
+		},
+		{
+			key: `${tile.key}b`,
+			minLng: midLng,
+			minLat: tile.minLat,
+			maxLng: tile.maxLng,
+			maxLat: midLat,
+		},
+		{
+			key: `${tile.key}c`,
+			minLng: tile.minLng,
+			minLat: midLat,
+			maxLng: midLng,
+			maxLat: tile.maxLat,
+		},
+		{
+			key: `${tile.key}d`,
+			minLng: midLng,
+			minLat: midLat,
+			maxLng: tile.maxLng,
+			maxLat: tile.maxLat,
+		},
 	];
 }
 
@@ -380,7 +411,8 @@ async function pageThrough(tile: Tile): Promise<void> {
 async function main() {
 	const allTiles = buildTiles();
 	let pending = allTiles.filter((t) => !completed.has(t.key));
-	if (tileKeys.length > 0) pending = pending.filter((t) => tileKeys.includes(t.key));
+	if (tileKeys.length > 0)
+		pending = pending.filter((t) => tileKeys.includes(t.key));
 	const runTiles = tileLimit != null ? pending.slice(0, tileLimit) : pending;
 	console.log(
 		`EGIB import: ${completed.size}/${allTiles.length} tiles already done, running ${runTiles.length} (grid ${cols}x${rows}, DB ${DB_PATH})`,

@@ -26,14 +26,22 @@ const EPOCH_CUTOFF = Math.floor(Date.now() / 1000) - 365 * 2 * 86400;
 function bbox(lat: number, lng: number, meters: number) {
 	const dLat = meters / 111_320;
 	const dLng = meters / (111_320 * Math.cos((lat * Math.PI) / 180));
-	return { minLat: lat - dLat, maxLat: lat + dLat, minLng: lng - dLng, maxLng: lng + dLng };
+	return {
+		minLat: lat - dLat,
+		maxLat: lat + dLat,
+		minLng: lng - dLng,
+		maxLng: lng + dLng,
+	};
 }
 
 function rating(pct: number): { label: string; tone: string } {
-	if (pct <= -15) return { label: "mocno niedowartościowana", tone: "text-emerald-600" };
-	if (pct <= -5) return { label: "niedowartościowana", tone: "text-emerald-600" };
+	if (pct <= -15)
+		return { label: "mocno niedowartościowana", tone: "text-emerald-600" };
+	if (pct <= -5)
+		return { label: "niedowartościowana", tone: "text-emerald-600" };
 	if (pct < 5) return { label: "wycena uczciwa", tone: "text-gray-700" };
-	if (pct < 15) return { label: "lekko przewartościowana", tone: "text-amber-600" };
+	if (pct < 15)
+		return { label: "lekko przewartościowana", tone: "text-amber-600" };
 	return { label: "przewartościowana", tone: "text-red-600" };
 }
 
@@ -163,10 +171,9 @@ export const Route = createFileRoute("/api/valuation/offer")({
 					offer.lng != null &&
 					offer.price != null &&
 					offer.price > 0;
-				const b =
-					hasGeo
-						? bbox(offer.lat as number, offer.lng as number, 1000)
-						: null;
+				const b = hasGeo
+					? bbox(offer.lat as number, offer.lng as number, 1000)
+					: null;
 
 				const ltBasis = ownArea != null ? "podobny metraż" : "okolica";
 				let lt: {
@@ -198,16 +205,23 @@ export const Route = createFileRoute("/api/valuation/offer")({
 						  AND price IS NOT NULL AND price > 0
 						  AND lat BETWEEN ${b.minLat} AND ${b.maxLat}
 						  AND lng BETWEEN ${b.minLng} AND ${b.maxLng}
-						  ${ownArea != null && band === "similar"
-								? sql`AND areaM2 BETWEEN ${ownArea * 0.6} AND ${ownArea * 1.4}`
-								: sql``}
-						  ${ownArea != null && band === "wide"
-								? sql`AND areaM2 BETWEEN ${ownArea * 0.5} AND ${ownArea * 2}`
-								: sql``}
+						  ${
+								ownArea != null && band === "similar"
+									? sql`AND areaM2 BETWEEN ${ownArea * 0.6} AND ${ownArea * 1.4}`
+									: sql``
+							}
+						  ${
+								ownArea != null && band === "wide"
+									? sql`AND areaM2 BETWEEN ${ownArea * 0.5} AND ${ownArea * 2}`
+									: sql``
+							}
 					`);
 					let picked: { n: number; basis: string } | null = null;
-					let rentRow: { rentAvg: number; czynszAvg: number; n: number } | null =
-						null;
+					let rentRow: {
+						rentAvg: number;
+						czynszAvg: number;
+						n: number;
+					} | null = null;
 					for (const band of ["similar", "wide", "all"] as const) {
 						const r = await tryLt(band);
 						if (r && r.n >= 3) {
@@ -228,7 +242,8 @@ export const Route = createFileRoute("/api/valuation/offer")({
 					}
 					if (rentRow && picked && offer.price != null && offer.price > 0) {
 						const ownCzynsz = czynszFromUtilities(offer.utilities);
-						const netMonthly = rentRow.rentAvg - (ownCzynsz || rentRow.czynszAvg);
+						const netMonthly =
+							rentRow.rentAvg - (ownCzynsz || rentRow.czynszAvg);
 						const netYearly = netMonthly * 12 * 0.92; // ~1 mies. vacancji
 						lt = {
 							rentAvg: Math.round(rentRow.rentAvg),
@@ -255,16 +270,23 @@ export const Route = createFileRoute("/api/valuation/offer")({
 						  AND l.price IS NOT NULL AND l.price > 0
 						  AND l.lat BETWEEN ${b.minLat} AND ${b.maxLat}
 						  AND l.lng BETWEEN ${b.minLng} AND ${b.maxLng}
-						  ${ownArea != null && band === "similar"
-								? sql`AND l.areaM2 BETWEEN ${ownArea * 0.6} AND ${ownArea * 1.4}`
-								: sql``}
-						  ${ownArea != null && band === "wide"
-								? sql`AND l.areaM2 BETWEEN ${ownArea * 0.5} AND ${ownArea * 2}`
-								: sql``}
+						  ${
+								ownArea != null && band === "similar"
+									? sql`AND l.areaM2 BETWEEN ${ownArea * 0.6} AND ${ownArea * 1.4}`
+									: sql``
+							}
+						  ${
+								ownArea != null && band === "wide"
+									? sql`AND l.areaM2 BETWEEN ${ownArea * 0.5} AND ${ownArea * 2}`
+									: sql``
+							}
 					`);
 					let strPicked: { n: number; basis: string } | null = null;
-					let strRow: { nightlyAvg: number; occ: number | null; n: number } | null =
-						null;
+					let strRow: {
+						nightlyAvg: number;
+						occ: number | null;
+						n: number;
+					} | null = null;
 					for (const band of ["similar", "wide", "all"] as const) {
 						const r = await tryStr(band);
 						if (r && r.n >= 3 && r.nightlyAvg != null) {
@@ -316,7 +338,8 @@ export const Route = createFileRoute("/api/valuation/offer")({
 						rcn: rcn ? { avgM2: Math.round(rcn.avg), n: rcn.n } : null,
 						fairM2: fairM2 != null ? Math.round(fairM2) : null,
 					},
-					overUnderPct: overUnder != null ? Math.round(overUnder * 10) / 10 : null,
+					overUnderPct:
+						overUnder != null ? Math.round(overUnder * 10) / 10 : null,
 					rating: overUnder != null ? rating(overUnder) : null,
 					lt,
 					str,

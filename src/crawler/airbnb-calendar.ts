@@ -1,14 +1,13 @@
 import "dotenv/config";
 
 import { eq, sql } from "drizzle-orm";
-import { launchBrowser } from "./browser.ts";
-
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
 import {
 	foldMonthlyPrices,
 	saveAvailabilityObservations,
 } from "./availability.ts";
+import { launchBrowser } from "./browser.ts";
 import { foldOccupancy } from "./occupancy.ts";
 
 /**
@@ -175,12 +174,11 @@ export async function runAirbnbCalendarImport(
 	const soonCutoff = new Date(Date.now() + CHECKIN_SOON_DAYS * 86_400_000)
 		.toISOString()
 		.slice(0, 10);
-	const rows = await db
-		.all<{
-			id: number;
-			externalId: string;
-			price: number | null;
-		}>(sql`
+	const rows = await db.all<{
+		id: number;
+		externalId: string;
+		price: number | null;
+	}>(sql`
 		SELECT l.id, l.externalId, l.price AS price
 		FROM listings l
 		LEFT JOIN (
