@@ -1042,7 +1042,7 @@ function MapCanvas({
 					filter: ["==", ["get", "source"], "budujesie"],
 					layout: {
 						"icon-image": "budujesie-icon",
-						"icon-size": 0.65,
+						"icon-size": 0.75,
 						"icon-allow-overlap": true,
 					},
 				});

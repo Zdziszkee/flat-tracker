@@ -67,6 +67,11 @@ export interface CrawlReport {
 	/** Existing listings overwritten with fresh data (refined records). */
 	updatedListings: number;
 	elapsedSeconds: number;
+	/**
+	 * HTTP status when the portal blocked us mid-run and the crawl stopped
+	 * early (partial results were still saved). 0 when the run completed.
+	 */
+	blocked: number;
 }
 
 /** Crawl one site, persist the listings, and report. */
@@ -104,6 +109,7 @@ const runCrawl = (
 			newListings: saved.newCount,
 			updatedListings: saved.updatedCount,
 			elapsedSeconds: (Date.now() - started) / 1000,
+			blocked: result.blocked ?? 0,
 		};
 	});
 
@@ -119,7 +125,9 @@ const saveEffect = (
 /**
  * Same as runCrawl but wrapped in an exponential-backoff retry schedule.
  * Useful for scheduled cron-style runs where a transient portal block
- * should not fail the whole job.
+ * should not fail the whole job. A blocked run (crawler stopped early on a
+ * 429/403 wall) *returns* with `blocked` set instead of failing, so the
+ * schedule never retries it — the source is paused and tried later.
  */
 export const runCrawlWithRetry = (
 	adapter: SiteAdapter,

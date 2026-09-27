@@ -16,6 +16,77 @@ log.setLevel(log.LEVELS.WARNING);
 export interface CrawlResult {
 	listings: Listing[];
 	pages: number;
+	/**
+	 * HTTP status when the portal actively refused us mid-run (429 rate limit,
+	 * or repeated 403 WAF blocks) and the crawl was stopped early. Undefined
+	 * when the run completed normally.
+	 */
+	blocked?: number;
+}
+
+/**
+ * Detect "the portal is refusing us" from Crawlee error messages. Crawlee's
+ * session rotation re-queues blocked requests *without counting them as
+ * retries*, which churns forever against a hard block (a 429 wall), so we
+ * detect the block and stop the run instead — "try later" beats hammering.
+ */
+export function blockStatus(
+	...messages: (string | undefined | null)[]
+): number | null {
+	const text = messages.filter(Boolean).join("\n");
+	// Crawlee shapes: "Blocked by status code 429." (session-error path) and
+	// "Request blocked - received 429 status code." (_throwOnBlockedRequest).
+	for (const m of text.matchAll(
+		/(?:status(?:\s+code)?|received|HTTP|code)\s*(\d{3})|(\d{3})\s*status/gi,
+	)) {
+		const status = Number(m[1] ?? m[2]);
+		if (status === 429 || status === 403) return status;
+	}
+	return null;
+}
+
+interface StopLike {
+	stop?: () => void;
+	autoscaledPool?: { abort?: () => void };
+}
+
+function stopCrawler(crawler: StopLike): void {
+	try {
+		if (typeof crawler.stop === "function") crawler.stop();
+		else crawler.autoscaledPool?.abort?.();
+	} catch {
+		// stopping is best-effort; the request loop exits either way
+	}
+}
+
+/**
+ * Per-run block policy: a 429 (explicit rate limit) stops the run at once and
+ * is never retried; 403s are the documented otodom/olx burst response and
+ * keep their bounded retries, but once five blocked attempts pile up (a
+ * persistent WAF block) the run stops too.
+ */
+function makeBlockTracker() {
+	let blocked: number | null = null;
+	let blocked403 = 0;
+	return {
+		note(
+			status: number | null,
+			request: { noRetry?: boolean },
+			stop: () => void,
+		) {
+			if (!status) return;
+			if (status === 429) {
+				// never retry a rate limit — "try later", not "try again now"
+				request.noRetry = true;
+				blocked = 429;
+				stop();
+			} else if (blocked !== 429 && ++blocked403 >= 5) {
+				blocked = 403;
+				stop();
+			}
+		},
+		get: () => blocked ?? undefined,
+	};
 }
 
 /**
@@ -29,6 +100,7 @@ export interface CrawlResult {
  */
 export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 	const listings: Listing[] = [];
+	const block = makeBlockTracker();
 	// In-memory only: no storage/ dirs in the repo, and concurrent crawls
 	// (dev server + hourly task) must not race over queue files on disk.
 	const config = new Configuration({
@@ -77,33 +149,49 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 			{
 				maxRequestsPerCrawl,
 				maxConcurrency: 4,
-				maxRequestRetries: 3,
+				maxRequestRetries: 2,
 				async requestHandler({ page }) {
 					await page.waitForSelector(adapter.listingSelector);
 					const pageListings = await adapter.extractListings(page);
 					listings.push(...pageListings);
 				},
-				failedRequestHandler({ request }) {
+				async errorHandler({ request, crawler }, error) {
+					block.note(
+						blockStatus(error?.message, ...(request.errorMessages ?? [])),
+						request,
+						() => stopCrawler(crawler as StopLike),
+					);
+				},
+				async failedRequestHandler({ request, crawler }, error) {
 					console.warn(`Failed: ${request.url} (${request.errorMessages[0]})`);
+					block.note(
+						blockStatus(error?.message, ...(request.errorMessages ?? [])),
+						request,
+						() => stopCrawler(crawler as StopLike),
+					);
 				},
 			},
 			config,
 		);
 		await crawler.run(adapter.startUrls);
-		return { listings, pages: crawler.stats.state.requestsFinished };
+		return {
+			listings,
+			pages: crawler.stats.state.requestsFinished,
+			blocked: block.get(),
+		};
 	}
 
 	const crawler = new CheerioCrawler(
 		{
 			maxRequestsPerCrawl,
 			maxConcurrency: 3,
-			maxRequestRetries: 5,
+			maxRequestRetries: 2,
 			// Some portals (nieruchomosci-online) mislabel their HTML as
 			// text/plain; accept it so the Cheerio parser still runs.
 			additionalMimeTypes: ["text/plain"],
-			// Otodom/OLX return 403 when we burst; retry those with backoff
-			// instead of giving up immediately.
-			retryOnBlocked: true,
+			// Blocks are handled by `block` above: bounded retries, never the
+			// session-rotation loop that re-queues a blocked request forever.
+			retryOnBlocked: false,
 			async requestHandler({ $, request, enqueueLinks, addRequests, body }) {
 				// Polite pacing: portals throttle bursty crawlers (403s).
 				await new Promise((r) => setTimeout(r, 800));
@@ -136,12 +224,28 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 					}
 				}
 			},
-			failedRequestHandler({ request }) {
+			async errorHandler({ request, crawler }, error) {
+				block.note(
+					blockStatus(error?.message, ...(request.errorMessages ?? [])),
+					request,
+					() => stopCrawler(crawler as StopLike),
+				);
+			},
+			async failedRequestHandler({ request, crawler }, error) {
 				console.warn(`Failed: ${request.url} (${request.errorMessages[0]})`);
+				block.note(
+					blockStatus(error?.message, ...(request.errorMessages ?? [])),
+					request,
+					() => stopCrawler(crawler as StopLike),
+				);
 			},
 		},
 		config,
 	);
 	await crawler.run(adapter.startUrls);
-	return { listings, pages: crawler.stats.state.requestsFinished };
+	return {
+		listings,
+		pages: crawler.stats.state.requestsFinished,
+		blocked: block.get(),
+	};
 }

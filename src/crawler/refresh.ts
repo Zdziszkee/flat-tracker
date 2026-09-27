@@ -7,6 +7,7 @@ import { db } from "#/db/index";
 import { listings } from "#/db/schema";
 import { enrichAirbnbDetails } from "./airbnb-enrich.ts";
 import { warnIfNoBrowser } from "./browser.ts";
+import { blockStatus } from "./crawler.ts";
 import { pruneOldListings, recordCrawlRun } from "./db-sink.ts";
 import { geocodeUnlocatedListings } from "./geocode-listings.ts";
 import { importRcn } from "./import-rcn.ts";
@@ -51,6 +52,9 @@ export const DEV_SINCE_DAYS = 7;
 
 const STATE_PATH = "data/crawler/state.json";
 
+/** How long a source stays paused after it blocked us (429 wall / WAF). */
+const BLOCK_COOLDOWN_MS = 2 * 60 * 60 * 1000;
+
 interface SiteRefresh {
 	site: string;
 	ok: boolean;
@@ -59,6 +63,8 @@ interface SiteRefresh {
 	pages: number;
 	elapsedSeconds: number;
 	error?: string;
+	/** Set when the source was skipped (block cooldown), not attempted. */
+	skipped?: string;
 }
 
 export interface RefreshSummary {
@@ -178,6 +184,24 @@ export async function refreshAll(
 	// Scrape all sites in parallel; portal failures stay isolated per site.
 	try {
 		const tasks = siteAdapters.map((base) => async (): Promise<SiteRefresh> => {
+			// Block cooldown: a source that refused us (429 / persistent 403)
+			// is skipped entirely until the pause expires — "try later", and
+			// not even one request in the meantime.
+			const blockedKey = `blocked:${base.id}`;
+			const blockedUntil = state[blockedKey]
+				? Date.parse(state[blockedKey])
+				: NaN;
+			if (blockedUntil > now) {
+				return {
+					site: base.id,
+					ok: false,
+					newListings: 0,
+					updatedListings: 0,
+					pages: 0,
+					elapsedSeconds: 0,
+					skipped: `blocked earlier — retry after ${new Date(blockedUntil).toISOString().slice(11, 16)} UTC`,
+				};
+			}
 			const last = state[base.id] ? Date.parse(state[base.id]) : NaN;
 			const dbLatest = latestBySource.get(base.id) ?? 0;
 			const sinceMs = opts.diffOnly
@@ -214,12 +238,34 @@ export async function refreshAll(
 					updatedCount: report.updatedListings,
 				});
 				setSourceProgress(base.id, {
-					state: "ok",
+					state: report.blocked ? "failed" : "ok",
 					finishedAt: new Date().toISOString(),
 					pages: report.pages,
 					newCount: report.newListings,
 					updatedCount: report.updatedListings,
+					...(report.blocked
+						? {
+								error: `rate-limited (HTTP ${report.blocked}) — source paused for 2h`,
+							}
+						: {}),
 				});
+				if (report.blocked) {
+					// Partial results were saved; pause the source and say so.
+					const error = `rate-limited (HTTP ${report.blocked}) — source paused for 2h`;
+					state[blockedKey] = new Date(
+						Date.now() + BLOCK_COOLDOWN_MS,
+					).toISOString();
+					return {
+						site: adapter.id,
+						ok: false,
+						newListings: report.newListings,
+						updatedListings: report.updatedListings,
+						pages: report.pages,
+						elapsedSeconds: report.elapsedSeconds,
+						error,
+					};
+				}
+				delete state[blockedKey];
 				return {
 					site: adapter.id,
 					ok: true,
@@ -231,6 +277,13 @@ export async function refreshAll(
 			} catch (err) {
 				const error = causeLine(err);
 				console.error(`[refresh] crawl of "${adapter.id}" failed: ${error}`);
+				// A thrown hard block (custom-launch adapters, WAF pages) also
+				// pauses the source instead of being retried by later runs.
+				if (blockStatus(error)) {
+					state[blockedKey] = new Date(
+						Date.now() + BLOCK_COOLDOWN_MS,
+					).toISOString();
+				}
 				if (process.env.CRAWL_DEBUG === "1") console.error(err);
 				await recordCrawlRun({
 					source: adapter.id,

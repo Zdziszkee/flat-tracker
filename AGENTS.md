@@ -277,6 +277,15 @@ history is pruned to the 7-day cap. Dev-start runs are also first-page-only.
   403s with backoff to stay under portal throttling. Note: Crawlee swaps
   `enqueueLinks` for a no-op stub on non-HTML responses, so JSON-API
   adapters (investmap, komornik) paginate via `addRequests` instead.
+- **Blocked portals stop, they never get hammered**: a 429 (or 5 blocked
+  403 attempts) ends that source's crawl immediately
+  (`blockStatus`/`makeBlockTracker` in `crawler.ts`; `retryOnBlocked: false`,
+  `maxRequestRetries: 2`, and `request.noRetry` on the first 429) and the
+  source is paused for 2 h via `blocked:<site>` in
+  `data/crawler/state.json`. The next `refreshAll()` skips it entirely —
+  not one request — and the run summary says "blocked earlier — retry
+  after HH:MM". "Try later", never "try again now". A single burst-403
+  (otodom/olx) keeps its bounded retries and does not trigger the pause.
 - `runCrawlWithRetry` (exponential backoff) backs every site crawl in the
   server refresh task.
 
