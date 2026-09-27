@@ -522,17 +522,28 @@ export function mineTownInText(text: string): string | null {
  * to an unrelated street. Strip trailing prepositions ("Nad Stawem w"),
  * build-state verbs ("Dobrego Pasterza powstała") and noun debris
  * ("domków i segmentów", "z czego 2"); drop sub-3-char fragments
- * ("Apartamenty Go", "Osiedle Fi"). */
+ * ("Apartamenty Go", "Osiedle Fi").
+ *
+ * The head must also LOOK like a street name: a capitalized (or
+ * house-numbered) name of at most 3 words with no sentence punctuation.
+ * Prose fragments mined from posts ("a kończą na 57", "informacyjna
+ * inwestycji Dobrego Pasterza 52", "kondygnacje. W budynku …") fail the
+ * shape and the caller falls back to the title-mined address instead. */
 function sanitizeAddressHead(address: string | null): string | null {
 	if (!address) return null;
 	const parts = address.split(",");
 	const head = (parts[0] ?? "")
+		.replace(/^(?:przy\s+ulicy|przy\s+ul\.?|ulica|ul\.|przy|od|na|w)\s+/iu, "")
 		.replace(
 			/\s+(?:w|z|i|na|przy|do|od|u|oraz|we|ze|powstała|powstały|powstaje|powstanie|zlokalizowana|znajduje)$/iu,
 			"",
 		)
 		.trim();
 	if (head.length < 3) return null;
+	if (/[.;:!?]/u.test(head)) return null;
+	const words = head.split(/\s+/u).filter((w) => /\p{L}/u.test(w));
+	if (words.length > 3) return null;
+	if (!/^[\p{Lu}\p{N}]/u.test(head)) return null;
 	if (
 		/^(?:domków|segmentów|mieszkań|lokali|budynków|etap\w*|czego|tych|tym|tego|wszystkich|każdego|nowych|nowe)\b/iu.test(
 			head,

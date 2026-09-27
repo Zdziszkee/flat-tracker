@@ -156,17 +156,37 @@ for (const line of far.slice(0, 10)) console.log(line);
 
 const anchors = db
 	.prepare(
-		`SELECT l.id, l.district, json_extract(ob.tags,'$.addr:city') bcity
+		`SELECT l.id, l.district, json_extract(ob.tags,'$.addr:city') bcity,
+		 json_extract(ob.tags,'$.addr:street') bstreet
 		 FROM listings l JOIN buildings b ON b.id = l.building_id
 		 LEFT JOIN osm_buildings ob ON ob.osmId = b.osmId
 		 WHERE l.source = 'licytacje-komornik' AND l.building_id IS NOT NULL`,
 	)
-	.all() as Array<{ id: number; district: string | null; bcity: string | null }>;
+	.all() as Array<{
+	id: number;
+	district: string | null;
+	bcity: string | null;
+	bstreet: string | null;
+}>;
+// Same place despite naming form: exact fold ("Kraków"), a shared root
+// ("Rabce-Zdroju" is the locative of "Rabka-Zdrój"), or the street name
+// standing in for the village where OSM tags the gmina as addr:city
+// (building "Kroczymiech 11" with addr:city=Chrzanów).
+const samePlace = (x: string, y: string): boolean => {
+	const a = normStreet(x);
+	const b = normStreet(y);
+	return (
+		a === b ||
+		(a.split(/[-\s]/u)[0] ?? "").slice(0, 3) ===
+			(b.split(/[-\s]/u)[0] ?? "").slice(0, 3)
+	);
+};
 const anchorBad = anchors.filter(
 	(a) =>
 		a.bcity &&
 		a.district &&
-		normStreet(a.bcity) !== normStreet(a.district),
+		!samePlace(a.bcity, a.district) &&
+		!samePlace(a.bstreet ?? "", a.district),
 );
 check(
 	"anchors: building city matches listing district",

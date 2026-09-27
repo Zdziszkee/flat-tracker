@@ -275,6 +275,24 @@ const threadHtml = `<div id="page-body">
 		"OP mining reads only the head: tail numerals ignored",
 		`got ${headWins}`,
 	);
+	check(
+		minePostAddress(
+			"Budynek będzie miał osiem kondygnacji, a kończą na 57. Mieszkań jest dużo.",
+		) == null,
+		"OP guard: lowercase prose head rejected",
+	);
+	check(
+		minePostAddress(
+			"Informacyjna inwestycji Dobrego Pasterza 52 znajdziesz na stronie.",
+		) == null,
+		"OP guard: >3-word prose head rejected",
+	);
+	check(
+		minePostAddress(
+			"Kondygnacje. W budynku znajdzie się 99 mieszkań.",
+		) == null,
+		"OP guard: sentence-crossing head rejected",
+	);
 }
 
 // --- live coverage ---------------------------------------------------------
