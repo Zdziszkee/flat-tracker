@@ -265,6 +265,16 @@ const threadHtml = `<div id="page-body">
 		"OP town agrees: OP street wins",
 		`got ${agreed}`,
 	);
+	const headWins = chooseThreadAddress(
+		"Stella Prima Kraków - Merite Corporate (Zamoyskiego 70)",
+		"Zamoyskiego 70, Kraków",
+		`Inwestycja powstaje przy ul. Zamoyskiego 70 w Krakowie. ${"Budynek będzie miał osiem kondygnacji, a kończą na 82. Mieszkań jest dużo, ceny zaczynają się od 14 tysięcy za metr. ".repeat(8)}`,
+	);
+	check(
+		headWins === "Zamoyskiego 70, Kraków",
+		"OP mining reads only the head: tail numerals ignored",
+		`got ${headWins}`,
+	);
 }
 
 // --- live coverage ---------------------------------------------------------

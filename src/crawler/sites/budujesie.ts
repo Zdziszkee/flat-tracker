@@ -584,8 +584,12 @@ export function chooseThreadAddress(
 		!opTown ||
 		foldForCompare(titleTown) === foldForCompare(opTown);
 	if (!townsAgree) return cardAddress;
+	// Mining only reads the head of the OP: investment intros state the
+	// address up front, while later prose drifts into numerals and counts
+	// that parse as fake streets ("a kończą na 82", "Sierpnia 2026").
 	return (
-		minePostAddress(opText, titleTown ?? opTown ?? undefined) ?? cardAddress
+		minePostAddress(opText.slice(0, 600), titleTown ?? opTown ?? undefined) ??
+		cardAddress
 	);
 }
 
