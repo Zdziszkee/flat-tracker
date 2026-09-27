@@ -491,7 +491,14 @@ export function parseThreadPosts($: CheerioSelection): ThreadPost[] {
 			.text()
 			.replace(/\s+/g, " ")
 			.trim();
-		if (text) posts.push({ author, at, text: text.slice(0, 600) });
+		if (text)
+			// The OP keeps its full length (it doubles as the description and
+			// the address source); replies stay excerpted.
+			posts.push({
+				author,
+				at,
+				text: text.slice(0, posts.length === 0 ? 2000 : 600),
+			});
 	});
 	return posts;
 }
