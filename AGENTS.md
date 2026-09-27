@@ -300,7 +300,7 @@ assigns all 84k transactions in minutes, not hours.
 | rynekpierwotny.pl | New-development projects (osiedla) | `window.__INITIAL_STATE__` `offerList.list.offers` with geo points + price ranges; pagination `?page=N` (all pages) |
 | investmap.pl | **Every registered Krakow investment with its flats** (incl. small private ones) | Public JSON API `GET /api/investment/search?withEstates=1&categorySlug=mieszkania&citySlug=krakow&offset=N` — flats inline (`es[].list`): area, price, price_m2, floor, rooms; coordinates from the investment |
 | licytacje.komornik.pl | Court auction notices (Małopolska real estate, all subcategories) | Playwright only (WAF blocks non-browser TLS); anonymous JSON API `POST /services/item-back/rest/item/search` (same-origin, `termFilters` + `fullTextFilters` city, `offset` pagination); every REAL_ESTATE subcategory kept |
-| budujesie.pl | Investments under construction (Kraków housing), one phpBB topic per investment | Plain prosilver DOM cards (`viewforum.php?f=5`, 25 topics/page, `start=N` pagination); rows are long-lived inventory with no price — the map renders them as their own hard-hat symbol layer, address mined from the thread title and geocoded like the other address-only sources |
+| budujesie.pl | Investments under construction (Kraków housing), one phpBB topic per investment | Plain prosilver DOM cards (`viewforum.php?f=5`, 25 topics/page, `start=N` pagination); rows are long-lived inventory with no price — the map renders them as their own hard-hat symbol layer, address mined from the thread title and geocoded like the other address-only sources. phpBB date quirks are pinned by `scripts/validate-budujesie.ts` |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
 | GUGiK RCN (Usługa Transakcje) | Same, but every powiat in Poland: małopolska by default, the other ~358 on demand (per-powiat GeoPackages; parcel/building/lokal transactions) | `https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip` — imported by `import-rcn-gugik.ts` (`bun run import:rcn-gugik`, `bun run import:rcn-gugik:all`) |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
@@ -372,7 +372,11 @@ scraping needed.
      nieruchomosci-online) embed their feed as schema.org JSON. Use
      `parseLdJson`/`findLdNodes` from `ldjson.ts`, or the
      `makeLdOfferAdapter` factory for the shared Morizon/Gratka shape.
-3. Register it in `src/crawler/sites/index.ts`.
+3. Register it in `src/crawler/sites/index.ts`, and add a descriptor to
+   `src/crawler/source-status.ts`. The **/sources** page and
+   `/api/crawl-status` read that STATIC literal (it must not import
+   `sites/index.ts` — see its header comment), so a source registered only
+   in the adapter graph gets crawled but stays invisible on the status page.
 4. Test: trigger a refresh from the **/sources** page (or POST
    `/_nitro/tasks/refresh`) and watch the new site's row on the status page.
 
