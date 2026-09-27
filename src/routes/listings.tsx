@@ -49,7 +49,7 @@ const SOURCE_LABELS: Record<string, string> = {
 	"nieruchomosci-online": "Nieruchomosci-online",
 	rynekpierwotny: "Rynekpierwotny",
 	"licytacje-komornik": "Licytacje komornicze",
-	budujesie: "BudujeSie (w budowie)",
+	budujesie: "BudujeSie (forum inwestycji)",
 	airbnb: "Airbnb",
 	booking: "Booking",
 };
@@ -366,11 +366,12 @@ function ListingsPage() {
 								<>
 									<tr
 										key={`${r.source}-${r.id}`}
-										className={`border-t ${r.offerType === "sale" || r.offerType === "long_term_rental" ? "cursor-pointer hover:bg-gray-50" : ""}`}
+										className={`border-t ${r.offerType === "sale" || r.offerType === "long_term_rental" || r.source === "budujesie" ? "cursor-pointer hover:bg-gray-50" : ""}`}
 										onClick={() => {
 											if (
 												r.offerType !== "sale" &&
-												r.offerType !== "long_term_rental"
+												r.offerType !== "long_term_rental" &&
+												r.source !== "budujesie"
 											) {
 												return;
 											}
@@ -412,7 +413,8 @@ function ListingsPage() {
 										</td>
 										<td className="px-2 py-1.5 text-center text-gray-400">
 											{r.offerType === "sale" ||
-											r.offerType === "long_term_rental"
+											r.offerType === "long_term_rental" ||
+											r.source === "budujesie"
 												? expanded === r.id
 													? "▾"
 													: "▸"
