@@ -444,7 +444,10 @@ export function parseTopicCard(
 	if (cachedTopic) {
 		if (cachedTopic.address) address = cachedTopic.address;
 		description = cachedTopic.description;
-		if (cachedTopic.posts.length > 0) features.posts = cachedTopic.posts;
+		// The cache predates the 2-year window in old installs; filter on
+		// emission so stale replies can never ride back in.
+		const recent = filterRecentPosts(cachedTopic.posts);
+		if (recent.length > 0) features.posts = recent;
 	}
 
 	return {
@@ -483,8 +486,13 @@ export function parseThreadPosts($: CheerioSelection): ThreadPost[] {
 			$post.find("p.author strong a").eq(0).text().trim() ||
 			null;
 		const rawAt = $post.find("time[datetime]").eq(0).attr("datetime");
-		// phpBB writes `+0200`; normalize to ISO `+02:00`.
-		const at = rawAt ? rawAt.replace(/([+-]\d{2}):?(\d{2})$/, "$1:$2") : null;
+		// The post time lives in the author line ("autor: X » 25 wrz 2026,
+		// 12:44") in every prosilver variant we have seen — `<time[datetime]>`
+		// matched nothing on this board and left all posts undated. phpBB's
+		// datetime attr writes `+0200`; normalize to ISO `+02:00`.
+		const at = rawAt
+			? rawAt.replace(/([+-]\d{2}):?(\d{2})$/, "$1:$2")
+			: parsePlDate($post.find("p.author").text());
 		const text = $post
 			.find("div.postbody div.content")
 			.eq(0)
@@ -581,33 +589,123 @@ export function minePostAddress(
 	);
 }
 
+/** Explicit street marker before a capitalized name ("przy ulicy X"). */
+const STREET_PREFIX_RE =
+	/(?:^|[\s(,"'„»])(?:ul\.?|ulica|ulicy|al\.?|aleja|os\.?|osiedle|pl\.?|plac|rynek|bulwar|rondo)\s+[A-ZĄĆĘŁŃÓŚŹŻ]/u;
+
+/**
+ * A comment-mined address must be provable: a lexicon street ("Kraszewskiego")
+ * or an explicitly prefixed one ("przy ulicy Dobrego Pasterza"). Bare
+ * "Word Number" matches in comment prose are usually not addresses
+ * ("Zresztą 5 segmentów", "City Vibe"), so they never count.
+ */
+export function commentMinedTrustworthy(
+	text: string,
+	address: string,
+): boolean {
+	const head = (address.split(",")[0] ?? "").trim();
+	if (isKnownKrakowStreet(head)) return true;
+	return STREET_PREFIX_RE.test(text.slice(0, 600));
+}
+
 /** Address for a thread row: the OP prose wins when it names a place that
  * agrees with the title's town (or when the title names none). A post
  * mentioning an unrelated place (a sales office in another town) never
- * displaces the title's location. */
+ * displaces the title's location. When the OP is silent, the comments are
+ * mined the same way — the discussion often states the location ("powstaje
+ * przy ulicy Dobrego Pasterza") even when the intro does not. */
 export function chooseThreadAddress(
 	title: string,
 	cardAddress: string | null,
 	opText: string | null,
+	commentTexts: string[] = [],
 ): string | null {
-	if (!opText) return cardAddress;
 	const titleTown = mineTownName(title);
-	const opTown = mineTownInText(opText);
-	const townsAgree =
-		!titleTown ||
-		!opTown ||
-		foldForCompare(titleTown) === foldForCompare(opTown);
-	if (!townsAgree) return cardAddress;
-	// Mining only reads the head of the OP: investment intros state the
+	const agree = (text: string): boolean => {
+		const textTown = mineTownInText(text);
+		return (
+			!titleTown ||
+			!textTown ||
+			foldForCompare(titleTown) === foldForCompare(textTown)
+		);
+	};
+	// Mining only reads the head of a post: investment intros state the
 	// address up front, while later prose drifts into numerals and counts
 	// that parse as fake streets ("a kończą na 82", "Sierpnia 2026").
-	return (
-		minePostAddress(opText.slice(0, 600), titleTown ?? opTown ?? undefined) ??
-		cardAddress
-	);
+	const head = (text: string, town?: string) =>
+		minePostAddress(text.slice(0, 600), town);
+
+	if (opText && agree(opText)) {
+		const mined = head(
+			opText,
+			titleTown ?? mineTownInText(opText) ?? undefined,
+		);
+		if (mined) return mined;
+	}
+	for (const comment of commentTexts) {
+		if (!comment || !agree(comment)) continue;
+		const mined = head(
+			comment,
+			titleTown ?? mineTownInText(comment) ?? undefined,
+		);
+		if (mined && commentMinedTrustworthy(comment, mined)) return mined;
+	}
+	return cardAddress;
 }
 
 const cardCache = new Map<string, Listing>();
+
+/** "Only recent ones": posts and topics from the last 2 years (730 days). */
+export const RECENT_WINDOW_DAYS = 730;
+
+function timeOf(iso: string | null | undefined): number {
+	if (!iso) return Number.NaN;
+	const t = Date.parse(iso);
+	return Number.isFinite(t) ? t : Number.NaN;
+}
+
+/**
+ * Posted within the window. `fallback` covers posts without a parsed date
+ * (old phpBB markup has no `<time datetime>`): for the OP that is the
+ * topic's start date, so a fresh topic's first post is never dropped.
+ */
+export function postedWithinWindow(
+	at: string | null | undefined,
+	fallback?: string | null,
+	now = Date.now(),
+): boolean {
+	const raw = at ?? fallback ?? null;
+	const t = timeOf(raw);
+	return Number.isFinite(t) && t >= now - RECENT_WINDOW_DAYS * 86_400_000;
+}
+
+/**
+ * Topic kept only when it was posted in — or discussed in — the last 2
+ * years ("only recent ones from last 2 years posted"). Long-dead topics
+ * are neither emitted nor kept in the DB (the refresh prunes them).
+ */
+export function topicWithinWindow(card: Listing, now = Date.now()): boolean {
+	const feats = parseFeaturesJson(card.features);
+	const lastPostAt = (feats.lastPostAt as string | undefined) ?? null;
+	return (
+		postedWithinWindow(card.listedAt, null, now) ||
+		postedWithinWindow(lastPostAt, null, now)
+	);
+}
+
+/**
+ * Posts list riding to the UI: the OP plus only the replies posted within
+ * the window. The OP is kept even when old — it is the investment's own
+ * description, not discussion (its date is the topic's start date).
+ */
+export function filterRecentPosts(
+	posts: ThreadPost[],
+	now = Date.now(),
+): ThreadPost[] {
+	const [op, ...replies] = posts;
+	if (!op) return [];
+	return [op, ...replies.filter((p) => postedWithinWindow(p.at, null, now))];
+}
 
 export const budujesieAdapter: CheerioAdapter = {
 	id: "budujesie",
@@ -636,16 +734,24 @@ export const budujesieAdapter: CheerioAdapter = {
 		if (/viewtopic\.php/u.test(url) && topicId) {
 			const card = cardCache.get(topicId);
 			if (!card) return [];
-			const posts = parseThreadPosts($).slice(0, 8);
+			const allPosts = parseThreadPosts($).slice(0, 8);
 			// A topic always has at least one post; zero means the markup
 			// changed — keep the cache untouched so the next run retries.
-			if (posts.length === 0) return [card];
-			const opText = posts[0]?.text ?? null;
+			const [op, ...replies] = allPosts;
+			if (!op) return [card];
+			const opText = op.text;
+			// Only posts from the last 2 years ride to the UI.
+			const posts = filterRecentPosts(allPosts);
 			const features = parseFeaturesJson(card.features);
 			features.posts = posts;
 			const merged: Listing = {
 				...card,
-				address: chooseThreadAddress(card.title, card.address, opText),
+				address: chooseThreadAddress(
+					card.title,
+					card.address,
+					opText,
+					replies.map((p) => p.text),
+				),
 				description: opText ? opText.slice(0, 2000) : card.description,
 				features: JSON.stringify(features),
 			};
@@ -661,11 +767,15 @@ export const budujesieAdapter: CheerioAdapter = {
 		}
 
 		// Forum list page.
-		const cards: Listing[] = [];
+		const parsed: Listing[] = [];
 		$(LIST_SELECTOR).each((_, el) => {
 			const card = parseTopicCard($, el);
-			if (card) cards.push(card);
+			if (card) parsed.push(card);
 		});
+		// "Only recent ones from last 2 years posted": topics neither
+		// started nor discussed in the window are not emitted at all (the
+		// refresh prunes the ones already stored).
+		const cards = parsed.filter((card) => topicWithinWindow(card));
 		const cache = loadTopicCache();
 		const toFetch: string[] = [];
 		for (const card of cards) {
@@ -674,8 +784,12 @@ export const budujesieAdapter: CheerioAdapter = {
 				(parseFeaturesJson(card.features).lastPostAt as string | undefined) ??
 				null;
 			const seen = cache[card.externalId];
-			// Only topics whose thread moved since the last fetch.
-			if (!seen || seen.lastPostAt !== lastPostAt) toFetch.push(card.url);
+			// Only topics whose thread moved since the last fetch. Entries
+			// written before post dates were parsed carry all-undated posts
+			// and are refetched once so the 2-year window has dates.
+			const undated = seen?.posts.some((p) => p.at == null) ?? false;
+			if (!seen || seen.lastPostAt !== lastPostAt || undated)
+				toFetch.push(card.url);
 		}
 		if (toFetch.length > 0) await enqueue(toFetch);
 		const next = $(NEXT_PAGE_SELECTOR).attr("href");

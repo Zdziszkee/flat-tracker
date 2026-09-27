@@ -8,7 +8,11 @@ import { listings } from "#/db/schema";
 import { enrichAirbnbDetails } from "./airbnb-enrich.ts";
 import { warnIfNoBrowser } from "./browser.ts";
 import { blockStatus } from "./crawler.ts";
-import { pruneOldListings, recordCrawlRun } from "./db-sink.ts";
+import {
+	pruneOldListings,
+	pruneStaleBudujesie,
+	recordCrawlRun,
+} from "./db-sink.ts";
 import { geocodeUnlocatedListings } from "./geocode-listings.ts";
 import { importRcn } from "./import-rcn.ts";
 import { runCrawlWithRetry } from "./pipeline.ts";
@@ -353,9 +357,14 @@ export async function refreshAll(
 		await writeState(state);
 
 		setPhase("prune");
-		const pruned = await pruneOldListings(
-			new Date(now - sinceDays * 24 * 60 * 60 * 1000),
-		);
+		const pruned =
+			(await pruneOldListings(
+				new Date(now - sinceDays * 24 * 60 * 60 * 1000),
+			)) +
+			// "Only recent ones from last 2 years posted": the budujesie
+			// forum corpus (posts + comments) is capped at the 730-day
+			// window the adapter enforces at emission time.
+			(await pruneStaleBudujesie(new Date(now - 730 * 24 * 60 * 60 * 1000)));
 
 		// Airbnb room-page enrichment: bedrooms/beds/bathrooms, guests,
 		// amenities for listings captured by the search crawl. Budgeted so

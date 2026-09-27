@@ -243,7 +243,7 @@ function stripPrefix(street: string): string {
  * "Mackiewicza 4-pokojowe mieszkanie"), so cut at the first marker.
  */
 const STREET_END_MARKERS =
-	/\s+(english|wersja|opis|opisana|mamy|przyjemnosc|przyjemność|zapraszam|zapraszamy|oferujemy|oferuje|polecam|polecamy|biuro|kontakt|tel|numer|ksiega|pietro|pietra|kondygnacja|m2|m²)\b.*$/iu;
+	/\s+(english|wersja|opis|opisana|mamy|przyjemnosc|przyjemność|zapraszam|zapraszamy|oferujemy|oferuje|polecam|polecamy|biuro|kontakt|tel|numer|ksiega|pietro|pietra|kondygnacja|m2|m²|powstała|powstały|powstało|powstaje|powstają|powstanie|budowa|budowie|budowany|budowana|budowane|realizowana|realizowany|realizowane|znajduje|znajdują|zlokalizowana|zlokalizowany|zlokalizowane|inwestycja|inwestycji|inwestycję|budynek|budynku|blok|bloku|dom|domy|domów|domków|segmenty|segmentów|osiedle)\b.*$/iu;
 
 function truncateStreet(street: string): string {
 	return street.replace(STREET_END_MARKERS, "").trim();
@@ -383,15 +383,27 @@ export function parseAddressFromText(
 		const street = truncateStreet(
 			stripPrefix(c.street).replace(/\s+/g, " ").trim(),
 		);
-		if (!validStreet(street)) continue;
-		const out = {
-			street: resolveStreetName(street),
-			number: c.number ?? undefined,
-		};
-		// Prefer a street we can map to the Krakow lexicon over ad-speak that
-		// merely looks address-like ("... w budynku z 2014 ...").
-		if (isKnownKrakowStreet(out.street)) return out;
-		fallback ??= out;
+		// The greedy name run can over-capture into prose the end markers
+		// missed ("ul. Dobrego Pasterza z widokiem na Wisłę"): try the run
+		// and its word prefixes longest-first, so the full name wins when it
+		// is the known street and a known-street prefix beats junk prose.
+		const words = street.split(/\s+/).filter(Boolean);
+		const variants = words
+			.map((_, i) => words.slice(0, words.length - i).join(" "))
+			// A truncated one-word prefix is a declension trap ("Dobrego" ->
+			// "Dobra"): only the full run may be a single word.
+			.filter((v, i) => validStreet(v) && (i === 0 || words.length - i >= 2))
+			.slice(0, 4);
+		for (const variant of variants) {
+			const out = {
+				street: resolveStreetName(variant),
+				number: c.number ?? undefined,
+			};
+			// Prefer a street we can map to the Krakow lexicon over ad-speak
+			// that merely looks address-like ("... w budynku z 2014 ...").
+			if (isKnownKrakowStreet(out.street)) return out;
+			fallback ??= out;
+		}
 	}
 	return fallback;
 }

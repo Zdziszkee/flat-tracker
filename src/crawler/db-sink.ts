@@ -314,11 +314,41 @@ export async function pruneOldListings(
 		);
 	const ids = stale.map((r) => r.id);
 	if (ids.length === 0) return 0;
+	await deleteListingRows(ids);
+	return ids.length;
+}
 
+/**
+ * "Only recent ones from last 2 years posted": drop budujesie topics
+ * neither started nor discussed since `cutoff`. Mirrors the adapter's
+ * emission gate (`topicWithinWindow`) so a pruned row can never be
+ * re-upserted by the next crawl.
+ */
+export async function pruneStaleBudujesie(cutoff: Date): Promise<number> {
+	const cutoffSecs = Math.floor(cutoff.getTime() / 1000);
+	const cutoffIso = cutoff.toISOString().slice(0, 19);
+	const stale = await db
+		.select({ id: listings.id })
+		.from(listings)
+		.where(
+			and(
+				eq(listings.source, "budujesie"),
+				sql`coalesce(${listings.listedAt}, ${listings.firstSeenAt}) < ${cutoffSecs}`,
+				sql`(json_extract(${listings.features}, '$.lastPostAt') IS NULL OR json_extract(${listings.features}, '$.lastPostAt') < ${cutoffIso})`,
+			),
+		);
+	const ids = stale.map((r) => r.id);
+	if (ids.length === 0) return 0;
+	await deleteListingRows(ids);
+	return ids.length;
+}
+
+/** Listings plus their FK dependents, chunked under SQLite's
+ * bound-variable cap (~999) on big first-run prunes. */
+async function deleteListingRows(ids: number[]): Promise<void> {
 	// listing_history / availability* reference listings.id via FOREIGN KEY
-	// (SQLite enforces them under better-sqlite3), so clear the dependent rows
-	// first, or the delete trips SQLITE_CONSTRAINT_FOREIGNKEY. Chunk to stay
-	// under SQLite's bound-variable cap (~999) on big first-run prunes.
+	// (SQLite enforces them under better-sqlite3), so clear the dependent
+	// rows first, or the delete trips SQLITE_CONSTRAINT_FOREIGNKEY.
 	const BATCH = 400;
 	for (let i = 0; i < ids.length; i += BATCH) {
 		const chunk = ids.slice(i, i + BATCH);
@@ -334,6 +364,4 @@ export async function pruneOldListings(
 			.where(inArray(listingMonthlyPrice.listingId, chunk));
 		await db.delete(listings).where(inArray(listings.id, chunk));
 	}
-
-	return ids.length;
 }

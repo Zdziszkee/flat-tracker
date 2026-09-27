@@ -21,6 +21,8 @@ const SOURCE_LABELS: Record<string, string> = {
 	domiporta: "Domiporta",
 	"nieruchomosci-online": "Nieruchomosci-online",
 	rynekpierwotny: "Rynekpierwotny",
+	investmap: "Investmap",
+	budujesie: "BudujeSie (forum inwestycji)",
 	"licytacje-komornik": "Licytacje komornicze",
 	airbnb: "Airbnb",
 	booking: "Booking",
