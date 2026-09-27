@@ -149,8 +149,11 @@ together with the postal code from the address.
 The same pass runs automatically inside every `refreshAll()` with a
 Photon budget of 100/run (local index matches are instant), so the
 map stays populated between manual drains. Geocoded positions survive
-re-crawls: `saveListings` coalesces coordinates, so address-only
-adapters never overwrite them with NULL. Street-only addresses anchor
+re-crawls: `saveListings` coalesces coordinates, `address` and
+`description`, so address-only adapters never overwrite them with NULL
+(a plain `excluded.address` here once wiped 28 geocode-mined budujesie
+addresses on the next full re-crawl — every nullable column a re-crawl
+can re-emit as NULL must be coalesced in `onConflictDoUpdate`). Street-only addresses anchor
 to the local street centroid (no building claim); Nominatim results
 are cached per street in `data/crawler/nominatim-cache.json` so
 duplicate offers and chunked drain runs never re-query. Pass
