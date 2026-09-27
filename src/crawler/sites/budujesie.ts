@@ -611,7 +611,7 @@ const cardCache = new Map<string, Listing>();
 
 export const budujesieAdapter: CheerioAdapter = {
 	id: "budujesie",
-	name: "BudujeSie.pl · inwestycje mieszkaniowe w budowie (Kraków)",
+	name: "BudujeSie.pl · forum nowych inwestycji mieszkaniowych (Kraków)",
 	kind: "cheerio",
 	startUrls: [`${BASE}/${FORUM_PATH}`],
 	// 52 list pages + one fetch per new/moved topic (all of them on the

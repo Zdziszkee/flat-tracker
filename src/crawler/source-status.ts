@@ -78,7 +78,7 @@ const PORTAL_SOURCES: SourceDescriptor[] = [
 	},
 	{
 		id: "budujesie",
-		name: "BudujeSie - Krakow investments under construction (forum)",
+		name: "BudujeSie - Krakow new housing investments (forum)",
 		kind: "portal",
 	},
 ];
