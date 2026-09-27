@@ -330,6 +330,22 @@ export const budujesieAdapter: CheerioAdapter = {
 			if (street)
 				address = formatAddressForGeocode(street, undefined, district);
 		}
+		// Name/street mining can leak a trailing preposition ("Nad Stawem w
+		// Krakowie" -> "Nad Stawem w") or a sub-3-char fragment of an
+		// investment name ("Apartamenty Go", "Osiedle Fi"). A junk head is
+		// worse than no address: it pollutes the row and can pin to an
+		// unrelated street. Strip the preposition, drop tiny fragments.
+		if (address) {
+			const parts = address.split(",");
+			const head = (parts[0] ?? "")
+				.replace(/\s+(?:w|z|i|na|przy|do|od|u|oraz|we|ze)$/iu, "")
+				.trim();
+			if (head.length < 3) address = null;
+			else {
+				parts[0] = head;
+				address = parts.join(",");
+			}
+		}
 
 		const features: Record<string, unknown> = {};
 		if (author) features.author = author;
