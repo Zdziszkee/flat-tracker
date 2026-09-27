@@ -293,6 +293,19 @@ const threadHtml = `<div id="page-body">
 		) == null,
 		"OP guard: sentence-crossing head rejected",
 	);
+	check(
+		minePostAddress(
+			"Ktoś szukał tej inwestycji. Przejrzano 2092 razy.",
+		) == null,
+		"OP guard: view-counter head rejected",
+	);
+	check(
+		minePostAddress(
+			"Inwestycja przy ul. Sołtysowskiej - Willa Sołtysowska.",
+			"Kraków",
+		) === "Sołtysowskiej, Kraków",
+		"OP guard: spaced-hyphen prose tail cut",
+	);
 }
 
 // --- live coverage ---------------------------------------------------------

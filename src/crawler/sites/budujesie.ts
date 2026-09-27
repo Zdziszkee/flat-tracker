@@ -538,6 +538,9 @@ function sanitizeAddressHead(address: string | null): string | null {
 			/\s+(?:w|z|i|na|przy|do|od|u|oraz|we|ze|powstała|powstały|powstaje|powstanie|zlokalizowana|znajduje)$/iu,
 			"",
 		)
+		// Cut prose tails joined with a spaced hyphen ("Sołtysowskiej -
+		// Willa Sołtysowska"); hyphenated street names never space around it.
+		.split(/\s+[-–—]\s+/u)[0]
 		.trim();
 	if (head.length < 3) return null;
 	if (/[.;:!?]/u.test(head)) return null;
@@ -545,7 +548,7 @@ function sanitizeAddressHead(address: string | null): string | null {
 	if (words.length > 3) return null;
 	if (!/^[\p{Lu}\p{N}]/u.test(head)) return null;
 	if (
-		/^(?:domków|segmentów|mieszkań|lokali|budynków|etap\w*|czego|tych|tym|tego|wszystkich|każdego|nowych|nowe)\b/iu.test(
+		/^(?:domków|segmentów|mieszkań|lokali|budynków|etap\w*|czego|tych|tym|tego|wszystkich|każdego|nowych|nowe|przejrzano|odsłon|wyświetlono|szukano)\b/iu.test(
 			head,
 		)
 	)
