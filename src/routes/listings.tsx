@@ -18,6 +18,8 @@ interface Row {
 	heatingType: string | null;
 	propertyType: string | null;
 	features: string | null;
+	constructionEndLabel: string | null;
+	constructionEndDate: string | null;
 }
 
 interface ListingsResponse {
@@ -28,6 +30,29 @@ interface ListingsResponse {
 function fmt(n: number | null): string {
 	if (n === null) return "";
 	return new Intl.NumberFormat("pl-PL", { maximumFractionDigits: 0 }).format(n);
+}
+
+/**
+ * Investmap's "realizacja" quarter is a planned completion, so the status
+ * must stay factual: the quarter carrying the planned end having passed is
+ * not proof of delivery.
+ */
+function realizationCaption(label: string, date: string | null): string {
+	let status = "";
+	if (date) {
+		const start = new Date(date);
+		if (!Number.isNaN(start.getTime())) {
+			// The label names a quarter: its last month ends 3 months after
+			// the quarter-start date stored behind it.
+			const quarterEnd = new Date(start);
+			quarterEnd.setMonth(quarterEnd.getMonth() + 3);
+			status =
+				quarterEnd.getTime() > Date.now()
+					? " · w budowie"
+					: " · planowany termin minął";
+		}
+	}
+	return `Realizacja: ${label}${status}`;
 }
 
 /** 0 = no time window (all offers). */
@@ -389,15 +414,25 @@ function ListingsPage() {
 												{r.source}
 											</span>
 										</td>
-										<td className="max-w-96 truncate px-3 py-1.5">
-											<a
-												href={r.url}
-												target="_blank"
-												rel="noreferrer"
-												className="hover:text-blue-600 hover:underline"
-											>
-												{r.title}
-											</a>
+										<td className="max-w-96 px-3 py-1.5">
+											<div className="truncate">
+												<a
+													href={r.url}
+													target="_blank"
+													rel="noreferrer"
+													className="hover:text-blue-600 hover:underline"
+												>
+													{r.title}
+												</a>
+											</div>
+											{r.constructionEndLabel && (
+												<div className="truncate text-xs text-amber-700">
+													{realizationCaption(
+														r.constructionEndLabel,
+														r.constructionEndDate,
+													)}
+												</div>
+											)}
 										</td>
 										<td className="px-3 py-1.5 text-right font-medium">
 											{fmt(r.price)}
