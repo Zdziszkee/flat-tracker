@@ -129,6 +129,20 @@ export const listings = sqliteTable(
 		bathrooms: real(),
 		/** Parsed monthly utility/administrative fees for rentals (JSON: ogrzewanie, prad, woda, gaz, smieci). */
 		utilities: text(),
+		/**
+		 * Construction completion ("realizacja") as published for
+		 * new-development investments (investmap `finish.title`), e.g.
+		 * "I kw. 2026". Planned while the project is underway, actual for
+		 * delivered ones - the source does not distinguish.
+		 */
+		constructionEndLabel: text("construction_end_label"),
+		/**
+		 * Quarter-start date behind `constructionEndLabel` (investmap
+		 * `finish.date`), e.g. "2026-01-01" for "I kw. 2026". Investmap
+		 * publishes no construction start date and no status field, so
+		 * there are no start/status columns - never guessed values.
+		 */
+		constructionEndDate: text("construction_end_date"),
 	},
 	(t) => [
 		uniqueIndex("listings_source_external_idx").on(t.source, t.externalId),

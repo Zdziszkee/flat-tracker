@@ -48,6 +48,8 @@ function extractFeatureFields(features: string | null): {
 	floorCount: number | null;
 	condition: string | null;
 	ownership: string | null;
+	constructionEndLabel: string | null;
+	constructionEndDate: string | null;
 } {
 	const out = {
 		market: null as string | null,
@@ -56,6 +58,8 @@ function extractFeatureFields(features: string | null): {
 		floorCount: null as number | null,
 		condition: null as string | null,
 		ownership: null as string | null,
+		constructionEndLabel: null as string | null,
+		constructionEndDate: null as string | null,
 	};
 	if (!features) return out;
 	try {
@@ -71,6 +75,10 @@ function extractFeatureFields(features: string | null): {
 			featureString(f.finish_state);
 		out.ownership =
 			featureString(f.building_ownership) ?? featureString(f.ownership);
+		// Investment construction timeline (investmap `finish`): the
+		// "realizacja" quarter label plus its normalized date.
+		out.constructionEndLabel = featureString(f.construction_end_label);
+		out.constructionEndDate = featureString(f.construction_end_date);
 	} catch {
 		// Unparseable features blob: keep the promoted columns null.
 	}
@@ -153,6 +161,8 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 			floorCount: f.floorCount,
 			condition: f.condition,
 			ownership: f.ownership,
+			constructionEndLabel: f.constructionEndLabel,
+			constructionEndDate: f.constructionEndDate,
 			firstSeenAt: now,
 			lastSeenAt: now,
 			isActive: true,
@@ -204,6 +214,11 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					floorCount: sql`coalesce(excluded.floor_count, ${listings.floorCount})`,
 					condition: sql`coalesce(excluded.condition, ${listings.condition})`,
 					ownership: sql`coalesce(excluded.ownership, ${listings.ownership})`,
+					// Investment timeline (investmap): search rows carry the
+					// cached value or NULL, detail rows the fresh one - never
+					// wipe what a previous run stored.
+					constructionEndLabel: sql`coalesce(excluded.construction_end_label, ${listings.constructionEndLabel})`,
+					constructionEndDate: sql`coalesce(excluded.construction_end_date, ${listings.constructionEndDate})`,
 					// Address-only sources (morizon, domiporta,
 					// komornik...) carry no coordinates: keep the geocoded
 					// position instead of wiping it with NULL on re-crawl.
