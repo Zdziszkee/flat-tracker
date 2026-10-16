@@ -50,9 +50,9 @@ const API_BASE =
 const DETAIL_BASE = "https://investmap.pl/api/investment";
 const PAGE_SIZE = 20;
 const MAX_PAGES = 100;
-// 85 search pages + one detail request per investment with flats (all of
-// them on the first run, a handful per month afterwards thanks to the
-// timeline cache).
+// 85 search pages + one detail request per investment (all of them on
+// the first run, a handful per month afterwards thanks to the timeline
+// cache; the request cap drains the rest over the next runs).
 const MAX_REQUESTS = 600;
 /** Timeline detail TTL: quarter-precision data, refreshed monthly. */
 const DETAIL_REFRESH_DAYS = 30;
@@ -223,6 +223,54 @@ function investmentToListings(
 	return listings;
 }
 
+/**
+ * The investment itself as one price-less inventory row, for investments
+ * with no flats currently for sale (sold out, early phase, rentals only):
+ * without this they would be invisible on the map entirely. The externalId
+ * prefix `inv-` is the contract that marks an investment-level row: the
+ * listings API hides it again once flat rows for the same investment_id
+ * appear, and the map treats it as long-lived inventory (never hidden by
+ * the "listed within N days" window). The status wording is derived, never
+ * stored: the source publishes no construction status or start date.
+ */
+export function investmentRow(
+	inv: ImInvestment,
+	timeline: CachedInvestment | null,
+): Listing | null {
+	const lat = inv.location?.lat;
+	const lng = inv.location?.lon;
+	if (!inv.id || !inv.title || !(lat && lng)) return null;
+	const features: Record<string, unknown> = {
+		investment_id: inv.id,
+		investment_row: true,
+	};
+	if (timeline?.constructionEndLabel)
+		features.construction_end_label = timeline.constructionEndLabel;
+	if (timeline?.constructionEndDate)
+		features.construction_end_date = timeline.constructionEndDate;
+	return {
+		source: "investmap",
+		externalId: `inv-${inv.id}`,
+		url: `https://investmap.pl${inv.url ?? ""}`,
+		title: inv.title,
+		price: null,
+		pricePerM2: null,
+		areaM2: null,
+		rooms: null,
+		floor: null,
+		district: inv.district?.name ?? null,
+		address: inv.street ? `${inv.street}, ${inv.city?.name ?? "Kraków"}` : null,
+		description: null,
+		heatingType: null,
+		propertyType: null,
+		features: JSON.stringify(features),
+		lat,
+		lng,
+		listedAt: null,
+		scrapedAt: new Date().toISOString(),
+	};
+}
+
 export const investmapAdapter: CheerioAdapter = {
 	id: "investmap",
 	name: "Investmap - Krakow investments with flats",
@@ -250,7 +298,10 @@ export const investmapAdapter: CheerioAdapter = {
 			const cache = loadInvestmentCache();
 			cache[String(inv.id)] = timeline;
 			saveInvestmentCache(cache);
-			return investmentToListings(inv, detail.estates, timeline);
+			const rows = investmentToListings(inv, detail.estates, timeline);
+			if (rows.length > 0) return rows;
+			const row = investmentRow(inv, timeline);
+			return row ? [row] : [];
 		}
 
 		let data: ImResponse;
@@ -268,8 +319,14 @@ export const investmapAdapter: CheerioAdapter = {
 		for (const inv of investments) {
 			const cached = cache[String(inv.id)] ?? null;
 			const rows = investmentToListings(inv, inv.es, cached);
-			if (rows.length === 0) continue;
-			listings.push(...rows);
+			if (rows.length > 0) {
+				listings.push(...rows);
+			} else {
+				// No flats for sale: one price-less investment row keeps the
+				// building on the map (see investmentRow).
+				const row = investmentRow(inv, cached);
+				if (row) listings.push(row);
+			}
 			// Timeline refresh gate: never cached (new investment) or the
 			// cached fetch aged past DETAIL_REFRESH_DAYS (quarter-precision
 			// data moves slowly; a monthly refetch is plenty).

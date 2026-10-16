@@ -132,7 +132,36 @@ export const Route = createFileRoute("/api/listings")({
 					// client-side, the listings table shows them regardless.
 					.orderBy(sql`${listings.scrapedAt} desc`);
 
-				const visibleRows = rows.filter((r) => !HIDDEN_SOURCES.has(r.source));
+				const notHidden = rows.filter((r) => !HIDDEN_SOURCES.has(r.source));
+
+				// Investmap investment-level rows (`inv-<id>`; one price-less pin
+				// per investment with no flats for sale, see the adapter's
+				// investmentRow) stand in for the investment until its flats
+				// appear: once any flat row carries the same
+				// features.investment_id, the flat rows are the map's
+				// representation of it and the stand-in goes away.
+				const investmapFlatIds = new Set<string>();
+				for (const r of notHidden) {
+					if (r.source !== "investmap" || r.externalId.startsWith("inv-"))
+						continue;
+					try {
+						const f = r.features
+							? (JSON.parse(r.features) as { investment_id?: unknown })
+							: null;
+						if (f?.investment_id != null)
+							investmapFlatIds.add(String(f.investment_id));
+					} catch {
+						// malformed features JSON: no investment id to dedupe on
+					}
+				}
+				const visibleRows = notHidden.filter(
+					(r) =>
+						!(
+							r.source === "investmap" &&
+							r.externalId.startsWith("inv-") &&
+							investmapFlatIds.has(r.externalId.slice("inv-".length))
+						),
+				);
 
 				// Investmap covers rynekpierwotny's investments with per-flat
 				// detail, so a rynekpierwotny project row is dropped when the

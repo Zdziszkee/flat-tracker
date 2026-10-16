@@ -253,8 +253,12 @@ function popupHtml(l: ApiListing): string {
 	const utilities = formatUtilities(l.utilities);
 
 	// Forum-sourced investments are construction threads, not offers: no
-	// price row, show thread activity instead of a valuation.
+	// price row, show thread activity instead of a valuation. Investmap
+	// investment-level rows (`inv-`) are the same kind of inventory: the
+	// investment itself, no flat to price.
 	const isBudujesie = l.source === "budujesie";
+	const isInvestmentRow =
+		l.source === "investmap" && l.externalId.startsWith("inv-");
 	let threadStats = "";
 	// A forum topic is not proof the building is still under construction:
 	// the site carries no status field, so the label claims "w budowie" only
@@ -343,7 +347,9 @@ function popupHtml(l: ApiListing): string {
 	// only: the planned quarter having passed is not proof of delivery.
 	let realizationHtml = "";
 	if (l.constructionEndLabel) {
-		const start = l.constructionEndDate ? new Date(l.constructionEndDate) : null;
+		const start = l.constructionEndDate
+			? new Date(l.constructionEndDate)
+			: null;
 		let status = "";
 		if (start && !Number.isNaN(start.getTime())) {
 			// The label names a quarter: its last month ends 3 months after
@@ -401,14 +407,18 @@ function popupHtml(l: ApiListing): string {
       <div class="font-semibold leading-tight">${escapeHtml(l.title)}</div>
       <div class="text-gray-500">${escapeHtml(location)}</div>
       <div class="flex justify-between gap-4 pt-1">
-        <span class="font-medium${isBudujesie ? " text-amber-700" : ""}">${
+        <span class="font-medium${
+					isBudujesie || isInvestmentRow ? " text-amber-700" : ""
+				}">${
 					isBudujesie
 						? budLabel
-						: `${formatPln(l.price)}${
-								l.pricePeriod === "night"
-									? '<span class="text-xs font-normal text-gray-400"> /noc</span>'
-									: ""
-							}`
+						: isInvestmentRow
+							? "Inwestycja"
+							: `${formatPln(l.price)}${
+									l.pricePeriod === "night"
+										? '<span class="text-xs font-normal text-gray-400"> /noc</span>'
+										: ""
+								}`
 				}</span>
         <span>${
 					isBudujesie
@@ -678,6 +688,7 @@ export default function MapView({
 					// Long-lived construction investments are inventory, not fresh
 					// offers: the "listed within N days" window must not hide them.
 					(l.source === "budujesie" ||
+						(l.source === "investmap" && l.externalId.startsWith("inv-")) ||
 						addedWithin(l.listedAt ?? l.firstSeenAt, days)) &&
 					(offerType === "all" ||
 						(offerType === "rental"
