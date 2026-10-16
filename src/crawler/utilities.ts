@@ -93,8 +93,7 @@ export function parseUtilities(
 	let czynsz: number | null = null;
 	const adminRe =
 		/(?:czynsz|op[łl]at\w*|koszt\w*)[^.:!\n]{0,30}?(?:administracyjn\w*|eksploatacyjn\w*)/gi;
-	let am: RegExpExecArray | null;
-	while ((am = adminRe.exec(plain)) !== null) {
+	for (const am of plain.matchAll(adminRe)) {
 		if (CZYNSZ_RENT.test(am[0])) continue;
 		const value = amountAfter(plain, am.index + am[0].length);
 		if (value != null) {
