@@ -134,6 +134,15 @@ street-only → street centroid) and falls back to Photon (1 req/s,
 validated to Małopolska) for street-level points. Listings
 WITHOUT a stored address get one mined from their title (ad speak like
 "Łokietka 57B - mieszkanie 30 m²") — the extracted address is persisted.
+Free-text mining also runs when a stored address is parseable but resolves
+nowhere in the local index (junk like "Padniewskiwgo") — a mined address
+that resolves locally replaces it, one that does not leaves it untouched.
+Besides the "Street 12" regexes, titles yield conservative lexicon hints
+(`lexiconStreetCandidates` in `sites/address.ts`): bare street names in
+parentheses ("Kobi House Kraków (Kobierzyńska)") and the halves of tight
+hyphen pairs ("Kapelanka-Pychowicka", "Kraków-Grzegórzecka"), accepted only
+on exact lexicon resolution (a one-word bare hit must be an exact lexicon
+form — declension stems are a trap).
 Re-run `assign-buildings` afterwards to anchor the new points. Komornik
 titles are legal notices ("... przy ul. Szkolnej dla której SR dla
 Krakowa-Krowodrzy w Krakowie ..."), so geocoding cuts the court

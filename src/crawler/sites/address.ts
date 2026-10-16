@@ -437,6 +437,66 @@ export function plausibleAddress(address: string | null | undefined): boolean {
 	);
 }
 
+/**
+ * Street hints the strict regexes miss: bare lexicon names inside
+ * parenthetical hints ("Kobi House Kraków (Kobierzyńska)") and the parts of
+ * tight hyphen pairs ("Kapelanka-Pychowicka", "Kraków-Grzegórzecka").
+ * Acceptance is exact lexicon resolution only, and a bare one-word hit must
+ * be an exact lexicon form ("Fabrycznej" must not stem onto "Fabryczna"),
+ * so this cannot invent streets out of prose.
+ */
+export function lexiconStreetCandidates(
+	text: string | null | undefined,
+): ParsedAddress[] {
+	if (!text) return [];
+	const t = text.replace(/\s+/g, " ").trim();
+	const segments: string[] = [];
+	for (const m of t.matchAll(/\(([^)]{1,80})\)/gu)) segments.push(m[1]);
+	for (const m of t.matchAll(
+		/(\p{L}{3,}(?: \p{L}{3,}){0,2})-(\p{L}{3,}(?: \p{L}{3,}){0,2})/gu,
+	)) {
+		segments.push(m[1], m[2]);
+	}
+	const out: ParsedAddress[] = [];
+	const seen = new Set<string>();
+	const push = (street: string, number?: string) => {
+		const key = streetKey(street);
+		if (!key || seen.has(key)) return;
+		seen.add(key);
+		out.push(number ? { street, number } : { street });
+	};
+	for (const seg of segments) {
+		// A prefixed parse handles "(ul. Klubowa 12)" wholesale.
+		const prefixed = parseAddressFromText(seg);
+		if (prefixed && isKnownKrakowStreet(prefixed.street)) {
+			push(prefixed.street, prefixed.number);
+			continue;
+		}
+		const words = stripPrefix(seg)
+			.replace(/[^\p{L} ]/gu, " ")
+			.replace(/\s+/g, " ")
+			.trim()
+			.split(" ")
+			.filter((w) => w.length >= 3 && !FUNCTION_WORDS.has(w.toLowerCase()));
+		for (let len = Math.min(3, words.length); len >= 1; len--) {
+			let matched = false;
+			for (let i = 0; i + len <= words.length; i++) {
+				const phrase = words.slice(i, i + len).join(" ");
+				const resolved = resolveStreetName(phrase);
+				if (!isKnownKrakowStreet(resolved)) continue;
+				// A one-word bare hit must be an exact lexicon form: stem
+				// resolution on a single word is a declension trap.
+				if (len === 1 && streetKey(phrase) !== streetKey(resolved)) continue;
+				push(resolved);
+				matched = true;
+				break;
+			}
+			if (matched) break;
+		}
+	}
+	return out;
+}
+
 /** A free-text-mined street must LOOK like a street name: a capitalized
  * (or house-numbered) name of at most 3 words, no sentence punctuation,
  * no prose opener ("a kończą na", "informacyjna inwestycji", "Przejrzano

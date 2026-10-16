@@ -13,7 +13,9 @@ import {
 } from "./address-index.ts";
 import {
 	isKnownKrakowStreet,
+	lexiconStreetCandidates,
 	minedStreetLooksReal,
+	type ParsedAddress,
 	parseAddressFromText,
 	plausibleAddress,
 } from "./sites/address.ts";
@@ -343,7 +345,7 @@ export async function geocodeUnlocatedListings(
 	let nomBudget = opts.nominatimLimit ?? Number.POSITIVE_INFINITY;
 	let nomWrites = 0;
 
-	for (let i = 0; i < rows.length; i++) {
+	rowLoop: for (let i = 0; i < rows.length; i++) {
 		const row = rows[i];
 		const hasStoredAddress = Boolean(row.address?.trim());
 		// The street part is always the first comma segment of a stored
@@ -388,51 +390,116 @@ export async function geocodeUnlocatedListings(
 			}
 		}
 
-		// Mine free text when the stored address has no usable street: either
-		// no address at all, a postal code ("33-100, Tarnów"), or a stored
-		// street that the parser now rejects as boilerplate ("położone na 1",
-		// "o pow. 1,1600ha"). `parsed` is null in all three cases.
-		const noUsableStreet = !parsed;
-		if (noUsableStreet) {
-			// No usable address: mine the title, then the description, for
-			// "Street 12" patterns. The plausibleAddress gate only applies to
-			// free-text mining — ad speak like "Przytulne 27" would otherwise
-			// geocode to a random street. Stored addresses come from
-			// structured portal data and are trusted.
-			const titlePart = parseAddressFromText(titleScope);
-			const descPart = parseAddressFromText(row.description);
-			// Descriptions are full of numbers ("45 m²", "rok 2014"), so the
-			// digit-based plausibleAddress gate is meaningless for them. Only
-			// trust a description-mined street when it maps to the Krakow
-			// lexicon or carries a housenumber; otherwise the title result (or
-			// nothing) wins.
-			const mined =
-				titlePart &&
-				plausibleAddress(titleScope) &&
-				minedStreetLooksReal(titlePart.street)
-					? { part: titlePart, text: titleScope }
-					: descPart &&
-							(isKnownKrakowStreet(descPart.street) || descPart.number) &&
-							minedStreetLooksReal(descPart.street)
-						? { part: descPart, text: row.description }
-						: null;
-			if (mined) {
-				parsed = mined.part;
-				streetPart = mined.part.number
-					? `${mined.part.street} ${mined.part.number}`
-					: mined.part.street;
-				// Show the real town when we know one ("Zielone Zarabie,
-				// Myślenice"); "Małopolska" is the region fallback placeholder.
-				const displayCity =
-					cityHint && cityCentroids.has(normStreet(cityHint))
-						? cityHint
-						: "Małopolska";
-				extractedAddress = [streetPart, row.district, displayCity]
-					.filter(
-						(s, i, arr): s is string => Boolean(s) && arr.indexOf(s) === i,
-					)
-					.join(", ");
+		// Mine free text for "Street 12" patterns and conservative lexicon
+		// hints when the stored address has no usable street (none at all, a
+		// postal code "33-100, Tarnów", or a stored street the parser now
+		// rejects as boilerplate "położone na 1", "o pow. 1,1600ha" — `parsed`
+		// is null in all three cases). The candidates also run later when the
+		// stored street parsed but resolved nowhere locally (junk like
+		// "Maja chyba postawić 2" or "Padniewskiwgo" that would otherwise
+		// block title re-mining, because stored addresses are otherwise
+		// trusted).
+		const titlePart = parseAddressFromText(titleScope);
+		const descPart = parseAddressFromText(row.description);
+		// The plausibleAddress gate only applies to free-text mining — ad
+		// speak like "Przytulne 27" would otherwise geocode to a random
+		// street. Stored addresses come from structured portal data and are
+		// trusted. Descriptions are full of numbers ("45 m²", "rok 2014"), so
+		// the digit-based plausibleAddress gate is meaningless for them: only
+		// trust a description-mined street when it maps to the Krakow lexicon
+		// or carries a housenumber. Lexicon hints need no plausibility gate —
+		// an exact lexicon match is a stronger signal than the gate.
+		const mined: Array<{ part: ParsedAddress; text: string | null }> = [];
+		if (
+			titlePart &&
+			plausibleAddress(titleScope) &&
+			minedStreetLooksReal(titlePart.street)
+		) {
+			mined.push({ part: titlePart, text: titleScope });
+		}
+		if (
+			descPart &&
+			(isKnownKrakowStreet(descPart.street) || descPart.number) &&
+			minedStreetLooksReal(descPart.street)
+		) {
+			mined.push({ part: descPart, text: row.description });
+		}
+		for (const part of lexiconStreetCandidates(titleScope)) {
+			if (minedStreetLooksReal(part.street))
+				mined.push({ part, text: titleScope });
+		}
+
+		// Show the real town when we know one ("Zielone Zarabie,
+		// Myślenice"); "Małopolska" is the region fallback placeholder.
+		const displayCity =
+			cityHint && cityCentroids.has(normStreet(cityHint))
+				? cityHint
+				: "Małopolska";
+		const minedAddress = (part: ParsedAddress): string =>
+			[
+				part.number ? `${part.street} ${part.number}` : part.street,
+				row.district,
+				displayCity,
+			]
+				.filter((s, i, arr): s is string => Boolean(s) && arr.indexOf(s) === i)
+				.join(", ");
+
+		// Try a candidate against the local index: exact building first
+		// (address claim), then the street centroid (no building claim).
+		const tryLocal = async (part: ParsedAddress): Promise<boolean> => {
+			const local = matchByAddress(
+				streetIndex,
+				part.street,
+				part.number ?? null,
+				cityHint,
+			);
+			if (local) {
+				const buildingId = await ensureBuildingByOsmId(
+					local.osmId,
+					local.lat,
+					local.lng,
+				);
+				await db
+					.update(listings)
+					.set({
+						lat: local.lat,
+						lng: local.lng,
+						buildingId,
+						address: minedAddress(part),
+					})
+					.where(eq(listings.id, row.id));
+				return true;
 			}
+			const centroid = matchAddressString(
+				streetIndex,
+				part.number ? `${part.street} ${part.number}` : part.street,
+				cityHint,
+			);
+			if (centroid) {
+				await db
+					.update(listings)
+					.set({
+						lat: centroid.lat,
+						lng: centroid.lng,
+						address: minedAddress(part),
+					})
+					.where(eq(listings.id, row.id));
+				return true;
+			}
+			return false;
+		};
+
+		// The first candidate represents the mining result for the later
+		// phases (Nominatim query, persisted address on a remote hit).
+		let firstCandidateTried = false;
+		if (!parsed && mined.length > 0) {
+			parsed = mined[0].part;
+			streetPart = parsed.number
+				? `${parsed.street} ${parsed.number}`
+				: parsed.street;
+			extractedAddress = minedAddress(mined[0].part);
+			// Falls into the shared local match just below.
+			firstCandidateTried = true;
 		}
 
 		if (parsed) {
@@ -485,6 +552,18 @@ export async function geocodeUnlocatedListings(
 			report.localHits++;
 			if (extractedAddress) report.titleExtracted++;
 			continue;
+		}
+
+		// The stored street (or the first candidate) resolved nowhere
+		// locally: try the remaining mined candidates before the remote
+		// fallbacks. A candidate that resolves nowhere leaves the stored
+		// address untouched.
+		for (const cand of mined.slice(firstCandidateTried ? 1 : 0)) {
+			if (await tryLocal(cand.part)) {
+				report.localHits++;
+				report.titleExtracted++;
+				continue rowLoop;
+			}
 		}
 
 		// City-level offline fallback: only for addresses with no street at all
