@@ -245,7 +245,7 @@ function stripPrefix(street: string): string {
 const STREET_END_MARKERS =
 	/\s+(english|wersja|opis|opisana|mamy|przyjemnosc|przyjemność|zapraszam|zapraszamy|oferujemy|oferuje|polecam|polecamy|biuro|kontakt|tel|numer|ksiega|pietro|pietra|kondygnacja|m2|m²|powstała|powstały|powstało|powstaje|powstają|powstanie|budowa|budowie|budowany|budowana|budowane|realizowana|realizowany|realizowane|znajduje|znajdują|zlokalizowana|zlokalizowany|zlokalizowane|inwestycja|inwestycji|inwestycję|budynek|budynku|blok|bloku|dom|domy|domów|domków|segmenty|segmentów|osiedle)\b.*$/iu;
 
-function truncateStreet(street: string): string {
+export function truncateStreet(street: string): string {
 	return street.replace(STREET_END_MARKERS, "").trim();
 }
 
@@ -342,10 +342,23 @@ export function resolveStreetName(street: string): string {
 	return candidates.find((c) => streetKey(c).endsWith("a")) ?? candidates[0];
 }
 
-/** Extract "Street 12" from free text like "ul. Jakuba Bojki 12/5, Kraków". */
+/** A street parsed out of free text. `rawStreet` is the matched run before
+ * end-marker truncation ("Informacyjna inwestycji Dobrego Pasterza"), so
+ * callers can judge whether the kept head is prose. */
+export interface ParsedAddress {
+	street: string;
+	number?: string;
+	rawStreet?: string;
+}
+
+/** Extract "Street 12" from free text like "ul. Jakuba Bojki 12/5, Kraków".
+ * With `surface: true` the returned street keeps the text's own wording
+ * ("Sołtysowskiej", not the lexicon's "Sołtysowska"); the known-street
+ * preference still runs on the resolved form. */
 export function parseAddressFromText(
 	text: string | null | undefined,
-): { street: string; number?: string } | null {
+	opts?: { surface?: boolean },
+): ParsedAddress | null {
 	if (!text) return null;
 	const t = text.replace(/\s+/g, " ").trim();
 
@@ -378,11 +391,10 @@ export function parseAddressFromText(
 		(a, b) => Number(b.prefixed) - Number(a.prefixed) || a.index - b.index,
 	);
 
-	let fallback: { street: string; number?: string } | null = null;
+	let fallback: ParsedAddress | null = null;
 	for (const c of candidates) {
-		const street = truncateStreet(
-			stripPrefix(c.street).replace(/\s+/g, " ").trim(),
-		);
+		const rawStreet = stripPrefix(c.street).replace(/\s+/g, " ").trim();
+		const street = truncateStreet(rawStreet);
 		// The greedy name run can over-capture into prose the end markers
 		// missed ("ul. Dobrego Pasterza z widokiem na Wisłę"): try the run
 		// and its word prefixes longest-first, so the full name wins when it
@@ -395,13 +407,15 @@ export function parseAddressFromText(
 			.filter((v, i) => validStreet(v) && (i === 0 || words.length - i >= 2))
 			.slice(0, 4);
 		for (const variant of variants) {
-			const out = {
-				street: resolveStreetName(variant),
+			const resolved = resolveStreetName(variant);
+			const out: ParsedAddress = {
+				street: opts?.surface ? variant : resolved,
 				number: c.number ?? undefined,
+				rawStreet,
 			};
 			// Prefer a street we can map to the Krakow lexicon over ad-speak
 			// that merely looks address-like ("... w budynku z 2014 ...").
-			if (isKnownKrakowStreet(out.street)) return out;
+			if (isKnownKrakowStreet(resolved)) return out;
 			fallback ??= out;
 		}
 	}

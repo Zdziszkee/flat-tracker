@@ -6,6 +6,7 @@ import {
 	isKnownKrakowStreet,
 	parseAddressFromText,
 	resolveStreetName,
+	truncateStreet,
 } from "./address.ts";
 
 /**
@@ -548,7 +549,9 @@ function sanitizeAddressHead(address: string | null): string | null {
 		)
 		// Cut prose tails joined with a spaced hyphen ("Sołtysowskiej -
 		// Willa Sołtysowska"); hyphenated street names never space around it.
-		.split(/\s+[-–—]\s+/u)[0]
+		// The tail may also end the run outright ("Sołtysowskiej -"), so the
+		// right side of the cut is optional.
+		.split(/\s+[-–—]\s*/u)[0]
 		.trim();
 	if (head.length < 3) return null;
 	if (/[.;:!?]/u.test(head)) return null;
@@ -576,12 +579,27 @@ export function minePostAddress(
 	text: string,
 	townOverride?: string,
 ): string | null {
-	const parsed = parseAddressFromText(text);
+	const parsed = parseAddressFromText(text, { surface: true });
 	if (!parsed) return null;
+	const raw = parsed.rawStreet ?? parsed.street;
 	if (PROSE_HEAD_RE.test(parsed.street.trim())) return null;
+	// The matched run never crosses a digit, so a housenumber is always its
+	// last token. When end-marker truncation cut the run, the number belongs
+	// to the discarded tail, never to the kept head ("Informacyjna
+	// inwestycji Dobrego Pasterza 52" keeps "Informacyjna"; "Ktoś szukał
+	// tej inwestycji. Przejrzano 2092" keeps "Ktoś szukał tej"), so pair it
+	// with nothing rather than with prose.
+	if (parsed.number && truncateStreet(raw) !== raw) return null;
+	// A run cut at a spaced hyphen keeps its surface wording ("Sołtysowskiej
+	// - Willa Sołtysowska" -> "Sołtysowskiej"); resolving the genitive would
+	// rewrite what the post says. Elsewhere the lexicon canonical form wins,
+	// so comment trust and local street matching keep working.
+	const street = /\s+[-–—]\s/.test(raw)
+		? parsed.street
+		: resolveStreetName(parsed.street);
 	return sanitizeAddressHead(
 		formatAddressForGeocode(
-			resolveStreetName(parsed.street),
+			street,
 			parsed.number,
 			null,
 			townOverride ?? mineTownInText(text) ?? undefined,
