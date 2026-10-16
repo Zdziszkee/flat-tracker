@@ -403,8 +403,14 @@ export function parseAddressFromText(
 		const variants = words
 			.map((_, i) => words.slice(0, words.length - i).join(" "))
 			// A truncated one-word prefix is a declension trap ("Dobrego" ->
-			// "Dobra"): only the full run may be a single word.
-			.filter((v, i) => validStreet(v) && (i === 0 || words.length - i >= 2))
+			// "Dobra"): only the full run may be a single word — unless the
+			// word is itself an exact lexicon street ("Fabczyczna" in
+			// "Fabczyczna Kraków"), which is a whole name, not a fragment.
+			.filter(
+				(v, i) =>
+					validStreet(v) &&
+					(i === 0 || words.length - i >= 2 || isKnownKrakowStreet(v)),
+			)
 			.slice(0, 4);
 		for (const variant of variants) {
 			const resolved = resolveStreetName(variant);
