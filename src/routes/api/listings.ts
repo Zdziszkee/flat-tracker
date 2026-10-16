@@ -141,9 +141,16 @@ export const Route = createFileRoute("/api/listings")({
 				// features.investment_id, the flat rows are the map's
 				// representation of it and the stand-in goes away.
 				const investmapFlatIds = new Set<string>();
+				const investmapFlatTitles = new Set<string>();
 				for (const r of notHidden) {
 					if (r.source !== "investmap" || r.externalId.startsWith("inv-"))
 						continue;
+					// The adapter prefixes every flat title with the investment
+					// name and an em dash: the title link also covers legacy flat
+					// rows whose features predate the investment_id marker (sold
+					// out, never re-emitted) — those would otherwise double-pin
+					// with their stand-in forever.
+					investmapFlatTitles.add(r.title.split(" — ")[0] ?? "");
 					try {
 						const f = r.features
 							? (JSON.parse(r.features) as { investment_id?: unknown })
@@ -159,7 +166,8 @@ export const Route = createFileRoute("/api/listings")({
 						!(
 							r.source === "investmap" &&
 							r.externalId.startsWith("inv-") &&
-							investmapFlatIds.has(r.externalId.slice("inv-".length))
+							(investmapFlatIds.has(r.externalId.slice("inv-".length)) ||
+								investmapFlatTitles.has(r.title))
 						),
 				);
 
