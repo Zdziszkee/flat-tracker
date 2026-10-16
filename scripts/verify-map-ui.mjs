@@ -90,8 +90,15 @@ const picks = await page.evaluate(() => {
 			(p) =>
 				p.source === "investmap" &&
 				String(p.externalId).startsWith("inv-") &&
-				p.constructionEndLabel,
-		),
+				p.constructionEndLabel &&
+				p.transactionStats != null,
+		) ??
+			find(
+				(p) =>
+					p.source === "investmap" &&
+					String(p.externalId).startsWith("inv-") &&
+					p.constructionEndLabel,
+			),
 		bud: bud
 			? {
 					coords: bud.geometry.coordinates,
@@ -144,7 +151,7 @@ if (picks.flat) {
 	check("flat popup shows Realizacja line", false, "no unique flat pick found");
 }
 
-// 2. inv- building popup: amber Inwestycja label + Realizacja line
+// 2. inv- building popup: amber Inwestycja label + Realizacja line + RCN stats
 if (picks.inv) {
 	const text = await clickAndPopup(picks.inv);
 	check(
@@ -157,6 +164,82 @@ if (picks.inv) {
 } else {
 	check("inv- popup shows Inwestycja label", false, "no unique inv- pick found");
 }
+
+// 2b. RCN history block renders for stats-bearing inv- rows. Their
+// building-centroid clusters make any click land on sibling pins, so
+// fire the popup for exactly this feature (showListingPopup reads
+// e.features[0]) and try a few candidates in case a sibling wrapper
+// still steals the event.
+const rcnCandidates = await page.evaluate(() => {
+	const m = window.__map;
+	const src = m.getSource("listings");
+	const feats = (typeof src.getData === "function" ? src.getData() : src._data)
+		.features;
+	return feats
+		.map((x, i) => ({ i, x }))
+		.filter(
+			({ x }) =>
+				x.properties.source === "investmap" &&
+				String(x.properties.externalId).startsWith("inv-") &&
+				x.properties.transactionStats?.txCount > 0,
+		)
+		.slice(0, 5)
+		.map(({ i, x }) => ({ i, title: x.properties.title, coords: x.geometry.coordinates }));
+});
+let rcnBlockSeen = false;
+let rcnLastText = "(no popup)";
+let rcnOwnTitleSeen = false;
+for (const cand of rcnCandidates) {
+	// Jump to the candidate first: the layer wrappers gate on a rendered
+	// query at the event point, and replace e.features with its result.
+	await page.evaluate(
+		({ coords }) => {
+			window.__map.jumpTo({ center: coords, zoom: 18 });
+		},
+		{ coords: cand.coords },
+	);
+	await page.waitForTimeout(1500);
+	await page.evaluate(
+		({ i, coords }) => {
+			const m = window.__map;
+			const src = m.getSource("listings");
+			const feats = (
+				typeof src.getData === "function" ? src.getData() : src._data
+			).features;
+			m.fire("click", {
+				features: [{ properties: feats[i].properties }],
+				lngLat: m.unproject(coords),
+				point: m.project(coords),
+				type: "click",
+				preventDefault() {},
+				stopPropagation() {},
+			});
+		},
+		{ i: cand.i, coords: cand.coords },
+	);
+	await page.waitForTimeout(1200);
+	const text = await page.evaluate(() => {
+		const el = document.querySelector(".mapboxgl-popup-content");
+		return el ? el.innerText : null;
+	});
+	// Only a popup showing the candidate's own title is evidence about
+	// its content; a sibling's popup proves nothing here.
+	if (text && text.includes(cand.title.slice(0, 30))) {
+		rcnOwnTitleSeen = true;
+		rcnLastText = text;
+		if (text.includes("RCN history:")) {
+			rcnBlockSeen = true;
+			break;
+		}
+	} else if (text) {
+		rcnLastText = `sibling: ${text.slice(0, 80)}`;
+	}
+}
+check(
+	"inv- popup shows RCN price history",
+	rcnBlockSeen,
+	`tried ${rcnCandidates.length}, own-title ${rcnOwnTitleSeen}: ${rcnLastText.slice(0, 100)}`,
+);
 
 // 3. budujesie popup still renders
 if (picks.bud) {
@@ -219,11 +302,41 @@ await page.waitForFunction(
 	null,
 	{ timeout: 45000 },
 );
-const listingsText = await page.evaluate(() => document.body.innerText);
+const listingsText = await page.evaluate(() =>
+	[...document.querySelectorAll("tbody tr")]
+		.slice(0, 200)
+		.map((r) => r.innerText)
+		.join("\n"),
+);
 check(
 	"/listings shows Realizacja caption",
 	/Realizacja: [^\n]+ · (w budowie|planowany termin minął)/.test(listingsText),
 	(listingsText.match(/Realizacja: [^\n]+/)?.[0] ?? "none").slice(0, 80),
+);
+
+// 6. /listings: clicking an inv- row expands (valuation panel appears).
+// inv- rows carry the Realizacja caption and a bare investment title
+// (flat titles contain the ' — ' investment prefix).
+const invRowClicked = await page.evaluate(() => {
+	const rows = [...document.querySelectorAll("tbody tr")];
+	const row = rows.find(
+		(r) => r.innerText.includes("Realizacja:") && !r.innerText.includes("—"),
+	);
+	if (!row) return false;
+	row.click();
+	return true;
+});
+await page.waitForTimeout(3000);
+const expandedText = await page.evaluate(() =>
+	[...document.querySelectorAll("td")]
+		.slice(0, 400)
+		.map((r) => r.innerText)
+		.join("\n"),
+);
+check(
+	"/listings inv- row expands",
+	invRowClicked && /wycen/i.test(expandedText),
+	invRowClicked ? "row clicked, panel text found" : "no inv- row visible",
 );
 
 await browser.close();

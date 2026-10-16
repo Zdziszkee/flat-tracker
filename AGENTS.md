@@ -465,6 +465,13 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   directly. `map-view.tsx` keeps the map instance in a ref; a second
   effect pushes `setData` into the GeoJSON source when the source filter
   changes.
+- **mapbox strips nested objects from click features**: what layer click
+  handlers get via `e.features` (backed by `queryRenderedFeatures`) keeps
+  only primitive properties — nested objects survive as empty shells
+  (`transactionStats` lost its `txCount` and the popup's RCN history
+  block never rendered for any source). `showListingPopup` therefore
+  hydrates the full row from the GeoJSON source data by `id`; keep
+  nested data out of click-feature reads or hydrate the same way.
 - The RCN importer skips the download when `RCN_GML_PATH` points at an
   already-extracted file (handy for testing with a partial slice).
 - `src/data/malopolska-powiats.ts` is generated (`bun run build:powiats`,

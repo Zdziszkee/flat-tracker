@@ -1661,7 +1661,20 @@ function MapCanvas({
 				const feature = e.features?.[0] as { properties?: unknown } | undefined;
 				const props = feature?.properties;
 				if (!props) return;
-				const listing = props as ApiListing;
+				// mapbox strips nested objects out of queryRenderedFeatures
+				// properties (transactionStats comes back as an empty shell),
+				// which silently killed the popup's RCN history block for every
+				// source. Hydrate the full row from the source data.
+				const source = map.getSource("listings") as unknown as {
+					getData?: () => { features: Array<{ properties?: unknown }> };
+					_data?: { features: Array<{ properties?: unknown }> };
+				};
+				const data = source?.getData?.() ?? source?._data;
+				const id = (props as ApiListing).id;
+				const hydrated = data?.features.find(
+					(f) => (f.properties as ApiListing | undefined)?.id === id,
+				)?.properties;
+				const listing = (hydrated ?? props) as ApiListing;
 				// Sale + LT-rental offers get a live valuation/ROI section
 				// (fetched after the popup opens; STR popups stay as-is).
 				// Price-less rows (budujesie construction threads) have nothing
