@@ -119,6 +119,12 @@ export const Route = createFileRoute("/api/listings")({
 						beds: listings.beds,
 						bathrooms: listings.bathrooms,
 						utilities: listings.utilities,
+						// Investment construction timeline (investmap `finish`
+						// "realizacja"): label as published ("I kw. 2026") plus
+						// its quarter-start date ("2026-01-01"). Null for rows
+						// without a published completion.
+						constructionEndLabel: listings.constructionEndLabel,
+						constructionEndDate: listings.constructionEndDate,
 					})
 					.from(listings)
 					.leftJoin(buildings, eq(listings.buildingId, buildings.id))
