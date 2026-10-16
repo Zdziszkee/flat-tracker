@@ -3,7 +3,7 @@ import { chromium } from "playwright-core";
 // Usage: node scripts/mapshot.mjs [lng lat zoom] — defaults to Krowodrza.
 const [lng, lat, zoom] = process.argv.slice(2).map(Number) ?? [];
 
-const browser = await chromium.launch({ headless: true, executablePath: "/usr/bin/google-chrome" });
+const browser = await chromium.launch({ headless: true, executablePath: "/usr/bin/chromium" });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 await page.goto("http://localhost:3000/map", { waitUntil: "domcontentloaded" });
 await page.waitForFunction(() => {
