@@ -26,6 +26,8 @@ interface ApiListing {
 	heatingType: string | null;
 	propertyType: string | null;
 	features: string | null;
+	constructionEndLabel?: string | null;
+	constructionEndDate?: string | null;
 	buildingId: number | null;
 	buildingAddress: string | null;
 	mapLat: number | null;
@@ -337,6 +339,27 @@ function popupHtml(l: ApiListing): string {
 		}
 	}
 
+	// Investmap realizacja (planned completion quarter). Factual status
+	// only: the planned quarter having passed is not proof of delivery.
+	let realizationHtml = "";
+	if (l.constructionEndLabel) {
+		const start = l.constructionEndDate ? new Date(l.constructionEndDate) : null;
+		let status = "";
+		if (start && !Number.isNaN(start.getTime())) {
+			// The label names a quarter: its last month ends 3 months after
+			// the quarter-start date stored behind it.
+			const quarterEnd = new Date(start);
+			quarterEnd.setMonth(quarterEnd.getMonth() + 3);
+			status =
+				quarterEnd.getTime() > Date.now()
+					? " · w budowie"
+					: " · planowany termin minął";
+		}
+		realizationHtml = `<div class="text-amber-700">Realizacja: ${escapeHtml(
+			l.constructionEndLabel,
+		)}${status}</div>`;
+	}
+
 	// Short-term-rental context lines.
 	const stayLines: string[] = [];
 	if (l.minimumStayNights != null && l.minimumStayNights > 1)
@@ -396,6 +419,7 @@ function popupHtml(l: ApiListing): string {
 				}</span>
       </div>
       <div class="text-gray-500">${escapeHtml(details)}</div>
+      ${realizationHtml}
       ${
 				l.rating != null && l.rating > 0
 					? `<div><span class="font-medium">${l.rating.toFixed(2)}</span> <span class="text-amber-500">★</span>${
