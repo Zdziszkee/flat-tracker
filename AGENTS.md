@@ -16,8 +16,10 @@ OpenStreetMap building.
 - **Orchestration**: Effect TS wraps the crawl pipeline (`src/crawler/pipeline.ts`)
 - **Geocoding**: Overpass API (free) — building footprints + point-in-polygon
 - **Map**: mapbox-gl (light-v11 style) with 3D buildings
-  (`fill-extrusion` layer), listings as a GeoJSON circle layer, Krakow
-  `maxBounds` only. Token: `VITE_MAPBOX_TOKEN` in `.env.local` (public
+  (`fill-extrusion` layer), listings as a GeoJSON circle layer,
+  `maxBounds` = the union of the tracked region boxes (Małopolska + Śląsk)
+  plus a little slack (a tight box makes `fitBounds` crop the north and south),
+  default camera fitted to both. Token: `VITE_MAPBOX_TOKEN` in `.env.local` (public
   `pk.` token — restrict it to the app domain in the Mapbox dashboard).
   Free tier: 50k map loads/month.
 - **Runtime note**: `better-sqlite3` crashes under Bun's own runtime
@@ -52,7 +54,8 @@ bun run geocode-addresses # geocode listings that carry only an address
 bun run import:rcn-gugik       # małopolska RCN packages (cadence-gated)
 bun run import:rcn-gugik:all   # every GUGiK powiat in Poland (resumable drain)
 bun run discover:rcn-powiats   # refresh the GUGiK package catalogue
-bun run build:powiats     # regenerate src/data/malopolska-powiats.ts (Overpass)
+bun run build:powiats     # regenerate src/data/region-powiats.ts (Overpass)
+bun run validate:powiats  # dataset sanity: counts, city centres, overlaps
 ```
 
 ### Fresh clone: zero-setup bootstrap
@@ -77,7 +80,7 @@ migration step to boot.
 
 **`.gitignore` trap:** the crawl-data rules are `/data/` and `/storage/`
 (root-anchored). A bare `data/` also matches `src/data/**`, which silently
-kept `src/data/malopolska-powiats.ts` out of every clone while
+kept `src/data/region-powiats.ts` out of every clone while
 `src/routes/api/powiat-map.ts` imported it — the route tree then failed to
 load and *every* page 500'd. Never un-anchor those rules, and keep route-level
 imports of optional datasets lazy (`await import()`) so a missing data file
@@ -242,10 +245,17 @@ Two consequences worth knowing:
   so they drop out of region-scoped aggregates. They could never be
   attributed to a powiat anyway.
 
-`/api/powiat-map` is the slow one (~9 s): it is O(points × powiat
-polygons) over ~1M transactions. That is proportional to małopolska data
-only, not to national load; the honest fix is a grid/rollup, not a bigger
-query.
+`/api/powiat-map` is the slow one (measured ~33 s cold on dev.db: 58
+powiaty over ~3.3M RCN transactions in the two regions). It is still
+O(points × candidate powiats) — the bbox prefilter keeps the candidate list
+at one or two — so adding a voivodeship doubled both factors. Two levers, in
+order of payoff: a region-wide partial index on `transactions` matching the
+union bbox predicate (the małopolska-only index cannot serve it, so the
+query currently scans all ~24M rows: 15 s of the 33 s), and a grid/rollup
+table (cell → powiat, precomputed sums/counts, refreshed after imports)
+which would make the endpoint O(cells) and cacheable. The rollup is not
+implemented yet: it trades exact on-demand aggregation for import-time
+staleness, so it needs a product decision, not just a faster loop.
 
 **Server refreshes fetch only the first, newest-sorted page per site**
 (`firstPageOnly: true`, the default in `refreshAll`): each hourly run
@@ -474,11 +484,16 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   nested data out of click-feature reads or hydrate the same way.
 - The RCN importer skips the download when `RCN_GML_PATH` points at an
   already-extracted file (handy for testing with a partial slice).
-- `src/data/malopolska-powiats.ts` is generated (`bun run build:powiats`,
-  cached Overpass response in `data/powiats/`): one closed ring per entry,
-  outer boundaries first then holes, matched with an **even-odd** rule so
-  Tarnów/Nowy Sącz are not double-counted into the powiat around them.
-  Rings are simplified to ~90 m — enough for point-in-polygon bucketing.
+- `src/data/region-powiats.ts` is generated (`bun run build:powiats`,
+  cached Overpass responses in `data/powiats/`): powiat boundaries for every
+  tracked voivodeship (22 małopolskie + 36 śląskie), one closed ring per
+  entry, outer boundaries first then holes, matched with an **even-odd** rule
+  so Tarnów/Nowy Sącz are not double-counted into the powiat around them
+  (the śląskie city powiaty are separate polygons, not holes, and do not
+  overlap their land powiat either; `bun run validate:powiats` checks every
+  city centre). Rings are simplified to ~90 m — enough for point-in-polygon
+  bucketing. The choropleth lazy-imports this file, so a missing dataset
+  degrades `/api/powiat-map` alone.
 - DB access goes through `#/db/index` only. It migrates on import, so a new
   script never needs a manual `db:migrate`; don't open `better-sqlite3`
   directly (except throwaway tools in `scripts/`).

@@ -85,6 +85,20 @@ const TRACKED_REGION_CENTER: [number, number] = [
 	(TRACKED_REGION_BOUNDS[0][1] + TRACKED_REGION_BOUNDS[1][1]) / 2,
 ];
 
+/**
+ * Hard camera limit: the region union plus slack. The slack is not cosmetic:
+ * `fitBounds` must fit a wider-than-tall region into a landscape viewport, so
+ * it needs to zoom out past the union's own width to also fit its latitude.
+ * With `maxBounds` set to the union exactly, the camera cannot go that far and
+ * the first frame silently crops the north and south (measured 49.56-50.63
+ * instead of 49.10-51.07, losing Częstochowa and the Tatra powiaty). ~70 km
+ * east-west and ~45 km north-south of slack still keeps panning regional.
+ */
+const MAP_MAX_BOUNDS: [[number, number], [number, number]] = [
+	[TRACKED_REGION_BOUNDS[0][0] - 1.0, TRACKED_REGION_BOUNDS[0][1] - 0.4],
+	[TRACKED_REGION_BOUNDS[1][0] + 1.0, TRACKED_REGION_BOUNDS[1][1] + 0.4],
+];
+
 /** Building shells load lazily from this zoom (sub-pixel below it). */
 const BUILDING_LAYERS_MINZOOM = 13;
 /**
@@ -898,9 +912,13 @@ function MapCanvas({
 			// reason documented there.
 			center: TRACKED_REGION_CENTER,
 			zoom: 8.5,
-			pitch: 30,
+			// Flat overview: `fitBounds` does not account for pitch, and a
+			// tilted fit silently cropped ~35% of the latitude span (measured:
+			// 49.56-50.85 instead of 49.1-51.07), losing both Częstochowa and
+			// the Tatra powiaty. The user can tilt; the region view stays complete.
+			pitch: 0,
 			bearing: -20,
-			maxBounds: TRACKED_REGION_BOUNDS,
+			maxBounds: MAP_MAX_BOUNDS,
 			config: {
 				basemap: { show3dLandmarks: false, show3dTrees: false },
 			},
@@ -914,17 +932,15 @@ function MapCanvas({
 		// Frame every tracked region, whatever the viewport size (a fixed zoom
 		// would cut off either Częstochowa or Zakopane on a narrow screen).
 		// Right after construction, so the first painted frame is already the
-		// final one. `pitch` is part of the fit so the fitted view keeps the
-		// tilted look without cropping the near edge.
+		// final one.
 		try {
 			map.fitBounds(TRACKED_REGION_BOUNDS, {
-				padding: 32,
+				padding: 24,
 				duration: 0,
-				pitch: 30,
 			});
 		} catch {
-			// Older mapbox-gl ignores the pitch option; the zoom/center above
-			// still frame both regions.
+			// fitBounds is available in every mapbox-gl version we support; the
+			// zoom/center above still frame both regions if it ever throws.
 		}
 		// Debug hook for browser-console inspection.
 		(window as unknown as { __map?: mapboxgl.Map }).__map = map;
