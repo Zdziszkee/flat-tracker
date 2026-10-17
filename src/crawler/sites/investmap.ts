@@ -294,9 +294,7 @@ export function investmentRow(
 		rooms: null,
 		floor: null,
 		district: inv.district?.name ?? null,
-		address: inv.street
-			? [inv.street, city].filter(Boolean).join(", ")
-			: null,
+		address: inv.street ? [inv.street, city].filter(Boolean).join(", ") : null,
 		description: null,
 		heatingType: null,
 		propertyType: null,
@@ -399,7 +397,9 @@ export const investmapAdapter: CheerioAdapter = {
 			offset + PAGE_SIZE < MAX_PAGES * PAGE_SIZE
 		) {
 			const base = url.split("&offset=")[0];
-			await enqueue([`${base}&offset=${offset + PAGE_SIZE}&limit=${PAGE_SIZE}`]);
+			await enqueue([
+				`${base}&offset=${offset + PAGE_SIZE}&limit=${PAGE_SIZE}`,
+			]);
 		}
 
 		return listings;

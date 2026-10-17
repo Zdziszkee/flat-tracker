@@ -203,7 +203,10 @@ interface OtodomAdapterOptions {
 /** The list base whose voivodeship path matches the crawled URL. */
 function baseForListUrl(listBases: string[], url: string): string {
 	const slug = url.match(/\/mieszkanie\/([a-z]+)/)?.[1];
-	return listBases.find((b) => slug && b.includes(`/mieszkanie/${slug}/`)) ?? listBases[0];
+	return (
+		listBases.find((b) => slug && b.includes(`/mieszkanie/${slug}/`)) ??
+		listBases[0]
+	);
 }
 
 function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
@@ -268,7 +271,11 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 		};
 	}
 
-	function listPageUrl(base: string, since: string | undefined, page: number): string {
+	function listPageUrl(
+		base: string,
+		since: string | undefined,
+		page: number,
+	): string {
 		return `${base}&daysSinceCreated=${daysSinceCreated(since)}&page=${page}`;
 	}
 
@@ -319,7 +326,9 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 			const wantDays = daysSinceCreated(this.since);
 			const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
 			if (days !== wantDays && !pageOnly) {
-				await enqueue([listPageUrl(baseForListUrl(opts.listBases, url), this.since, page)]);
+				await enqueue([
+					listPageUrl(baseForListUrl(opts.listBases, url), this.since, page),
+				]);
 				return [];
 			}
 
@@ -386,7 +395,11 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 			}
 			if (current < totalPages && items.length > 0) {
 				await enqueue([
-					listPageUrl(baseForListUrl(opts.listBases, url), this.since, current + 1),
+					listPageUrl(
+						baseForListUrl(opts.listBases, url),
+						this.since,
+						current + 1,
+					),
 				]);
 			}
 

@@ -57,7 +57,9 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 export const gratkaAdapter = makeLdOfferAdapter({
 	id: "gratka",
 	name: "Gratka - Małopolska + Śląsk flats for sale",
-	startUrls: REGIONS.map((r) => `https://gratka.pl/nieruchomosci/mieszkania/${r.name}`),
+	startUrls: REGIONS.map(
+		(r) => `https://gratka.pl/nieruchomosci/mieszkania/${r.name}`,
+	),
 	pageParam: "page",
 	maxRequestsPerCrawl: 30,
 	offerToListing,

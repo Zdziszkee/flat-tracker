@@ -12,7 +12,9 @@ export const domiportaAdapter: CheerioAdapter = {
 	id: "domiporta",
 	name: "Domiporta - Małopolska + Śląsk flats for sale",
 	kind: "cheerio",
-	startUrls: REGIONS.map((r) => `https://www.domiporta.pl/mieszkanie/sprzedam/${r.name}`),
+	startUrls: REGIONS.map(
+		(r) => `https://www.domiporta.pl/mieszkanie/sprzedam/${r.name}`,
+	),
 	maxRequestsPerCrawl: 40,
 	// One newest page per region must fit the first-page-only budget.
 	firstPageOnlyRequests: REGIONS.length,
