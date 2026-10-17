@@ -978,27 +978,39 @@ function MapCanvas({
 			}
 		};
 		const checkReady = () => {
-			if (!mapRef.current) return;
+			// Stop when this map instance was replaced/removed (React dev
+			// mounts effects twice; an orphan loop would otherwise poll a
+			// destroyed map forever).
+			if (mapRef.current !== map) return;
 			paintFrame();
-			try {
-				const canvas = map.getCanvas();
-				const rendered = map.queryRenderedFeatures(
-					[
-						[0, 0],
-						[canvas.clientWidth, canvas.clientHeight],
-					],
-					{ layers: ["listings-circle"] },
-				).length;
-				if (rendered > 0 || Date.now() > readyDeadline) {
-					onReadyRef.current?.();
-					return;
+			let rendered = 0;
+			// queryRenderedFeatures THROWS for a layer that does not exist yet
+			// (it is created later in the load handler): ask first, never query
+			// blindly — the throw escaped to the client console even when caught.
+			if (map.getLayer("listings-circle")) {
+				try {
+					const canvas = map.getCanvas();
+					rendered = map.queryRenderedFeatures(
+						[
+							[0, 0],
+							[canvas.clientWidth, canvas.clientHeight],
+						],
+						{ layers: ["listings-circle"] },
+					).length;
+				} catch {
+					// Mid-teardown frame: treat as not-rendered and retry.
 				}
-			} catch {
-				// Layer not created yet — keep polling.
+			}
+			if (rendered > 0 || Date.now() > readyDeadline) {
+				onReadyRef.current?.();
+				return;
 			}
 			setTimeout(checkReady, 400);
 		};
 		map.on("load", () => checkReady());
+		// Backstop: whatever happens to the poll, the overlay must clear
+		// once the first full frame lands.
+		map.once("idle", () => onReadyRef.current?.());
 
 		map.addControl(
 			new mapboxgl.NavigationControl({ visualizePitch: true }),

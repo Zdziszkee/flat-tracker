@@ -339,6 +339,13 @@ check(
 	`labels rendered at z16: ${labelCount}`,
 );
 
+// The loading overlay must clear once pins actually render (it used to
+// leak uncaught layer-query errors that could kill its poll loop).
+const overlayGone = await page.evaluate(
+	() => !document.body.innerText.includes("Ładowanie mapy"),
+);
+check("loading overlay clears after render", overlayGone);
+
 // 4. filters: days=7 + sale must not hide investment inventory
 const before = await page.evaluate(() => {
 	const src = window.__map.getSource("listings");
