@@ -1,3 +1,4 @@
+import { REGIONS, regionForPoint } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { num, str } from "./ldoffer.ts";
 
@@ -10,14 +11,17 @@ import { num, str } from "./ldoffer.ts";
  */
 export const rynekpierwotnyAdapter: CheerioAdapter = {
 	id: "rynekpierwotny",
-	name: "Rynekpierwotny - Małopolska new developments",
+	name: "Rynekpierwotny - Małopolska + Śląsk new developments",
 	kind: "cheerio",
 	// sort=2 orders the list newest-first, so a bounded crawl always
-	// starts with the freshest investments.
-	startUrls: [
-		"https://rynekpierwotny.pl/s/nowe-mieszkania-malopolskie/?sort=2",
-	],
+	// starts with the freshest investments. One list per covered voivodeship;
+	// each paginates through its own state `next` link.
+	startUrls: REGIONS.map(
+		(r) => `https://rynekpierwotny.pl/s/nowe-mieszkania-${r.name}/?sort=2`,
+	),
 	maxRequestsPerCrawl: 20,
+	// One newest page per region must fit the first-page-only budget.
+	firstPageOnlyRequests: REGIONS.length,
 
 	async extractHtml(html, _url, enqueue) {
 		const state = parseInitialState(html);
@@ -144,12 +148,21 @@ function offerToListing(offer: RpOffer): Listing | null {
 	const url = `https://rynekpierwotny.pl/oferty/${vendorSlug}/${slug}-${id}/`;
 
 	const coords = offer.geo_point?.coordinates ?? [];
+	const lat = coords.length >= 2 ? (coords[1] ?? null) : null;
+	const lng = coords.length >= 2 ? (coords[0] ?? null) : null;
 	const district = offer.region?.district ?? null;
 	// Street + number, used for cross-source dedupe against investmap
-	// (same investment listed on both) and for geocoding.
+	// (same investment listed on both) and for geocoding. The city comes from
+	// the offer itself; when the feed omits it, the coordinates pick the
+	// region (its first city is the closest honest label available).
+	const city =
+		offer.region?.city ??
+		(lat !== null && lng !== null
+			? (regionForPoint(lat, lng)?.cities[0]?.name ?? null)
+			: null);
 	const streetParts = [offer.street_name, offer.street_number].filter(Boolean);
 	const address = streetParts.length
-		? [streetParts.join(" "), district, "Kraków"].filter(Boolean).join(", ")
+		? [streetParts.join(" "), district, city].filter(Boolean).join(", ")
 		: null;
 	return {
 		source: "rynekpierwotny",
@@ -168,8 +181,8 @@ function offerToListing(offer: RpOffer): Listing | null {
 		propertyType: null,
 		features: null,
 		// GeoJSON Point coordinates are [lng, lat].
-		lat: coords.length >= 2 ? coords[1] : null,
-		lng: coords.length >= 2 ? coords[0] : null,
+		lat,
+		lng,
 		listedAt: null,
 		scrapedAt: new Date().toISOString(),
 	};

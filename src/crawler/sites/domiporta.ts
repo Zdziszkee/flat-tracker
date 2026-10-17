@@ -1,3 +1,4 @@
+import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
@@ -9,10 +10,12 @@ import { num, str } from "./ldoffer.ts";
  */
 export const domiportaAdapter: CheerioAdapter = {
 	id: "domiporta",
-	name: "Domiporta - Małopolska flats for sale",
+	name: "Domiporta - Małopolska + Śląsk flats for sale",
 	kind: "cheerio",
-	startUrls: ["https://www.domiporta.pl/mieszkanie/sprzedam/malopolskie"],
+	startUrls: REGIONS.map((r) => `https://www.domiporta.pl/mieszkanie/sprzedam/${r.name}`),
 	maxRequestsPerCrawl: 40,
+	// One newest page per region must fit the first-page-only budget.
+	firstPageOnlyRequests: REGIONS.length,
 
 	async extractHtml(html, url, enqueue) {
 		const nodes = parseLdJson(html);

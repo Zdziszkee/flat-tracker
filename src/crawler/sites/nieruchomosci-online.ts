@@ -1,3 +1,4 @@
+import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
@@ -9,12 +10,15 @@ import { num, str } from "./ldoffer.ts";
  */
 export const nieruchomosciOnlineAdapter: CheerioAdapter = {
 	id: "nieruchomosci-online",
-	name: "Nieruchomosci-online - Małopolska flats for sale",
+	name: "Nieruchomosci-online - Małopolska + Śląsk flats for sale",
 	kind: "cheerio",
-	startUrls: [
-		"https://www.nieruchomosci-online.pl/szukaj.html?3,mieszkanie,sprzedaz,malopolskie,,,",
-	],
+	startUrls: REGIONS.map(
+		(r) =>
+			`https://www.nieruchomosci-online.pl/szukaj.html?3,mieszkanie,sprzedaz,${r.name},,,`,
+	),
 	maxRequestsPerCrawl: 30,
+	// One newest page per region must fit the first-page-only budget.
+	firstPageOnlyRequests: REGIONS.length,
 
 	async extractHtml(html, url, enqueue) {
 		const nodes = parseLdJson(html);

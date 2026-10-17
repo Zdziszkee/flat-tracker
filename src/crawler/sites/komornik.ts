@@ -1,11 +1,13 @@
 import type { Page } from "playwright";
 
 import { launchBrowser } from "../browser.ts";
+import { REGIONS } from "../regions.ts";
 import type { CustomLaunchAdapter, Listing } from "../types.ts";
 
 /**
  * Licytacje komornicze (Krajowa Rada Komornicza) — court auction notices
- * for real estate in Małopolska (flats, houses and plots).
+ * for real estate in every covered voivodeship (Małopolska + Śląsk: flats,
+ * houses and plots).
  *
  * The site WAF-rejects non-browser TLS fingerprints (curl/node fetch get
  * "Strona zablokowana"), so a real browser is required. The public API is
@@ -13,14 +15,14 @@ import type { CustomLaunchAdapter, Listing } from "../types.ts";
  *
  *   POST /services/item-back/rest/item/search  (anonymous, JSON body)
  *
- * The body carries termFilters (province, mainCategory) and a
+ * The body carries termFilters (province list, mainCategory) and a
  * fullTextFilters city match; pagination is `offset` (20/page). Items
  * include the starting price (cena wywołania), auction window, notice
  * creation date and address. Coordinates are usually (0,0) — leave null
  * and let `bun run geocode-addresses` anchor them via the OSM index.
  *
  * Every REAL_ESTATE notice is kept (flats, houses, plots, garages and
- * "inne"/other), so the crawler mirrors the whole Małopolska search feed.
+ * "inne"/other), so the crawler mirrors the whole covered-region search feed.
  *
  * The feed is tiny (a few dozen notices province-wide), so the adapter is
  * `alwaysFullCrawl`: every refresh walks all pages and re-syncs the complete
@@ -29,7 +31,11 @@ import type { CustomLaunchAdapter, Listing } from "../types.ts";
  */
 
 const SEARCH_URL =
-	"https://licytacje.komornik.pl/wyszukiwarka-licytacji?province=ma%C5%82opolskie&mainCategory=REAL_ESTATE";
+	"https://licytacje.komornik.pl/wyszukiwarka-licytacji?" +
+	REGIONS.map((r) => `province=${encodeURIComponent(r.province)}`).join("&") +
+	"&mainCategory=REAL_ESTATE";
+/** Province filter values (with diacritics) the API's termFilters expects. */
+const PROVINCES = REGIONS.map((r) => r.province);
 const API_PATH = "/services/item-back/rest/item/search";
 const PAGE_SIZE = 20;
 
@@ -59,7 +65,7 @@ interface KomornikPage {
 
 export const komornikAdapter: CustomLaunchAdapter = {
 	id: "licytacje-komornik",
-	name: "Licytacje komornicze · Małopolska (nieruchomości)",
+	name: "Licytacje komornicze · Małopolska + Śląsk (nieruchomości)",
 	kind: "playwright",
 	// WAF-protected: run it on the camoufox browser like Booking rather than
 	// Crawlee's own (Playwright chromium) launcher.
@@ -73,7 +79,7 @@ export const komornikAdapter: CustomLaunchAdapter = {
 
 	async extractListings(page: Page): Promise<Listing[]> {
 		const items = await page.evaluate(
-			async ({ apiPath, pageSize }) => {
+			async ({ apiPath, pageSize, provinces }) => {
 				const body = {
 					limit: pageSize,
 					// Newest notices first. alwaysFullCrawl walks every page
@@ -83,7 +89,7 @@ export const komornikAdapter: CustomLaunchAdapter = {
 					orderByField: "dateCreated",
 					aggregations: [],
 					termFilters: [
-						{ field: "province", value: ["małopolskie"] },
+						{ field: "province", value: provinces },
 						{ field: "mainCategory", value: ["REAL_ESTATE"] },
 					],
 					offset: 0,
@@ -105,7 +111,7 @@ export const komornikAdapter: CustomLaunchAdapter = {
 				}
 				return all;
 			},
-			{ apiPath: API_PATH, pageSize: PAGE_SIZE },
+			{ apiPath: API_PATH, pageSize: PAGE_SIZE, provinces: PROVINCES },
 		);
 
 		const listings: Listing[] = [];

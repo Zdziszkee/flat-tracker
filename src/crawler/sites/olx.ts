@@ -1,3 +1,4 @@
+import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { parseUtilities } from "../utilities.ts";
 import { parseAddressFromText } from "./address.ts";
@@ -116,8 +117,12 @@ const ROOMS: Record<string, number> = {
 	ten: 10,
 };
 
-const MALOPOLSKA_LIST_URL =
-	"https://www.olx.pl/nieruchomosci/malopolskie/?search%5Border%5D=created_at%3Adesc";
+/** Newest-first real-estate landing page per covered voivodeship. */
+function regionListUrl(slug: string): string {
+	return `https://www.olx.pl/nieruchomosci/${slug}/?search%5Border%5D=created_at%3Adesc`;
+}
+
+const LIST_URLS = REGIONS.map((r) => regionListUrl(r.name));
 
 interface OlxAdapterOptions {
 	id: string;
@@ -186,8 +191,12 @@ function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 		id: opts.id,
 		name: opts.name,
 		kind: "cheerio",
-		startUrls: [MALOPOLSKA_LIST_URL],
+		startUrls: LIST_URLS,
 		maxRequestsPerCrawl: 1500,
+		// One newest page per region: both first pages must fit the
+		// first-page-only budget, otherwise only Małopolska would ever be
+		// refreshed by the hourly run.
+		firstPageOnlyRequests: LIST_URLS.length,
 
 		async extractHtml(html, url, enqueue) {
 			const state = parseOlxHtml(html);
@@ -228,7 +237,8 @@ function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 					);
 				}
 				if (pageNumber + 1 < totalPages) {
-					await enqueue([`${MALOPOLSKA_LIST_URL}&page=${pageNumber + 2}`]);
+					const base = url.split("&page=")[0];
+					await enqueue([`${base}&page=${pageNumber + 2}`]);
 				}
 
 				return recent.map((ad) => adToListing(ad, ad.url ?? url));
@@ -243,20 +253,20 @@ function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 	};
 }
 
-/** Sale flats, houses and plots across Małopolska. */
+/** Sale flats, houses and plots across every covered voivodeship. */
 export const olxAdapter: CheerioAdapter = makeOlxAdapter({
 	id: "olx",
-	name: "OLX - Małopolska real estate (sale)",
+	name: "OLX - Małopolska + Śląsk real estate (sale)",
 	offerType: "sale",
 	pricePeriod: null,
 	label: "sprzedaz",
 });
 
-/** Long-term rental flats, houses and plots across Małopolska. */
+/** Long-term rental flats, houses and plots across every covered voivodeship. */
 export const olxRentAdapter: CheerioAdapter = makeOlxAdapter({
 	id: "olx-rent",
 	sourceId: "olx",
-	name: "OLX - Małopolska long-term rentals",
+	name: "OLX - Małopolska + Śląsk long-term rentals",
 	offerType: "long_term_rental",
 	pricePeriod: "monthly",
 	label: "wynajem",

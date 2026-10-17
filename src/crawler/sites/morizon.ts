@@ -1,3 +1,4 @@
+import { REGIONS } from "../regions.ts";
 import type { Listing } from "../types.ts";
 import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
 import { ldOfferAddress, makeLdOfferAdapter, num, str } from "./ldoffer.ts";
@@ -55,8 +56,8 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 
 export const morizonAdapter = makeLdOfferAdapter({
 	id: "morizon",
-	name: "Morizon - Małopolska flats for sale",
-	startUrl: "https://www.morizon.pl/mieszkania/malopolskie/",
+	name: "Morizon - Małopolska + Śląsk flats for sale",
+	startUrls: REGIONS.map((r) => `https://www.morizon.pl/mieszkania/${r.name}/`),
 	pageParam: "page",
 	maxRequestsPerCrawl: 30,
 	offerToListing,

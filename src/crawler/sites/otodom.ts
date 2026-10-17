@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { listings as listingsTable } from "#/db/schema";
+import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
 
 /**
@@ -187,12 +188,22 @@ interface OtodomAdapterOptions {
 	 *  dropdown is the only rental/sale filter. */
 	sourceId?: string;
 	name: string;
-	/** Search-list base URL (no page/days params) for the region + transaction. */
-	listBase: string;
+	/**
+	 * Search-list base URLs (no page/days params), one per covered region.
+	 * The per-request URL is rebuilt from the base that the crawled URL
+	 * belongs to, so pagination never crosses into another voivodeship.
+	 */
+	listBases: string[];
 	offerType: "sale" | "long_term_rental";
 	pricePeriod: "monthly" | null;
 	/** Detail-page price field: otodom uses `salePrice` or `rentPrice`. */
 	priceKey: "salePrice" | "rentPrice";
+}
+
+/** The list base whose voivodeship path matches the crawled URL. */
+function baseForListUrl(listBases: string[], url: string): string {
+	const slug = url.match(/\/mieszkanie\/([a-z]+)/)?.[1];
+	return listBases.find((b) => slug && b.includes(`/mieszkanie/${slug}/`)) ?? listBases[0];
 }
 
 function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
@@ -257,8 +268,8 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 		};
 	}
 
-	function listPageUrl(since: string | undefined, page: number): string {
-		return `${opts.listBase}&daysSinceCreated=${daysSinceCreated(since)}&page=${page}`;
+	function listPageUrl(base: string, since: string | undefined, page: number): string {
+		return `${base}&daysSinceCreated=${daysSinceCreated(since)}&page=${page}`;
 	}
 
 	function parseListPage(url: string): { page: number; days: number | null } {
@@ -275,10 +286,12 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 		id: opts.id,
 		name: opts.name,
 		kind: "cheerio",
-		startUrls: [listPageUrl(undefined, 1)],
+		startUrls: opts.listBases.map((base) => listPageUrl(base, undefined, 1)),
 		maxRequestsPerCrawl: 6000,
-		// The list page plus a few detail pages per incremental run.
-		firstPageOnlyRequests: 1 + DETAIL_BUDGET,
+		// One newest list page per region plus a few detail pages per
+		// incremental run: the per-region first pages must both fit, or the
+		// second voivodeship would never be seen by the hourly refresh.
+		firstPageOnlyRequests: opts.listBases.length + DETAIL_BUDGET,
 
 		async extractHtml(html, url, enqueue) {
 			const data = parseOtodomHtml(html);
@@ -306,7 +319,7 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 			const wantDays = daysSinceCreated(this.since);
 			const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
 			if (days !== wantDays && !pageOnly) {
-				await enqueue([listPageUrl(this.since, page)]);
+				await enqueue([listPageUrl(baseForListUrl(opts.listBases, url), this.since, page)]);
 				return [];
 			}
 
@@ -372,7 +385,9 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 				);
 			}
 			if (current < totalPages && items.length > 0) {
-				await enqueue([listPageUrl(this.since, current + 1)]);
+				await enqueue([
+					listPageUrl(baseForListUrl(opts.listBases, url), this.since, current + 1),
+				]);
 			}
 
 			return listings;
@@ -380,27 +395,33 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 	};
 }
 
-const SALE_LIST_BASE =
-	"https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/malopolskie?limit=36&by=DEFAULT&direction=DESC";
-const RENT_LIST_BASE =
-	"https://www.otodom.pl/pl/wyniki/wynajem/mieszkanie/malopolskie?limit=36&by=DEFAULT&direction=DESC";
+function saleListBase(slug: string): string {
+	return `https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/${slug}?limit=36&by=DEFAULT&direction=DESC`;
+}
 
-/** Sale flats across Małopolska. */
+function rentListBase(slug: string): string {
+	return `https://www.otodom.pl/pl/wyniki/wynajem/mieszkanie/${slug}?limit=36&by=DEFAULT&direction=DESC`;
+}
+
+const SALE_LIST_BASES = REGIONS.map((r) => saleListBase(r.name));
+const RENT_LIST_BASES = REGIONS.map((r) => rentListBase(r.name));
+
+/** Sale flats across every covered voivodeship (Małopolska + Śląsk). */
 export const otodomAdapter: CheerioAdapter = makeOtodomAdapter({
 	id: "otodom",
-	name: "Otodom - Małopolska flats for sale",
-	listBase: SALE_LIST_BASE,
+	name: "Otodom - Małopolska + Śląsk flats for sale",
+	listBases: SALE_LIST_BASES,
 	offerType: "sale",
 	pricePeriod: null,
 	priceKey: "salePrice",
 });
 
-/** Long-term rental flats across Małopolska. */
+/** Long-term rental flats across every covered voivodeship. */
 export const otodomRentAdapter: CheerioAdapter = makeOtodomAdapter({
 	id: "otodom-rent",
 	sourceId: "otodom",
-	name: "Otodom - Małopolska long-term rentals",
-	listBase: RENT_LIST_BASE,
+	name: "Otodom - Małopolska + Śląsk long-term rentals",
+	listBases: RENT_LIST_BASES,
 	offerType: "long_term_rental",
 	pricePeriod: "monthly",
 	priceKey: "rentPrice",

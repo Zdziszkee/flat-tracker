@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { REGIONS, regionForPoint } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
 
 /**
@@ -17,8 +18,12 @@ import type { CheerioAdapter, Listing } from "../types.ts";
  * response body's estate lists; paginate across the whole list, because
  * small private investments sit past pages that have no flats.
  *
+ * Each covered city is its own search list (one `citySlug` per request), so
+ * the region config's city shards drive the start URLs: Kraków for Małopolska,
+ * Katowice for Śląsk. Pages are walked to the end per city.
+ *
  * This is the auto-discovery answer for private investments: any new
- * development registered in Kraków shows up here with no per-site work.
+ * development registered in a covered city shows up here with no per-site work.
  *
  * Construction timeline ("realizacja"): the search rows carry only empty
  * `finish: {}` placeholders - the planned completion quarter lives on the
@@ -45,17 +50,43 @@ import type { CheerioAdapter, Listing } from "../types.ts";
  * refining the search rows through the upsert.
  */
 
-const API_BASE =
-	"https://investmap.pl/api/investment/search?withEstates=1&categorySlug=mieszkania&citySlug=krakow";
 const DETAIL_BASE = "https://investmap.pl/api/investment";
 const PAGE_SIZE = 20;
 const MAX_PAGES = 100;
-// 85 search pages + one detail request per investment (all of them on
+// Search pages per city + one detail request per investment (all of them on
 // the first run, a handful per month afterwards thanks to the timeline
 // cache; the request cap drains the rest over the next runs).
-const MAX_REQUESTS = 600;
+const MAX_REQUESTS = 900;
 /** Timeline detail TTL: quarter-precision data, refreshed monthly. */
 const DETAIL_REFRESH_DAYS = 30;
+
+/** City shards from the region config, in region order (Kraków, Katowice). */
+const CITY_SLUGS = REGIONS.flatMap((r) => r.cities);
+
+function searchUrl(citySlug: string, offset: number): string {
+	return (
+		"https://investmap.pl/api/investment/search?withEstates=1" +
+		`&categorySlug=mieszkania&citySlug=${citySlug}&offset=${offset}&limit=${PAGE_SIZE}`
+	);
+}
+
+/** Display name of a city slug from the region config (the address fallback). */
+function cityNameForSlug(slug: string | null): string | null {
+	if (!slug) return null;
+	for (const region of REGIONS) {
+		const city = region.cities.find((c) => c.slug === slug);
+		if (city) return city.name;
+	}
+	return null;
+}
+
+function citySlugFromUrl(url: string): string | null {
+	try {
+		return new URL(url).searchParams.get("citySlug");
+	} catch {
+		return null;
+	}
+}
 
 interface ImEstate {
 	id: number;
@@ -177,12 +208,14 @@ function investmentToListings(
 	inv: ImInvestment,
 	groups: ImEstateGroup[] | undefined,
 	timeline: CachedInvestment | null,
+	defaultCity: string | null,
 ): Listing[] {
 	const lat = inv.location?.lat;
 	const lng = inv.location?.lon;
 	const district = inv.district?.name ?? null;
+	const city = inv.city?.name ?? defaultCity;
 	const address = inv.street
-		? `${inv.street}, ${inv.city?.name ?? "Kraków"}`
+		? [inv.street, city].filter(Boolean).join(", ")
 		: null;
 	const listings: Listing[] = [];
 	for (const estate of groups?.[0]?.list ?? []) {
@@ -236,10 +269,12 @@ function investmentToListings(
 export function investmentRow(
 	inv: ImInvestment,
 	timeline: CachedInvestment | null,
+	defaultCity: string | null = null,
 ): Listing | null {
 	const lat = inv.location?.lat;
 	const lng = inv.location?.lon;
 	if (!inv.id || !inv.title || !(lat && lng)) return null;
+	const city = inv.city?.name ?? defaultCity;
 	const features: Record<string, unknown> = {
 		investment_id: inv.id,
 		investment_row: true,
@@ -259,7 +294,9 @@ export function investmentRow(
 		rooms: null,
 		floor: null,
 		district: inv.district?.name ?? null,
-		address: inv.street ? `${inv.street}, ${inv.city?.name ?? "Kraków"}` : null,
+		address: inv.street
+			? [inv.street, city].filter(Boolean).join(", ")
+			: null,
 		description: null,
 		heatingType: null,
 		propertyType: null,
@@ -273,9 +310,10 @@ export function investmentRow(
 
 export const investmapAdapter: CheerioAdapter = {
 	id: "investmap",
-	name: "Investmap - Krakow investments with flats",
+	name: "Investmap - Kraków + Katowice investments with flats",
 	kind: "cheerio",
-	startUrls: [`${API_BASE}&offset=0&limit=${PAGE_SIZE}`],
+	// One search list per covered city; each walks its own offset pagination.
+	startUrls: CITY_SLUGS.map((c) => searchUrl(c.slug, 0)),
 	maxRequestsPerCrawl: MAX_REQUESTS,
 	// Small private investments sit past pages that have no flats; a
 	// newest-first first-page skip would hide them forever. Always walk.
@@ -298,9 +336,20 @@ export const investmapAdapter: CheerioAdapter = {
 			const cache = loadInvestmentCache();
 			cache[String(inv.id)] = timeline;
 			saveInvestmentCache(cache);
-			const rows = investmentToListings(inv, detail.estates, timeline);
+			// No city slug on a detail request: fall back to the region the
+			// coordinates sit in (Kraków for Małopolska, Katowice for Śląsk).
+			const lat = inv.location?.lat;
+			const lng = inv.location?.lon;
+			const defaultCity =
+				lat && lng ? (regionForPoint(lat, lng)?.cities[0]?.name ?? null) : null;
+			const rows = investmentToListings(
+				inv,
+				detail.estates,
+				timeline,
+				defaultCity,
+			);
 			if (rows.length > 0) return rows;
-			const row = investmentRow(inv, timeline);
+			const row = investmentRow(inv, timeline, defaultCity);
 			return row ? [row] : [];
 		}
 
@@ -316,15 +365,16 @@ export const investmapAdapter: CheerioAdapter = {
 		const cache = loadInvestmentCache();
 		const toFetch: string[] = [];
 		const now = Date.now();
+		const defaultCity = cityNameForSlug(citySlugFromUrl(url));
 		for (const inv of investments) {
 			const cached = cache[String(inv.id)] ?? null;
-			const rows = investmentToListings(inv, inv.es, cached);
+			const rows = investmentToListings(inv, inv.es, cached, defaultCity);
 			if (rows.length > 0) {
 				listings.push(...rows);
 			} else {
 				// No flats for sale: one price-less investment row keeps the
 				// building on the map (see investmentRow).
-				const row = investmentRow(inv, cached);
+				const row = investmentRow(inv, cached, defaultCity);
 				if (row) listings.push(row);
 			}
 			// Timeline refresh gate: never cached (new investment) or the
@@ -340,16 +390,16 @@ export const investmapAdapter: CheerioAdapter = {
 
 		// The list is sorted with the big estates first, but investments
 		// with a handful of flats (the small private ones) still appear
-		// past pages that have none — so walk to the very end.
+		// past pages that have none — so walk to the very end of this
+		// city's list.
 		const offset = Number(new URL(url).searchParams.get("offset") ?? 0);
 		const count = data.count ?? 0;
 		if (
 			offset + PAGE_SIZE < count &&
 			offset + PAGE_SIZE < MAX_PAGES * PAGE_SIZE
 		) {
-			await enqueue([
-				`${API_BASE}&offset=${offset + PAGE_SIZE}&limit=${PAGE_SIZE}`,
-			]);
+			const base = url.split("&offset=")[0];
+			await enqueue([`${base}&offset=${offset + PAGE_SIZE}&limit=${PAGE_SIZE}`]);
 		}
 
 		return listings;

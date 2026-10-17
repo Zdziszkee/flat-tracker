@@ -8,7 +8,12 @@ import { findLdNodes } from "./ldjson.ts";
 export interface LdOfferConfig {
 	id: string;
 	name: string;
-	startUrl: string;
+	/**
+	 * Search base URLs, one per covered region. Every start URL gets its own
+	 * first page and paginates inside its own voivodeship (page N of the
+	 * region the crawled URL belongs to, not of the first base).
+	 */
+	startUrls: string[];
 	/** Query param for pagination (e.g. "page", "PageNumber", "p"). */
 	pageParam: string;
 	/** First page index appended after the param (1 for page=1, 2 for p=2...). */
@@ -39,8 +44,10 @@ export function makeLdOfferAdapter(cfg: LdOfferConfig): CheerioAdapter {
 		id: cfg.id,
 		name: cfg.name,
 		kind: "cheerio",
-		startUrls: [cfg.startUrl],
+		startUrls: cfg.startUrls,
 		maxRequestsPerCrawl: cfg.maxRequestsPerCrawl ?? 30,
+		// One newest page per region must fit the first-page-only budget.
+		firstPageOnlyRequests: cfg.startUrls.length,
 
 		async extractHtml(html, url, enqueue) {
 			const offers = extractOfferNodes(html);
@@ -50,11 +57,12 @@ export function makeLdOfferAdapter(cfg: LdOfferConfig): CheerioAdapter {
 				if (listing) listings.push(listing);
 			}
 
-			// Pagination: ?pageParam=N, starting at `firstPage`.
+			// Pagination: ?pageParam=N, starting at `firstPage`. The base is the
+			// crawled URL, so each region continues its own list.
 			const current = matchPage(url, cfg.pageParam) ?? firstPage;
-			await enqueue([
-				`${cfg.startUrl}${url.includes("?") ? "&" : "?"}${cfg.pageParam}=${current + 1}`,
-			]);
+			const next = new URL(url);
+			next.searchParams.set(cfg.pageParam, String(current + 1));
+			await enqueue([next.toString()]);
 
 			return listings;
 		},
