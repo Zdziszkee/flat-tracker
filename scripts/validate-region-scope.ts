@@ -24,10 +24,12 @@ import { sql } from "drizzle-orm";
 
 import { db, sqlite } from "../src/db/index";
 import {
-	MALOPOLSKA_REGION_PREDICATE_SQL,
+	inRegion,
+	inTrackedRegions,
 	REGION_CASE_SQL,
 	REGION_PREDICATE_SQL,
 	regionOf,
+	regionPredicate,
 	TRACKED_REGIONS,
 	TRACKED_REGION_IDS,
 	type TrackedRegion,
@@ -97,14 +99,12 @@ check(
 	indexSql("transactions_region_price_idx"),
 );
 check(
-	norm(indexSql("transactions_malopolska_price_idx")).endsWith(
-		norm(`where ${MALOPOLSKA_REGION_PREDICATE_SQL}`),
-	),
-	"małopolska index carries MALOPOLSKA_REGION_PREDICATE_SQL",
+	indexSql("transactions_malopolska_price_idx") === "",
+	"the retired małopolskie-only index is gone (one region index serves all)",
 	indexSql("transactions_malopolska_price_idx"),
 );
 
-// The route-shaped aggregation must ride the regional index, not the table.
+// Every route-shaped aggregation must ride the regional index, not the table.
 const planFor = (predicate: string): string =>
 	sqlite
 		.prepare(
@@ -125,13 +125,15 @@ check(
 	"region-wide aggregation is index-driven",
 	regionPlan,
 );
-const malopolskaPlan = planFor(MALOPOLSKA_REGION_PREDICATE_SQL);
-check(
-	malopolskaPlan.includes("transactions_malopolska_price_idx") &&
-		!malopolskaPlan.includes("SCAN transactions"),
-	"małopolskie-only aggregation is index-driven",
-	malopolskaPlan,
-);
+for (const id of TRACKED_REGION_IDS) {
+	const plan = planFor(regionPredicate(id));
+	check(
+		plan.includes("transactions_region_price_idx") &&
+			!plan.includes("SCAN transactions"),
+		`${id}-only aggregation stays bounded by the region index`,
+		plan,
+	);
+}
 
 // ---------------------------------------------------------------------------
 // 3. The three region lists agree
@@ -206,6 +208,30 @@ check(
 	mislabelled === 0,
 	"no out-of-region row is labelled",
 	`${mislabelled} rows`,
+);
+
+/**
+ * The single-voivodeship slices must partition the region exactly: the CASE
+ * assigns the overlap strip (Kraków-Częstochowa) to one voivodeship, so the
+ * slices cannot overlap or leave a hole.
+ */
+let sliceRows = 0;
+for (const id of TRACKED_REGION_IDS) {
+	sliceRows += Number(
+		db.get<{ n: number }>(
+			sql`select count(*) as n from transactions where ${inRegion(id)}`,
+		)?.n ?? -1,
+	);
+}
+const regionRows = Number(
+	db.get<{ n: number }>(
+		sql`select count(*) as n from transactions where ${inTrackedRegions}`,
+	)?.n ?? -1,
+);
+check(
+	sliceRows === regionRows,
+	"voivodeship slices partition the region rows",
+	`${sliceRows} sliced vs ${regionRows} region-wide`,
 );
 
 /** Sampled twin comparison: the CASE order is the overlap tie-breaker. */

@@ -3,7 +3,7 @@ import { json } from "@tanstack/react-start";
 import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
-import { inMalopolska } from "#/db/region";
+import { inTrackedRegions } from "#/db/region";
 
 /**
  * Market-charts feed: 15 pre-aggregated series for the /market dashboard.
@@ -120,7 +120,7 @@ export const Route = createFileRoute("/api/market-charts")({
 					       avg(pricePerM2) AS avgM2,
 					       count(*) AS tx
 					FROM transactions
-					WHERE ${inMalopolska} AND pricePerM2 BETWEEN 500 AND 40000
+					WHERE ${inTrackedRegions} AND pricePerM2 BETWEEN 500 AND 40000
 					  AND date BETWEEN ${daysAgo(365 * 12)} AND ${daysAgo(0)}
 					GROUP BY month ORDER BY month
 				`);
@@ -138,7 +138,7 @@ export const Route = createFileRoute("/api/market-charts")({
 					       avg(pricePerM2) AS avgM2,
 					       count(*) AS windowTx
 					FROM transactions
-					WHERE ${inMalopolska} AND pricePerM2 BETWEEN 500 AND 40000
+					WHERE ${inTrackedRegions} AND pricePerM2 BETWEEN 500 AND 40000
 					  AND parcel_id IS NOT NULL
 					  AND date BETWEEN ${daysAgo(365 * 12)} AND ${daysAgo(0)}
 					GROUP BY teryt, window
@@ -146,7 +146,7 @@ export const Route = createFileRoute("/api/market-charts")({
 				const txCountRaw = await all<{ teryt: string; tx: number }>(sql`
 					SELECT substr(parcel_id, 1, 4) AS teryt, count(*) AS tx
 					FROM transactions
-					WHERE ${inMalopolska} AND parcel_id IS NOT NULL AND date >= ${daysAgo(365)}
+					WHERE ${inTrackedRegions} AND parcel_id IS NOT NULL AND date >= ${daysAgo(365)}
 					GROUP BY teryt
 				`);
 				const txCount = new Map(txCountRaw.map((r) => [r.teryt, r.tx]));
@@ -191,7 +191,7 @@ export const Route = createFileRoute("/api/market-charts")({
 					SELECT substr(datetime(date, 'unixepoch'), 1, 7) AS month,
 					       count(*) AS tx
 					FROM transactions
-					WHERE ${inMalopolska} AND date BETWEEN ${daysAgo(365 * 12)} AND ${daysAgo(0)}
+					WHERE ${inTrackedRegions} AND date BETWEEN ${daysAgo(365 * 12)} AND ${daysAgo(0)}
 					GROUP BY month ORDER BY month
 				`);
 
@@ -204,7 +204,7 @@ export const Route = createFileRoute("/api/market-charts")({
 					SELECT substr(parcel_id, 1, 4) AS teryt, market,
 					       avg(pricePerM2) AS avgM2
 					FROM transactions
-					WHERE ${inMalopolska} AND pricePerM2 BETWEEN 500 AND 40000
+					WHERE ${inTrackedRegions} AND pricePerM2 BETWEEN 500 AND 40000
 					  AND parcel_id IS NOT NULL
 					  AND market IN (1, 2)
 					  AND date BETWEEN ${daysAgo(365 * 12)} AND ${daysAgo(0)}
@@ -550,7 +550,7 @@ export const Route = createFileRoute("/api/market-charts")({
 						ELSE '5+' END AS label,
 					avg(pricePerM2) AS avgM2, count(*) AS n
 					FROM transactions
-					WHERE ${inMalopolska} AND pricePerM2 BETWEEN 500 AND 40000
+					WHERE ${inTrackedRegions} AND pricePerM2 BETWEEN 500 AND 40000
 					  AND rooms IS NOT NULL
 					  AND date >= ${daysAgo(730)}
 					GROUP BY label

@@ -8,11 +8,7 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
-import {
-	MALOPOLSKA_REGION_PREDICATE_SQL,
-	REGION_CASE_SQL,
-	REGION_PREDICATE_SQL,
-} from "./region.ts";
+import { REGION_CASE_SQL, REGION_PREDICATE_SQL } from "./region.ts";
 
 export const todos = sqliteTable("todos", {
 	id: integer({ mode: "number" }).primaryKey({
@@ -220,16 +216,6 @@ export const transactions = sqliteTable(
 		index("transactions_region_price_idx")
 			.on(t.pricePerM2, t.date)
 			.where(sql.raw(REGION_PREDICATE_SQL)),
-		/**
-		 * The one consumer that is not region-wide is the powiat choropleth,
-		 * whose boundary dataset covers małopolskie alone. It gets its own
-		 * bounded index rather than filtering the region index down (which
-		 * would read a table row per candidate, the column is not in it).
-		 * Same rule: identical to `MALOPOLSKA_REGION_PREDICATE_SQL`.
-		 */
-		index("transactions_malopolska_price_idx")
-			.on(t.pricePerM2, t.date)
-			.where(sql.raw(MALOPOLSKA_REGION_PREDICATE_SQL)),
 	],
 );
 

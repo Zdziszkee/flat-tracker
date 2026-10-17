@@ -1,0 +1,1 @@
+DROP INDEX `transactions_malopolska_price_idx`;

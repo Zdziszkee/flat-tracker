@@ -134,7 +134,11 @@ licytacje-komornik): the adapters parse a street address
 into `listings.address`, this script matches it against the local
 `osm_buildings` index (exact street+housenumber → building centroid,
 street-only → street centroid) and falls back to Photon (1 req/s,
-validated to Małopolska) for street-level points. Listings
+validated to the tracked regions) for street-level points. Photon queries
+carry no voivodeship suffix — one breaks Śląskie lookups
+("ul. Mariacka 10, Katowice, Małopolska" returns nothing, "Bytom,
+małopolskie" returns clothes shops in Kraków); the postal code is the
+qualifier that works in both. Listings
 WITHOUT a stored address get one mined from their title (ad speak like
 "Łokietka 57B - mieszkanie 30 m²") — the extracted address is persisted.
 Free-text mining also runs when a stored address is parseable but resolves
@@ -216,34 +220,43 @@ by HEAD-probing the URL space (`bun run discover:rcn-powiats`,
 can never shrink the catalogue. Kraków (1261) is skipped in both scopes:
 `import-rcn.ts` already imports the richer city GML, and a second copy
 under `1261-G/...` ids would double-count Kraków in the building price
-history. Rows outside małopolska keep their registry coordinates but stay
-unbound — the `osm_buildings` index only covers the region.
+history. Rows outside the tracked regions keep their registry coordinates
+but stay unbound — the `osm_buildings` index covers małopolskie + śląskie.
 
-### Transaction scope: małopolska, explicitly
+### Transaction scope: the tracked regions, explicitly
 
 `transactions` holds the country, but **every screen is regional** —
-listings come from małopolska portals, the map is bounded to Kraków, the
-powiat choropleth uses małopolska boundaries. So a bare
-`FROM transactions` in a route is a bug waiting for the next national
+listings come from małopolskie and śląskie portals, the choropleth and the
+price charts cover both voivodeships, the map is bounded to Kraków. So a
+bare `FROM transactions` in a route is a bug waiting for the next national
 drain: it silently turns a Kraków chart into a national average, and the
 choropleth would push ~20M out-of-region rows through point-in-polygon on
-every request. Regional queries therefore carry `inMalopolska` from
-`src/db/region.ts` (a coordinate box; every małopolska row with geometry
-is inside it and nothing else is).
+every request. Regional queries therefore carry `inTrackedRegions` from
+`src/db/region.ts`.
 
 Two consequences worth knowing:
 
-- **`MALOPOLSKA_BBOX_SQL` is shared text, not a helper call**: SQLite only
-  matches a partial index when the query predicate and the index predicate
-  are structurally identical, and `transactions_malopolska_price_idx`
-  (schema.ts) is partial on exactly that string. Reusing it keeps
-  `transactions_malopolska_price_idx` in play, which is what makes the
-  chart aggregations independent of how much national data is loaded
-  (measured 1.07 s → 0.10 s at 3.7M rows). After touching either side,
-  check with `explain query plan`.
-- Around 10% of małopolska GUGiK rows carry no geometry (no `lat`/`lng`),
-  so they drop out of region-scoped aggregates. They could never be
-  attributed to a powiat anyway.
+- **The region is a column, not a coordinate test.** `TRACKED_REGIONS`
+  (src/db/region.ts) holds the two boxes, `transactions.region` is a VIRTUAL
+  generated column that turns them into `'malopolskie'` / `'slaskie'` /
+  NULL, and queries say `region is not null` — the predicate
+  `transactions_region_price_idx` (schema.ts) is partial on, verbatim. A
+  single-voivodeship slice is `inRegion("slaskie")`, still bounded by that
+  index (measured 0.8 s vs 0.3 s index-only region-wide for the monthly
+  price series). The indirection is not cosmetic: SQLite does not match a
+  partial index whose WHERE clause is OR-connected, so the two boxes written
+  as `(box) or (box)` — identically in the index and in the query — still
+  planned as `SCAN transactions` (8.1 s at 24.3M rows; `INDEXED BY` answers
+  "no query solution"). One box covering both voivodeships does match an
+  index but swallows Kielce and Opole. `bun run validate:regions` compares
+  the stored generated expression, both predicate texts and the resulting
+  `explain query plan` with the code, so a drifting box fails loudly instead
+  of mis-bucketing new rows.
+- Rows without geometry never carry a `region` (the column is derived from
+  `lat`/`lng`), so they drop out of every region-scoped aggregate. They could
+  never be attributed to a powiat anyway, and the coordinate boxes cover
+  each voivodeship's full extent, so no in-region point is left unlabelled
+  (`validate:regions` asserts exactly that over the whole table).
 
 `/api/powiat-map` is the slow one (measured ~18 s cold on dev.db: 58
 powiaty over ~2.8M in-region RCN rows, of which 2.74M land in a powiat). The
@@ -318,13 +331,18 @@ history is pruned to the 7-day cap. Dev-start runs are also first-page-only.
   server refresh task.
 
 `assign-buildings` uses a **local OSM building index** (`osm_buildings`
-table) built from a Geofabrik extract of the małopolskie region
-(`data/osm/malopolskie.osm.pbf`, ~200 MB, streamed with `osm-pbf-parser`).
-The index covers **all of małopolska** (not just Kraków), so region-wide
-sources (booking, airbnb: Zakopane, Oświęcim, ...) anchor too.
+table) built from one Geofabrik extract per tracked voivodeship
+(`data/osm/malopolskie.osm.pbf` and `slaskie.osm.pbf`, ~200 MB each,
+streamed with `osm-pbf-parser`). The index covers **both voivodeships** in
+full (not just Kraków), so region-wide sources (booking, airbnb: Zakopane,
+Katowice, ...) anchor too.
 Point-in-polygon matching then runs in-memory via RBush — the public
 Overpass API is far too rate-limited for the ~84k RCN transactions. The
-index is rebuilt automatically when missing; `bun run assign-buildings`
+index is rebuilt automatically when missing *or built from an older region
+set*: `data/osm/build-state.json` records which extracts the current rows
+came from, so adding a voivodeship triggers exactly one rebuild (the table
+is replaced, not merged — a footprint row does not record its extract).
+`bun run assign-buildings`
 assigns all 84k transactions in minutes, not hours.
 
 ## Data sources

@@ -127,6 +127,13 @@
       "when": 1792266515965,
       "tag": "0017_nostalgic_wolfsbane",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792267731597,
+      "tag": "0018_flat_lady_deathstrike",
+      "breakpoints": true
     }
   ]
 }
