@@ -24,9 +24,10 @@ import { makeDistrictMatcher } from "#/lib/powiat-districts";
  * Bounding box union of every tracked voivodeship, as SQL text. The numbers
  * come from the crawler region config (`src/crawler/regions.ts`), and the
  * boxes may overlap (Kraków-Częstochowa border), which is harmless for an OR
- * over rows. `src/db/region.ts` carries the same union as
- * `inTrackedRegions`, plus the matching partial index on `transactions`;
- * once that lands this constant goes away.
+ * over rows. `src/db/region.ts` is the natural home for this predicate (and
+ * for the partial index that keeps it off a 24M-row scan): switch this
+ * constant to its `inTrackedRegions` export once that lands — same text, so
+ * the query plan does not change.
  */
 const TRACKED_REGION_SQL = REGIONS.map(
 	(r) =>
