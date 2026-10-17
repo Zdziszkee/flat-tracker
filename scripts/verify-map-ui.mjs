@@ -310,6 +310,17 @@ for (const p of shellPts.pts) {
 	)
 		break;
 }
+// Address labels (trimmed /api/buildings/labels payload) still render.
+const labelCount = await page.evaluate(() => {
+	const m = window.__map;
+	return m.queryRenderedFeatures(
+		[
+			[200, 100],
+			[1300, 850],
+		],
+		{ layers: ["building-address-labels"] },
+	).length;
+});
 check(
 	"3d-building shells: lazy load + click popup",
 	shellsAbsentAtStart &&
@@ -321,6 +332,11 @@ check(
 					buildingPopup.includes("Brak transakcji")),
 		),
 	`absent@start=${shellsAbsentAtStart} created=${shellInfo.created} rendered=${shellPts.rendered} popup=${JSON.stringify((buildingPopup ?? "").slice(0, 60))}`,
+);
+check(
+	"building address labels render",
+	labelCount > 0,
+	`labels rendered at z16: ${labelCount}`,
 );
 
 // 4. filters: days=7 + sale must not hide investment inventory
