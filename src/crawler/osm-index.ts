@@ -279,35 +279,38 @@ export async function buildOsmIndex(): Promise<number> {
 		);
 	}
 
-	const buildings: OsmBuilding[] = [];
+	await db.delete(osmBuildings);
+	const BATCH = 2000;
+	let total = 0;
+	// One extract at a time, inserted and released before the next one is
+	// parsed: a region's buildings are ~1.5M objects with their rings, so
+	// holding two of them (or a third concatenated copy — `push(...found)`
+	// overflows the argument limit at that size) is the whole memory budget.
 	for (const source of PBF_SOURCES) {
 		const found = await extractBuildingsFromPbf(source.path);
 		console.log(`  ${source.region}: ${found.length} buildings`);
-		buildings.push(...found);
-	}
-
-	await db.delete(osmBuildings);
-	const BATCH = 2000;
-	for (let i = 0; i < buildings.length; i += BATCH) {
-		const slice = buildings.slice(i, i + BATCH);
-		await db.insert(osmBuildings).values(
-			slice.map((b) => ({
-				osmId: b.osmId,
-				bboxMinLat: b.bboxMinLat,
-				bboxMinLng: b.bboxMinLng,
-				bboxMaxLat: b.bboxMaxLat,
-				bboxMaxLng: b.bboxMaxLng,
-				centroidLat: b.centroidLat,
-				centroidLng: b.centroidLng,
-				polygon: JSON.stringify(b.polygon),
-				address: b.address,
-				tags: b.tags ? JSON.stringify(b.tags) : null,
-			})),
-		);
+		total += found.length;
+		for (let i = 0; i < found.length; i += BATCH) {
+			const slice = found.slice(i, i + BATCH);
+			await db.insert(osmBuildings).values(
+				slice.map((b) => ({
+					osmId: b.osmId,
+					bboxMinLat: b.bboxMinLat,
+					bboxMinLng: b.bboxMinLng,
+					bboxMaxLat: b.bboxMaxLat,
+					bboxMaxLng: b.bboxMaxLng,
+					centroidLat: b.centroidLat,
+					centroidLng: b.centroidLng,
+					polygon: JSON.stringify(b.polygon),
+					address: b.address,
+					tags: b.tags ? JSON.stringify(b.tags) : null,
+				})),
+			);
+		}
 	}
 	await saveBuildState(new Date());
-	console.log(`osm_buildings: ${buildings.length} rows inserted`);
-	return buildings.length;
+	console.log(`osm_buildings: ${total} rows inserted`);
+	return total;
 }
 
 interface IndexedBuilding extends OsmBuilding {
