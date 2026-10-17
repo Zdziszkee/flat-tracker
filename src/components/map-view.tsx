@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import "mapbox-gl/dist/mapbox-gl.css";
 
+import { REGIONS } from "#/crawler/regions";
 import { env } from "#/env";
 
 interface ApiListing {
@@ -58,16 +59,44 @@ interface ListingsResponse {
 	generatedAt: string;
 }
 
-/** Małopolska voivodeship bounding box. */
-const MALOPOLSKA_BOUNDS: [[number, number], [number, number]] = [
-	[19.0, 49.1],
-	[21.6, 50.6],
+/**
+ * Bounding box of every tracked voivodeship (Małopolska + Śląsk), unioned so
+ * one view can hold both. Derived from the crawler region config, the single
+ * source of truth for region boxes.
+ */
+const TRACKED_REGION_BOUNDS: [[number, number], [number, number]] = [
+	[
+		Math.min(...REGIONS.map((r) => r.bbox.minLng)) - 0.05,
+		Math.min(...REGIONS.map((r) => r.bbox.minLat)) - 0.05,
+	],
+	[
+		Math.max(...REGIONS.map((r) => r.bbox.maxLng)) + 0.05,
+		Math.max(...REGIONS.map((r) => r.bbox.maxLat)) + 0.05,
+	],
 ];
-/** Default camera: Kraków, the area of interest (bounds stay regional). */
-const KRAKOW_CENTER: [number, number] = [19.94, 50.06];
+/**
+ * Default camera: the middle of that union (Olkusz/Trzebinia area), fitted to
+ * the viewport on mount so both voivodeships are framed on any screen. Not
+ * Kraków any more: the data covers both regions, so a Kraków-only default
+ * hid half of it.
+ */
+const TRACKED_REGION_CENTER: [number, number] = [
+	(TRACKED_REGION_BOUNDS[0][0] + TRACKED_REGION_BOUNDS[1][0]) / 2,
+	(TRACKED_REGION_BOUNDS[0][1] + TRACKED_REGION_BOUNDS[1][1]) / 2,
+];
 
 /** Building shells load lazily from this zoom (sub-pixel below it). */
 const BUILDING_LAYERS_MINZOOM = 13;
+/**
+ * Zoom from which the basemap's 3D landmarks and trees come back on. Below
+ * it (the two-voivodeship overview) they are hundreds of models per frame and
+ * software-GL clients took minutes to paint the first frame; above it the
+ * user is looking at one city, where they read as detail. 3D *buildings*
+ * stay enabled at every zoom: our amber RCN extrusion reads their real
+ * heights from the basemap `buildings` featureset (see the height sync), so
+ * hiding them would silently degrade the building history layer.
+ */
+const DETAIL_3D_MINZOOM = 12;
 
 const TOKEN = env.VITE_MAPBOX_TOKEN;
 
@@ -863,15 +892,18 @@ function MapCanvas({
 			// atmosphere sky. Our RCN feature-state coloring hooks into the
 			// style's own select/highlight states (see below).
 			style: "mapbox://styles/mapbox/standard",
-			// Kraków, the area of interest (AGENTS.md: the map is Kraków's):
-			// the whole-voivodeship z9 default framed hundreds of 3D
-			// landmarks/trees per frame and software-GL clients took minutes
-			// to paint the first frame.
-			center: KRAKOW_CENTER,
-			zoom: 10.5,
-			pitch: 45,
+			// Both voivodeships, fitted below: the tracker covers Małopolska and
+			// Śląsk, and a Kraków-only default hid half of the data. The 3D
+			// landmarks/trees stay off until DETAIL_3D_MINZOOM for the first-paint
+			// reason documented there.
+			center: TRACKED_REGION_CENTER,
+			zoom: 8.5,
+			pitch: 30,
 			bearing: -20,
-			maxBounds: MALOPOLSKA_BOUNDS,
+			maxBounds: TRACKED_REGION_BOUNDS,
+			config: {
+				basemap: { show3dLandmarks: false, show3dTrees: false },
+			},
 			accessToken: TOKEN,
 			// Keep the frame buffer for compositors/screenshots: without it,
 			// capture paths (headless tools, remote-desktop bridges) show a
@@ -879,8 +911,35 @@ function MapCanvas({
 			preserveDrawingBuffer: true,
 		});
 		mapRef.current = map;
+		// Frame every tracked region, whatever the viewport size (a fixed zoom
+		// would cut off either Częstochowa or Zakopane on a narrow screen).
+		// Right after construction, so the first painted frame is already the
+		// final one. `pitch` is part of the fit so the fitted view keeps the
+		// tilted look without cropping the near edge.
+		try {
+			map.fitBounds(TRACKED_REGION_BOUNDS, {
+				padding: 32,
+				duration: 0,
+				pitch: 30,
+			});
+		} catch {
+			// Older mapbox-gl ignores the pitch option; the zoom/center above
+			// still frame both regions.
+		}
 		// Debug hook for browser-console inspection.
 		(window as unknown as { __map?: mapboxgl.Map }).__map = map;
+		// Basemap 3D detail (landmarks, trees) follows the zoom: off across
+		// the two-voivodeship overview, on from DETAIL_3D_MINZOOM (see there).
+		const syncDetail3d = () => {
+			const detailed = map.getZoom() >= DETAIL_3D_MINZOOM;
+			for (const prop of ["show3dLandmarks", "show3dTrees"]) {
+				try {
+					map.setConfigProperty("basemap", prop, detailed);
+				} catch {
+					// Style version without that property: nothing to sync.
+				}
+			}
+		};
 		// "Ready" means RECORDS ARE VISIBLE, not merely "idle": on slow
 		// clients (software GL) the map goes idle on an empty canvas long
 		// before the data paints, and users read that as "0 entries". Poll
@@ -974,6 +1033,10 @@ function MapCanvas({
 			} catch {
 				// Older style versions ignore config presets.
 			}
+			// The constructor config already set the 3D detail off for the
+			// overview zoom; keep it in sync as the user zooms in and out.
+			syncDetail3d();
+			map.on("zoomend", syncDetail3d);
 
 			// RCN history as OUR OWN fill-extrusion layer (amber). The
 			// Standard style's `highlight` feature-state is unusable here:

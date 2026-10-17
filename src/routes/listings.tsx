@@ -329,7 +329,9 @@ function ListingsPage() {
 	return (
 		<div className="p-6">
 			<div className="mb-4 flex items-center justify-between">
-				<h1 className="text-xl font-semibold">Ogłoszenia · Małopolska</h1>
+				<h1 className="text-xl font-semibold">
+					Ogłoszenia · Małopolska i Śląsk
+				</h1>
 				<div className="flex items-center gap-3 text-sm">
 					<select
 						value={source}

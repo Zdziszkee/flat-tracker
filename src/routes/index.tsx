@@ -5,10 +5,11 @@ export const Route = createFileRoute("/")({ component: Home });
 function Home() {
 	return (
 		<div className="p-8">
-			<h1 className="text-4xl font-bold">Flat Tracker Kraków</h1>
+			<h1 className="text-4xl font-bold">Flat Tracker</h1>
 			<p className="mt-4 text-lg">
-				Mieszkania na sprzedaż w Krakowie: oferty z Otodom i OLX połączone z
-				historycznymi cenami transakcyjnymi (Rejestr Cen Nieruchomości).
+				Mieszkania na sprzedaż w Małopolsce i na Śląsku: oferty z Otodom i OLX
+				połączone z historycznymi cenami transakcyjnymi (Rejestr Cen
+				Nieruchomości).
 			</p>
 
 			<nav className="mt-8 flex gap-4">
@@ -54,7 +55,7 @@ function Home() {
 						>
 							olx.pl
 						</a>{" "}
-						dla Krakowa. Dane są zapisywane w SQLite (Drizzle).
+						dla Małopolski i Śląska. Dane są zapisywane w SQLite (Drizzle).
 					</li>
 					<li>
 						Każda oferta z współrzędnymi jest przypisywana do budynku z
@@ -62,8 +63,9 @@ function Home() {
 					</li>
 					<li>
 						Historyczne ceny transakcyjne pochodzą z Rejestru Cen Nieruchomości
-						(RCN) dla Krakowa — dane publiczne, bezpłatne od lutego 2026. Import
-						odbywa się automatycznie przy każdym odświeżeniu danych.
+						(RCN) dla Krakowa oraz z usługi GUGiK Transakcje dla powiatów
+						Małopolski i Śląska — dane publiczne, bezpłatne od lutego 2026.
+						Import odbywa się automatycznie przy każdym odświeżeniu danych.
 					</li>
 					<li>
 						Na mapie każda oferta jest pokazywana na swoim budynku; popup

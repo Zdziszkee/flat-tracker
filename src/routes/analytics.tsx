@@ -624,7 +624,9 @@ function AnalyticsPage() {
 	return (
 		<div className="min-h-screen bg-gray-50 p-4">
 			<div className="mb-4 flex items-center justify-between">
-				<h1 className="text-xl font-semibold">Analityka rynku · Małopolska</h1>
+				<h1 className="text-xl font-semibold">
+					Analityka rynku · Małopolska i Śląsk
+				</h1>
 				<div className="flex items-center gap-3 text-sm">
 					<Link to="/map" className="text-blue-600 underline">
 						Mapa
