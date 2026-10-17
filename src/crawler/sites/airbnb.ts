@@ -166,6 +166,26 @@ function regionOfUrl(url: string): Region {
 	return id ? regionById(id) : regionById(REGIONS[0].id);
 }
 
+/**
+ * Start URLs, round-robin across regions so one run's request budget (400 by
+ * default) is shared instead of spent entirely on the first, far larger
+ * region's backlog — otherwise the Śląsk frontier would never be reached.
+ * Within a region the frontier is already staleness-sorted, and the rotation
+ * simply walks both lists in lockstep (the shorter one runs out first).
+ */
+function interleavedStartUrls(): string[] {
+	const queues = REGIONS.map((region) => ({ region, tiles: tilesFor(region) }));
+	const urls: string[] = [];
+	const longest = Math.max(...queues.map((q) => q.tiles.length));
+	for (let i = 0; i < longest; i++) {
+		for (const { region, tiles } of queues) {
+			const tile = tiles[i];
+			if (tile) urls.push(tileUrl(region, tile));
+		}
+	}
+	return urls;
+}
+
 function markDrained(region: Region, name: string): void {
 	const tiles = tilesFor(region);
 	const tile = tiles.find((t) => t.name === name);
@@ -437,8 +457,9 @@ export const airbnbAdapter: CheerioAdapter = {
 	name: "Airbnb - Małopolska + Śląsk short-term rentals",
 	kind: "cheerio",
 	// Every region's frontier is walked; tiles carry their region in the URL
-	// (`r=`) so pagination and splitting stay inside it.
-	startUrls: REGIONS.flatMap((r) => tilesFor(r).map((t) => tileUrl(r, t))),
+	// (`r=`) so pagination and splitting stay inside it, and the two frontiers
+	// are interleaved so the run budget covers both.
+	startUrls: interleavedStartUrls(),
 	// Per-run ceiling; the frontier persists across runs, so coverage grows
 	// run over run (default keeps the hourly refresh polite).
 	maxRequestsPerCrawl: Math.min(
