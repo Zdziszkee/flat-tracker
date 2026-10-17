@@ -27,7 +27,8 @@
     "discover:rcn-powiats": "tsx scripts/discover-rcn-powiats.ts",
     "estimate-utilities": "tsx src/crawler/estimate-utilities.ts",
     "build-street-lexicon": "tsx scripts/build-street-lexicon.ts",
-    "build:powiats": "tsx scripts/build-powiats-geojson.ts"
+    "build:powiats": "tsx scripts/build-powiats-geojson.ts",
+    "validate:powiats": "tsx scripts/validate-region-powiats.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",
