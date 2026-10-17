@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-import { type SQL, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 
-import { REGIONS } from "#/crawler/regions";
 import { db } from "#/db/index";
+import { inTrackedRegions } from "#/db/region";
 import { listings, transactions } from "#/db/schema";
 import { makeDistrictMatcher } from "#/lib/powiat-districts";
 
@@ -19,21 +19,6 @@ import { makeDistrictMatcher } from "#/lib/powiat-districts";
  * put in the district field); everything else stays unassigned rather than
  * guessing.
  */
-
-/**
- * Bounding box union of every tracked voivodeship, as SQL text. The numbers
- * come from the crawler region config (`src/crawler/regions.ts`), and the
- * boxes may overlap (Kraków-Częstochowa border), which is harmless for an OR
- * over rows. `src/db/region.ts` is the natural home for this predicate (and
- * for the partial index that keeps it off a 24M-row scan): switch this
- * constant to its `inTrackedRegions` export once that lands — same text, so
- * the query plan does not change.
- */
-const TRACKED_REGION_SQL = REGIONS.map(
-	(r) =>
-		`(lat between ${r.bbox.minLat} and ${r.bbox.maxLat} and lng between ${r.bbox.minLng} and ${r.bbox.maxLng})`,
-).join(" or ");
-const inTrackedRegions: SQL = sql.raw(TRACKED_REGION_SQL);
 
 interface PowiatPoly {
 	name: string;
