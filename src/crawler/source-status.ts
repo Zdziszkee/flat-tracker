@@ -23,60 +23,75 @@ export interface SourceDescriptor {
 }
 
 const PORTAL_SOURCES: SourceDescriptor[] = [
-	{ id: "otodom", name: "Otodom - Małopolska flats for sale", kind: "portal" },
 	{
-		id: "otodom-rent",
-		name: "Otodom - Małopolska long-term rentals",
+		id: "otodom",
+		name: "Otodom - Małopolska + Śląsk flats for sale",
 		kind: "portal",
 	},
-	{ id: "olx", name: "OLX - Małopolska real estate (sale)", kind: "portal" },
+	{
+		id: "otodom-rent",
+		name: "Otodom - Małopolska + Śląsk long-term rentals",
+		kind: "portal",
+	},
+	{
+		id: "olx",
+		name: "OLX - Małopolska + Śląsk real estate (sale)",
+		kind: "portal",
+	},
 	{
 		id: "olx-rent",
-		name: "OLX - Małopolska long-term rentals",
+		name: "OLX - Małopolska + Śląsk long-term rentals",
 		kind: "portal",
 	},
 	{
 		id: "airbnb",
-		name: "Airbnb - Małopolska short-term rentals",
+		name: "Airbnb - Małopolska + Śląsk short-term rentals",
 		kind: "portal",
 	},
 	{
 		id: "booking",
-		name: "Booking - Małopolska short-term rentals",
+		name: "Booking - Małopolska + Śląsk short-term rentals",
 		kind: "portal",
 	},
 	{
 		id: "morizon",
-		name: "Morizon - Małopolska flats for sale",
+		name: "Morizon - Małopolska + Śląsk flats for sale",
 		kind: "portal",
 	},
-	{ id: "gratka", name: "Gratka - Małopolska flats for sale", kind: "portal" },
+	{
+		id: "gratka",
+		name: "Gratka - Małopolska + Śląsk flats for sale",
+		kind: "portal",
+	},
 	{
 		id: "domiporta",
-		name: "Domiporta - Małopolska flats for sale",
+		name: "Domiporta - Małopolska + Śląsk flats for sale",
 		kind: "portal",
 	},
 	{
 		id: "nieruchomosci-online",
-		name: "Nieruchomosci-online - Małopolska flats for sale",
+		name: "Nieruchomosci-online - Małopolska + Śląsk flats for sale",
 		kind: "portal",
 	},
 	{
 		id: "rynekpierwotny",
-		name: "Rynekpierwotny - Małopolska new developments",
+		name: "Rynekpierwotny - Małopolska + Śląsk new developments",
 		kind: "portal",
 	},
 	{
 		id: "licytacje-komornik",
-		name: "Licytacje komornicze · Małopolska (nieruchomości)",
+		name: "Licytacje komornicze · Małopolska + Śląsk (nieruchomości)",
 		kind: "portal",
 	},
 	{
 		id: "investmap",
-		name: "Investmap - Krakow investments with flats",
+		name: "Investmap - Kraków + Katowice investments with flats",
 		kind: "portal",
 	},
 	{
+		// Kraków-only on purpose: budujesie.pl is a Kraków housing forum with
+		// no Śląsk counterpart, so the source stays single-region while every
+		// other portal covers both voivodeships.
 		id: "budujesie",
 		name: "BudujeSie - Krakow new housing investments (forum)",
 		kind: "portal",

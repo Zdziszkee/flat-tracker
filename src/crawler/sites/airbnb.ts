@@ -1,37 +1,33 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
+import { REGIONS, type Region, regionById } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
 
 /**
- * Airbnb short-term rental search for Małopolska: adaptive quadtree
- * partitioning.
+ * Airbnb short-term rental search for every covered voivodeship
+ * (Małopolska + Śląsk): adaptive quadtree partitioning.
  *
  * A single Airbnb search session exposes only ~15 cursor pages (~270
  * listings) regardless of the true count ("1000+" shown in the UI), and
- * Kraków alone holds thousands of active listings. To reach the real supply
- * the region is tiled on a 6x6 grid and each tile's cursor chain is walked
- * independently. Whenever a tile saturates the session cap (15 cursors and
- * a still-full final page) it is split into 4 quadrant searches which are
+ * Kraków (or the Katowice conurbation) alone holds thousands of active
+ * listings. To reach the real supply each region's bounding box (from the
+ * region config) is tiled on a 6x6 grid and each tile's cursor chain is
+ * walked independently. Whenever a tile saturates the session cap (15 cursors
+ * and a still-full final page) it is split into 4 quadrant searches which are
  * crawled too, recursively down to ~100 m boxes. The partition is therefore
- * supply-proportional: dense markets (Kraków, Tatry) subdivide deeply while
- * empty areas stay one tile.
+ * supply-proportional: dense markets (Kraków, Tatry, Katowice) subdivide
+ * deeply while empty areas stay one tile.
  *
- * The reached leaf set is persisted to data/crawler/airbnb-quadtree.json so
- * subsequent crawls start directly from the refined tiles instead of
- * re-exploring top-down. Duplicate listings across overlapping tiles collapse
- * in the DB upsert on `(source, externalId)`.
+ * Reach leaf sets are persisted per region (data/crawler/airbnb-quadtree.json
+ * for Małopolska, ...-<region>.json for the rest) so subsequent crawls start
+ * directly from the refined tiles instead of re-exploring top-down. Duplicate
+ * listings across overlapping tiles collapse in the DB upsert on
+ * `(source, externalId)`.
  *
  * Exact street addresses are hidden by Airbnb until booking, so listings are
  * anchored by coordinates and district-level analytics only.
  */
 
-/** Małopolska bounds (union of powiat polygons). */
-const REGION = {
-	minLat: 49.18,
-	minLng: 19.0831,
-	maxLat: 50.5205,
-	maxLng: 21.4217,
-};
 const GRID_COLS = 6;
 const GRID_ROWS = 6;
 /** Airbnb serves at most 15 cursor pages (~270 listings) per search. */
@@ -42,7 +38,18 @@ const PAGE_SIZE = 18;
 const MAX_DEPTH = 8;
 
 const CACHE_DIR = "data/crawler";
-const CACHE_PATH = `${CACHE_DIR}/airbnb-quadtree.json`;
+
+/**
+ * Per-region quadtree cache. Małopolska keeps the original file name so the
+ * frontier refined by every past run survives this refactor; later regions
+ * get their own file so the frontiers never mix (tile names repeat across
+ * regions by design).
+ */
+function cachePathFor(region: Region): string {
+	return region.id === "malopolskie"
+		? `${CACHE_DIR}/airbnb-quadtree.json`
+		: `${CACHE_DIR}/airbnb-quadtree-${region.id}.json`;
+}
 
 /** One search shard: a bounding box over part of the rental market. */
 interface Tile {
@@ -63,7 +70,7 @@ interface QuadtreeCache {
 	tiles: Tile[];
 }
 
-function tileUrl(t: Tile, cursor?: string): string {
+function tileUrl(region: Region, t: Tile, cursor?: string): string {
 	const params = new URLSearchParams({
 		adults: "2",
 		"refinement_paths[]": "/homes",
@@ -75,25 +82,28 @@ function tileUrl(t: Tile, cursor?: string): string {
 		sw_lng: t.minLng.toFixed(5),
 		// Zoom hints Airbnb's viewport clustering; deeper tiles zoom in.
 		zoom: String(Math.min(10 + t.depth, 16)),
-		// Our bookkeeping: recursion depth, echoed back on every page.
+		// Our bookkeeping: recursion depth + owning region, echoed back on
+		// every page so a crawled tile resolves to its own frontier.
 		d: String(t.depth),
+		r: region.id,
 	});
 	if (cursor) params.set("cursor", cursor);
 	return `https://www.airbnb.pl/s/${encodeURIComponent(t.name)}/homes?${params.toString()}`;
 }
 
-function baseGridTiles(): Tile[] {
+function baseGridTiles(region: Region): Tile[] {
+	const { bbox } = region;
 	const tiles: Tile[] = [];
-	const dLat = (REGION.maxLat - REGION.minLat) / GRID_ROWS;
-	const dLng = (REGION.maxLng - REGION.minLng) / GRID_COLS;
+	const dLat = (bbox.maxLat - bbox.minLat) / GRID_ROWS;
+	const dLng = (bbox.maxLng - bbox.minLng) / GRID_COLS;
 	for (let r = 0; r < GRID_ROWS; r++) {
 		for (let c = 0; c < GRID_COLS; c++) {
 			tiles.push({
 				name: `t${r}-${c}`,
-				minLat: REGION.minLat + r * dLat,
-				maxLat: REGION.minLat + (r + 1) * dLat,
-				minLng: REGION.minLng + c * dLng,
-				maxLng: REGION.minLng + (c + 1) * dLng,
+				minLat: bbox.minLat + r * dLat,
+				maxLat: bbox.minLat + (r + 1) * dLat,
+				minLng: bbox.minLng + c * dLng,
+				maxLng: bbox.minLng + (c + 1) * dLng,
 				depth: 0,
 			});
 		}
@@ -101,9 +111,11 @@ function baseGridTiles(): Tile[] {
 	return tiles;
 }
 
-function loadCachedTiles(): Tile[] | null {
+function loadCachedTiles(region: Region): Tile[] | null {
 	try {
-		const raw = JSON.parse(readFileSync(CACHE_PATH, "utf8")) as QuadtreeCache;
+		const raw = JSON.parse(
+			readFileSync(cachePathFor(region), "utf8"),
+		) as QuadtreeCache;
 		if (!Array.isArray(raw.tiles) || raw.tiles.length === 0) return null;
 		return raw.tiles.map((t) => ({ ...t }));
 	} catch {
@@ -111,7 +123,7 @@ function loadCachedTiles(): Tile[] | null {
 	}
 }
 
-function persistFrontier(tiles: Tile[]): void {
+function persistFrontier(region: Region, tiles: Tile[]): void {
 	try {
 		mkdirSync(CACHE_DIR, { recursive: true });
 		const cache: QuadtreeCache = {
@@ -120,28 +132,46 @@ function persistFrontier(tiles: Tile[]): void {
 				(a, b) => a.depth - b.depth || a.name.localeCompare(b.name),
 			),
 		};
-		writeFileSync(CACHE_PATH, JSON.stringify(cache));
+		writeFileSync(cachePathFor(region), JSON.stringify(cache));
 	} catch {
 		// Best-effort: a failed cache write only costs re-exploration next run.
 	}
 }
 
 /**
- * Crawl frontier: cached leaves from previous runs when available, else the
- * base grid. Never-drained tiles first, then stale ones, shallow-first.
+ * Crawl frontier per region: cached leaves from previous runs when available,
+ * else the region's base grid. Never-drained tiles first, then stale ones,
+ * shallow-first.
  */
-const frontier: Tile[] = loadCachedTiles() ?? baseGridTiles();
-frontier.sort((a, b) => {
-	const ta = a.drainedAt ? Date.parse(a.drainedAt) : 0;
-	const tb = b.drainedAt ? Date.parse(b.drainedAt) : 0;
-	return ta - tb || a.depth - b.depth || a.name.localeCompare(b.name);
-});
+const frontiers = new Map<string, Tile[]>();
+for (const region of REGIONS) {
+	const tiles = loadCachedTiles(region) ?? baseGridTiles(region);
+	tiles.sort((a, b) => {
+		const ta = a.drainedAt ? Date.parse(a.drainedAt) : 0;
+		const tb = b.drainedAt ? Date.parse(b.drainedAt) : 0;
+		return ta - tb || a.depth - b.depth || a.name.localeCompare(b.name);
+	});
+	frontiers.set(region.id, tiles);
+}
 
-function markDrained(name: string): void {
-	const tile = frontier.find((t) => t.name === name);
+function tilesFor(region: Region): Tile[] {
+	const tiles = frontiers.get(region.id);
+	if (!tiles) throw new Error(`no airbnb frontier for region ${region.id}`);
+	return tiles;
+}
+
+/** The region a crawled tile URL belongs to (`r` param, Małopolska default). */
+function regionOfUrl(url: string): Region {
+	const id = new URL(url).searchParams.get("r");
+	return id ? regionById(id) : regionById(REGIONS[0].id);
+}
+
+function markDrained(region: Region, name: string): void {
+	const tiles = tilesFor(region);
+	const tile = tiles.find((t) => t.name === name);
 	if (!tile) return;
 	tile.drainedAt = new Date().toISOString();
-	persistFrontier(frontier);
+	persistFrontier(region, tiles);
 }
 
 /**
@@ -221,11 +251,12 @@ function tileNeedsFullSweep(t: Tile | undefined): boolean {
 	return !Number.isFinite(ageMs) || ageMs > FULL_SWEEP_HOURS * 3600_000;
 }
 
-function replaceTile(tile: Tile, kids: Tile[]): void {
-	const idx = frontier.findIndex((t) => t.name === tile.name);
-	if (idx >= 0) frontier.splice(idx, 1, ...kids);
-	else frontier.push(...kids);
-	persistFrontier(frontier);
+function replaceTile(region: Region, tile: Tile, kids: Tile[]): void {
+	const tiles = tilesFor(region);
+	const idx = tiles.findIndex((t) => t.name === tile.name);
+	if (idx >= 0) tiles.splice(idx, 1, ...kids);
+	else tiles.push(...kids);
+	persistFrontier(region, tiles);
 }
 
 function childrenOf(parent: {
@@ -403,9 +434,11 @@ function resultToListing(r: StaySearchResult): Listing {
 
 export const airbnbAdapter: CheerioAdapter = {
 	id: "airbnb",
-	name: "Airbnb - Małopolska short-term rentals",
+	name: "Airbnb - Małopolska + Śląsk short-term rentals",
 	kind: "cheerio",
-	startUrls: frontier.map((t) => tileUrl(t)),
+	// Every region's frontier is walked; tiles carry their region in the URL
+	// (`r=`) so pagination and splitting stay inside it.
+	startUrls: REGIONS.flatMap((r) => tilesFor(r).map((t) => tileUrl(r, t))),
 	// Per-run ceiling; the frontier persists across runs, so coverage grows
 	// run over run (default keeps the hourly refresh polite).
 	maxRequestsPerCrawl: Math.min(
@@ -428,6 +461,8 @@ export const airbnbAdapter: CheerioAdapter = {
 		} catch {
 			return [];
 		}
+
+		const region = regionOfUrl(url);
 
 		const results = findSearchResults(data) ?? [];
 
@@ -473,7 +508,7 @@ export const airbnbAdapter: CheerioAdapter = {
 				maxLng: Number(u.searchParams.get("ne_lng")),
 				depth: Number(u.searchParams.get("d") ?? "0"),
 			};
-			const cached = frontier.find((t) => t.name === tile0.name);
+			const cached = tilesFor(region).find((t) => t.name === tile0.name);
 			if (cached && !tileNeedsFullSweep(cached)) {
 				const knownIds = await knownIdsInBox(
 					tile0.minLat,
@@ -487,7 +522,7 @@ export const airbnbAdapter: CheerioAdapter = {
 						return id !== "" && knownIds.has(id);
 					});
 					if (allKnown) {
-						markDrained(tile0.name);
+						markDrained(region, tile0.name);
 						console.log(
 							`airbnb: delta skip ${tile0.name} (${results.length} known, page 1 unchanged)`,
 						);
@@ -530,8 +565,8 @@ export const airbnbAdapter: CheerioAdapter = {
 		// Was this leaf fully walked by an earlier run? Only then may we
 		// trust the DB count to skip its pagination (fresh tiles must walk).
 		const wasDrainedBefore =
-			frontier.find((t) => t.name === tile.name)?.drainedAt != null;
-		markDrained(tile.name);
+			tilesFor(region).find((t) => t.name === tile.name)?.drainedAt != null;
+		markDrained(region, tile.name);
 		const known = await countListingsInBox(
 			tile.minLat,
 			tile.minLng,
@@ -539,7 +574,7 @@ export const airbnbAdapter: CheerioAdapter = {
 			tile.maxLng,
 		);
 		if (known != null) tile.knownListings = known;
-		persistFrontier(frontier);
+		persistFrontier(region, tilesFor(region));
 		if (
 			SKIP_KNOWN &&
 			wasDrainedBefore &&
@@ -557,11 +592,11 @@ export const airbnbAdapter: CheerioAdapter = {
 			pageCursors.length >= CURSOR_CAP && results.length >= PAGE_SIZE;
 		if (saturated && tile.depth < MAX_DEPTH) {
 			const kids = childrenOf(tile);
-			replaceTile(tile, kids);
+			replaceTile(region, tile, kids);
 			console.log(
 				`airbnb: split ${tile.name} at depth ${tile.depth} -> ${kids.map((k) => k.name).join(" ")}`,
 			);
-			await enqueue(kids.map((k) => tileUrl(k)));
+			await enqueue(kids.map((k) => tileUrl(region, k)));
 		}
 
 		return results.map(resultToListing);
