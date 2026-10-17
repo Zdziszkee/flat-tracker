@@ -1,6 +1,6 @@
 /**
- * Region-wide cadastral parcel import for małopolska from GUGiK's KIEG
- * aggregate WFS ("Zbiorcza usługa EGiB",
+ * Region-wide cadastral parcel import (every tracked voivodeship) from
+ * GUGiK's KIEG aggregate WFS ("Zbiorcza usługa EGiB",
  * https://mapy.geoportal.gov.pl/wss/service/PZGIK/EGIB/WFS/UslugaZbiorcza).
  *
  * The service exposes one normalized feature type (ms:dzialki) for the
@@ -10,12 +10,12 @@
  * there is no total count (numberMatched="unknown"), so we page until a
  * page returns fewer than the page size.
  *
- * Strategy: tile the małopolska bbox, GetFeature per tile with BBOX +
- * pagination, parse each page (~1.5 MB XML) with saxes and INSERT OR
- * IGNORE into `parcels` — RCN rows (Krakow) are imported first and win,
+ * Strategy: tile each tracked region's bbox, GetFeature per tile with
+ * BBOX + pagination, parse each page (~1.5 MB XML) with saxes and INSERT
+ * OR IGNORE into `parcels` — RCN rows (Krakow) are imported first and win,
  * so KIEG only fills the rest of the region. Features straddling tile
- * edges are returned by neighbouring tiles; the unique parcelId
- * dedupes them.
+ * edges are returned by neighbouring tiles; the unique parcelId dedupes
+ * them.
  *
  * Resume support: completed tiles are recorded in
  * data/crawler/egib-state.json, so an interrupted run continues where
@@ -31,18 +31,11 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
 import { SaxesParser } from "saxes";
 import { db } from "#/db/index";
+import { TRACKED_REGIONS, type TrackedRegion } from "#/db/region";
 import { parcels as parcelsTable } from "#/db/schema";
 
 // ---------------------------------------------------------------------------
 // Config
-
-/** Małopolska voivodeship bounding box (lon/lat), slightly padded. */
-const MALOPOLSKA = {
-	minLng: 19.13,
-	minLat: 49.05,
-	maxLng: 21.3,
-	maxLat: 50.45,
-};
 
 /** Tile size in degrees (~7.2 km × 8.9 km at 50°N). */
 const TILE_LNG = 0.1;
@@ -73,9 +66,6 @@ const tileKeys = process.argv
 // ---------------------------------------------------------------------------
 // Tile grid
 
-const cols = Math.ceil((MALOPOLSKA.maxLng - MALOPOLSKA.minLng) / TILE_LNG);
-const rows = Math.ceil((MALOPOLSKA.maxLat - MALOPOLSKA.minLat) / TILE_LAT);
-
 interface Tile {
 	key: string;
 	minLng: number;
@@ -84,26 +74,36 @@ interface Tile {
 	maxLat: number;
 }
 
-function buildTiles(): Tile[] {
+/**
+ * Tiles of one region. The key carries the region id (`<region>:row:col`)
+ * because the resume state is a flat list of keys: the pre-śląskie grid
+ * used bare `row:col`, and those keys must not be read as "this śląskie
+ * tile is done" after the boxes changed.
+ */
+function tilesForRegion(region: TrackedRegion): Tile[] {
+	const box = TRACKED_REGIONS[region];
+	const cols = Math.ceil((box.maxLng - box.minLng) / TILE_LNG);
+	const rows = Math.ceil((box.maxLat - box.minLat) / TILE_LAT);
 	const tiles: Tile[] = [];
 	for (let row = 0; row < rows; row++) {
 		for (let col = 0; col < cols; col++) {
 			tiles.push({
-				key: `${row}:${col}`,
-				minLng: MALOPOLSKA.minLng + col * TILE_LNG,
-				minLat: MALOPOLSKA.minLat + row * TILE_LAT,
-				maxLng: Math.min(
-					MALOPOLSKA.minLng + (col + 1) * TILE_LNG,
-					MALOPOLSKA.maxLng,
-				),
-				maxLat: Math.min(
-					MALOPOLSKA.minLat + (row + 1) * TILE_LAT,
-					MALOPOLSKA.maxLat,
-				),
+				key: `${region}:${row}:${col}`,
+				minLng: box.minLng + col * TILE_LNG,
+				minLat: box.minLat + row * TILE_LAT,
+				maxLng: Math.min(box.minLng + (col + 1) * TILE_LNG, box.maxLng),
+				maxLat: Math.min(box.minLat + (row + 1) * TILE_LAT, box.maxLat),
 			});
 		}
 	}
 	return tiles;
+}
+
+/** Every tile of every tracked region, in region order. */
+function buildTiles(): Tile[] {
+	return (Object.keys(TRACKED_REGIONS) as TrackedRegion[]).flatMap(
+		tilesForRegion,
+	);
 }
 
 // ---------------------------------------------------------------------------
@@ -295,7 +295,7 @@ function parsePosList(
 		const lat = nums[i];
 		const lng = nums[i + 1];
 		if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-		// małopolska sanity bounds
+		// tracked-region sanity bounds (wider than either box on purpose)
 		if (lat < 48.5 || lat > 51 || lng < 18.5 || lng > 22) return null;
 		const prev = ring[ring.length - 1];
 		// drop consecutive duplicates
@@ -415,7 +415,8 @@ async function main() {
 		pending = pending.filter((t) => tileKeys.includes(t.key));
 	const runTiles = tileLimit != null ? pending.slice(0, tileLimit) : pending;
 	console.log(
-		`EGIB import: ${completed.size}/${allTiles.length} tiles already done, running ${runTiles.length} (grid ${cols}x${rows}, DB ${DB_PATH})`,
+		`EGIB import: ${completed.size}/${allTiles.length} tiles already done, running ${runTiles.length} ` +
+			`(${Object.keys(TRACKED_REGIONS).length} regions, DB ${DB_PATH})`,
 	);
 
 	const t0 = Date.now();

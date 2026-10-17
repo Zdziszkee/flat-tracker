@@ -2,15 +2,17 @@
  * Region-wide RCN transaction import from GUGiK's per-powiat bulk exports
  * ("Usługa Transakcje", opendata.geoportal.gov.pl). Kraków (1261) is
  * intentionally skipped: the richer local RCN GML zip (import-rcn.ts)
- * already covers it with notarial-grade data. Every other małopolska
- * powiat comes from here — including parcels that the old flow never
- * had price history for (e.g. Charsznica in powiat miechowski).
+ * already covers it with notarial-grade data. Every other powiat of every
+ * tracked voivodeship comes from here — małopolskie and śląskie, Katowice
+ * (2469) included — including parcels that the old flow never had price
+ * history for (e.g. Charsznica in powiat miechowski).
  *
  * Two scopes; `rcn-gugik-index.ts` owns the government catalogue and the
  * download URL pattern (mirrors the QGIS "Pobierz dane GUGiK" plugin):
  *
- *   - "malopolska" (default): the 21 małopolska powiaty the map covers.
- *     This is what the hourly server refresh runs, cadence-gated.
+ *   - "regions" (default): every powiat of the tracked regions (the 21
+ *     małopolska powiaty + the 36 śląskie ones). This is what the hourly
+ *     server refresh runs, cadence-gated.
  *   - "poland": every package GUGiK publishes (~380 powiaty, several GB
  *     of downloads). A whole-country load is a deliberate, resumable
  *     drain:
@@ -52,6 +54,7 @@ import path from "node:path";
 import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
+import type { TrackedRegion } from "#/db/region";
 import { parcelMeta, transactions } from "#/db/schema";
 import {
 	loadPowiatPackages,
@@ -59,30 +62,80 @@ import {
 	powiatZipUrl,
 } from "./rcn-gugik-index.ts";
 
-/** Małopolska powiaty (TERYT4); 1261 = Kraków lives in import-rcn.ts. */
-const MALOPOLSKA_POWIATY = [
-	"1201",
-	"1202",
-	"1203",
-	"1204",
-	"1205",
-	"1206",
-	"1207",
-	"1208",
-	"1209",
-	"1210",
-	"1211",
-	"1212",
-	"1213",
-	"1214",
-	"1215",
-	"1216",
-	"1217",
-	"1218",
-	"1219",
-	"1262",
-	"1263",
-] as const;
+/**
+ * Powiaty (TERYT4) of each tracked region. The Record type makes the
+ * coverage a compile-time invariant: a region added to `TRACKED_REGIONS`
+ * fails typecheck here until its powiaty are listed, so a new voivodeship
+ * can never end up with no price history. 1261 (Kraków) lives in
+ * import-rcn.ts; 2469 (Katowice) is imported from here like any other city
+ * powiat.
+ */
+const REGION_POWIATY: Record<TrackedRegion, readonly string[]> = {
+	malopolskie: [
+		"1201",
+		"1202",
+		"1203",
+		"1204",
+		"1205",
+		"1206",
+		"1207",
+		"1208",
+		"1209",
+		"1210",
+		"1211",
+		"1212",
+		"1213",
+		"1214",
+		"1215",
+		"1216",
+		"1217",
+		"1218",
+		"1219",
+		"1262",
+		"1263",
+	],
+	slaskie: [
+		"2401",
+		"2402",
+		"2403",
+		"2404",
+		"2405",
+		"2406",
+		"2407",
+		"2408",
+		"2409",
+		"2410",
+		"2411",
+		"2412",
+		"2413",
+		"2414",
+		"2415",
+		"2416",
+		"2417",
+		"2461",
+		"2462",
+		"2463",
+		"2464",
+		"2465",
+		"2466",
+		"2467",
+		"2468",
+		"2469",
+		"2470",
+		"2471",
+		"2472",
+		"2473",
+		"2474",
+		"2475",
+		"2476",
+		"2477",
+		"2478",
+		"2479",
+	],
+};
+
+/** Every powiat of every tracked region (Kraków filtered out below). */
+const TRACKED_POWIATY: readonly string[] = Object.values(REGION_POWIATY).flat();
 
 const DATA_DIR = "data/rcn/gugik";
 const STATE_PATH = `${DATA_DIR}/state.json`;
@@ -93,10 +146,16 @@ const LOCAL_RCN_COVERED = new Set(["1261"]);
 /** Rows buffered per powiat before hitting SQLite (keeps memory flat). */
 const FLUSH_ROWS = 2000;
 
-export type RcnGugikScope = "malopolska" | "poland";
+/**
+ * `regions` = the powiaty of every tracked voivodeship (the hourly default),
+ * `poland` = the whole catalogue. Legacy `RCN_GUGIK_SCOPE=malopolska` and
+ * the `--malopolska` flag still mean the default, which now covers both
+ * voivodeships — the name predates the scope growing to śląskie.
+ */
+export type RcnGugikScope = "regions" | "poland";
 
 export interface RcnGugikOptions {
-	/** Default: `RCN_GUGIK_SCOPE` env, else "malopolska". */
+	/** Default: `RCN_GUGIK_SCOPE` env, else "regions". */
 	scope?: RcnGugikScope;
 	/** Ignore the cadence gate and re-import everything in scope. */
 	force?: boolean;
@@ -110,7 +169,7 @@ function resolveScope(env: string | undefined): RcnGugikScope {
 	const v = (env ?? "").toLowerCase();
 	return v === "pl" || v === "poland" || v === "all" || v === "1"
 		? "poland"
-		: "malopolska";
+		: "regions";
 }
 
 interface State {
@@ -537,8 +596,8 @@ async function importPowiat(teryt: string): Promise<number> {
 
 /** Which TERYT4 codes a scope covers, cheapest source first. */
 async function targetsForScope(scope: RcnGugikScope): Promise<PowiatPackage[]> {
-	if (scope === "malopolska") {
-		return MALOPOLSKA_POWIATY.filter((t) => !LOCAL_RCN_COVERED.has(t)).map(
+	if (scope === "regions") {
+		return TRACKED_POWIATY.filter((t) => !LOCAL_RCN_COVERED.has(t)).map(
 			(teryt) => ({ teryt, bytes: 0 }),
 		);
 	}
@@ -661,7 +720,7 @@ export async function importRcnGugik(
 }
 
 // CLI: bunx tsx src/crawler/import-rcn-gugik.ts
-//        [--force] [--all|--poland] [--only=1201,1202] [--limit=N]
+//        [--force] [--all|--poland] [--regions] [--only=1201,1202] [--limit=N]
 if (process.argv[1]?.replace(/\\/g, "/").endsWith("import-rcn-gugik.ts")) {
 	const argv = process.argv.slice(2);
 	const onlyArg = argv.find((a) => a.startsWith("--only="));
@@ -669,8 +728,8 @@ if (process.argv[1]?.replace(/\\/g, "/").endsWith("import-rcn-gugik.ts")) {
 	const scope: RcnGugikScope | undefined =
 		argv.includes("--all") || argv.includes("--poland")
 			? "poland"
-			: argv.includes("--malopolska")
-				? "malopolska"
+			: argv.includes("--regions") || argv.includes("--malopolska")
+				? "regions"
 				: undefined;
 	importRcnGugik({
 		scope,

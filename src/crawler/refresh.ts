@@ -77,7 +77,7 @@ export interface RefreshSummary {
 	pruned: number;
 	/** NEW transactions inserted by the RCN diff (0 when the registry is unchanged). */
 	rcnNew: number;
-	/** NEW transactions from GUGiK per-powiat GeoPackages (region minus Kraków). */
+	/** NEW transactions from GUGiK per-powiat GeoPackages (tracked regions minus Kraków). */
 	gugikNew: number;
 	/** Listings anchored on the map this run (local index + Nominatim). */
 	geocoded: number;
@@ -428,9 +428,12 @@ export async function refreshAll(
 		}
 		const rcnNew = opts.includeRcn === false ? 0 : await importRcn();
 
-		// Region-wide price history (all małopolska powiaty except Kraków,
-		// which the richer RCN zip above covers): GUGiK "Usługa Transakcje"
-		// per-powiat GeoPackages, cadence-gated inside the importer.
+		// Region-wide price history (every powiat of every tracked region
+		// except Kraków, which the richer RCN zip above covers): GUGiK
+		// "Usługa Transakcje" per-powiat GeoPackages, cadence-gated inside
+		// the importer. Kraków out, Katowice in — a per-powiat import is
+		// idempotent and state-recorded, so widening the scope costs one
+		// download per powiat and nothing on the runs after that.
 		let gugikNew = 0;
 		if (opts.includeRcn !== false) {
 			const { importRcnGugik } = await import("./import-rcn-gugik.ts");
