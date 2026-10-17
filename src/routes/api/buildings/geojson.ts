@@ -42,7 +42,50 @@ function buildingHeight(tagsJson: string | null): number {
  * shell must fully enclose the basemap volume. Done server-side (was
  * client-side) so the map can hand the URL to mapbox's GeoJSON source and let
  * the mapbox web worker fetch+parse the payload off the UI thread.
+ *
+ * The output is also simplified and rounded: OSM curves carry dozens of
+ * full-precision vertices per building and with ~287k history-bearing
+ * buildings the untrimmed payload hit 118 MB, which blanked the map for
+ * minutes while the client parsed and tessellated it. ~1.5 m vertex
+ * tolerance and 5-decimal coordinates (≈1.1 m) are invisible on extruded
+ * shells at any map zoom.
  */
+const SIMPLIFY_TOL = 1.5e-5;
+const COORD_PRECISION = 1e5;
+
+function simplifyRing(pts: Array<[number, number]>): Array<[number, number]> {
+	// Iterative neighbor-chord decimation: drop vertices that sit within
+	// SIMPLIFY_TOL of the chord between their kept neighbours. Keeps ring
+	// closure (first/last always kept), unlike RDP on a closed ring.
+	let cur = pts;
+	for (let pass = 0; pass < 3; pass++) {
+		if (cur.length <= 5) break;
+		const out: Array<[number, number]> = [cur[0]];
+		for (let i = 1; i < cur.length - 1; i++) {
+			const [px, py] = out[out.length - 1];
+			const [x, y] = cur[i];
+			const [nx, ny] = cur[i + 1];
+			const dx = nx - px;
+			const dy = ny - py;
+			const norm = Math.hypot(dx, dy);
+			const d =
+				norm === 0
+					? Math.hypot(x - px, y - py)
+					: Math.abs((x - px) * dy - (y - py) * dx) / norm;
+			if (d > SIMPLIFY_TOL) out.push(cur[i]);
+		}
+		out.push(cur[cur.length - 1]);
+		cur = out;
+	}
+	return cur.map(
+		([x, y]) =>
+			[
+				Math.round(x * COORD_PRECISION) / COORD_PRECISION,
+				Math.round(y * COORD_PRECISION) / COORD_PRECISION,
+			] as [number, number],
+	);
+}
+
 function expandRing(
 	ring: Array<{ lat: number; lng: number }>,
 ): [number, number][] {
@@ -59,7 +102,7 @@ function expandRing(
 		p[0] = cx + (p[0] - cx) * 1.02;
 		p[1] = cy + (p[1] - cy) * 1.02;
 	}
-	return pts;
+	return simplifyRing(pts);
 }
 
 // Memoized per process, but with a TTL: building assignments and RCN
@@ -134,12 +177,10 @@ export const Route = createFileRoute("/api/buildings/geojson")({
 						// lookups (/api/buildings/lookup?osmId=) by it.
 						id: f.osmId,
 						geometry: f.geometry,
-						properties: {
-							osmId: f.osmId,
-							address: f.address,
-							txCount: f.txCount,
-							height: f.height,
-						},
+						// Only height feeds a layer expression; everything else
+						// (osmId/address/txCount) rode along at ~200 bytes per
+						// feature and the popup looks details up by id anyway.
+						properties: { height: f.height },
 					})),
 				});
 			},

@@ -23,7 +23,7 @@ await page.waitForFunction(
 	() => {
 		const m = window.__map;
 		return (
-			m && m.getLayer("3d-building") && m.isStyleLoaded() && m.getSource("listings")
+			m && m.getLayer("listings-circle") && m.isStyleLoaded() && m.getSource("listings")
 		);
 	},
 	null,
@@ -304,7 +304,7 @@ await page.waitForFunction(
 );
 const listingsText = await page.evaluate(() =>
 	[...document.querySelectorAll("tbody tr")]
-		.slice(0, 200)
+		.slice(0, 2500)
 		.map((r) => r.innerText)
 		.join("\n"),
 );
@@ -329,7 +329,7 @@ const invRowClicked = await page.evaluate(() => {
 await page.waitForTimeout(3000);
 const expandedText = await page.evaluate(() =>
 	[...document.querySelectorAll("td")]
-		.slice(0, 400)
+		.slice(0, 6000)
 		.map((r) => r.innerText)
 		.join("\n"),
 );

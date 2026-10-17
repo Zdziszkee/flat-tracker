@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import mapboxgl from "mapbox-gl";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import "mapbox-gl/dist/mapbox-gl.css";
 
@@ -63,7 +63,11 @@ const MALOPOLSKA_BOUNDS: [[number, number], [number, number]] = [
 	[19.0, 49.1],
 	[21.6, 50.6],
 ];
-const MALOPOLSKA_CENTER: [number, number] = [20.25, 49.85];
+/** Default camera: Kraków, the area of interest (bounds stay regional). */
+const KRAKOW_CENTER: [number, number] = [19.94, 50.06];
+
+/** Building shells load lazily from this zoom (sub-pixel below it). */
+const BUILDING_LAYERS_MINZOOM = 13;
 
 const TOKEN = env.VITE_MAPBOX_TOKEN;
 
@@ -701,6 +705,9 @@ export default function MapView({
 		() => occupancyData?.cells ?? [],
 		[occupancyData],
 	);
+	// The map renders in stages (style, tiles, then data): without this the
+	// first seconds look like an empty map with zero records on it.
+	const [mapReady, setMapReady] = useState(false);
 
 	if (!TOKEN) {
 		return (
@@ -728,7 +735,13 @@ export default function MapView({
 				showParcels={showParcels}
 				showOccupancy={showOccupancy}
 				occupancy={occupancyCells}
+				onReady={() => setMapReady(true)}
 			/>
+			{!mapReady && (
+				<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-white/60 text-sm text-gray-600">
+					Ładowanie mapy i ofert…
+				</div>
+			)}
 
 			<footer className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-4 rounded-lg bg-white/90 px-4 py-1.5 text-xs text-gray-600 shadow">
 				<span className="flex items-center gap-1">
@@ -810,11 +823,14 @@ function MapCanvas({
 	showParcels,
 	showOccupancy,
 	occupancy,
+	onReady,
 }: {
 	listings: ApiListing[];
 	showParcels: boolean;
 	showOccupancy: boolean;
 	occupancy: OccupancyCell[];
+	/** Fires once the first full render settles (map "idle"). */
+	onReady?: () => void;
 }) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -830,6 +846,9 @@ function MapCanvas({
 	const listingsRef = useRef(listings);
 	// Latest occupancy snapshot, set by the effect below.
 	const occupancyRef = useRef(occupancy);
+	// Read from the one-shot map callbacks, which outlive renders.
+	const onReadyRef = useRef(onReady);
+	onReadyRef.current = onReady;
 
 	// Create the map once. The listings snapshot at init is only used for
 	// the initial source data; the effect below pushes updates on changes,
@@ -844,16 +863,67 @@ function MapCanvas({
 			// atmosphere sky. Our RCN feature-state coloring hooks into the
 			// style's own select/highlight states (see below).
 			style: "mapbox://styles/mapbox/standard",
-			center: MALOPOLSKA_CENTER,
-			zoom: 9,
+			// Kraków, the area of interest (AGENTS.md: the map is Kraków's):
+			// the whole-voivodeship z9 default framed hundreds of 3D
+			// landmarks/trees per frame and software-GL clients took minutes
+			// to paint the first frame.
+			center: KRAKOW_CENTER,
+			zoom: 10.5,
 			pitch: 45,
 			bearing: -20,
 			maxBounds: MALOPOLSKA_BOUNDS,
 			accessToken: TOKEN,
+			// Keep the frame buffer for compositors/screenshots: without it,
+			// capture paths (headless tools, remote-desktop bridges) show a
+			// permanently blank canvas even while the map renders fine.
+			preserveDrawingBuffer: true,
 		});
 		mapRef.current = map;
 		// Debug hook for browser-console inspection.
 		(window as unknown as { __map?: mapboxgl.Map }).__map = map;
+		// "Ready" means RECORDS ARE VISIBLE, not merely "idle": on slow
+		// clients (software GL) the map goes idle on an empty canvas long
+		// before the data paints, and users read that as "0 entries". Poll
+		// until listing pins actually render; 30 s fallback keeps the
+		// overlay from sticking on a filtered-empty map.
+		const readyDeadline = Date.now() + 30_000;
+		// Hidden tabs: Firefox suspends requestAnimationFrame and mapbox
+		// paints only on rAF, so a background tab shows a blank canvas
+		// although everything is loaded (users read that as "0 entries").
+		// Drive a frame from this timer loop (best-effort internals, guarded:
+		// v3.x has no public redraw()).
+		const paintFrame = () => {
+			const m = map as unknown as { redraw?: () => void; _render?: () => void };
+			try {
+				if (typeof m.redraw === "function") m.redraw();
+				else m._render?.();
+			} catch {
+				// Internals moved: the rAF path still paints when the tab is
+				// visible, so a failure here is non-fatal.
+			}
+		};
+		const checkReady = () => {
+			if (!mapRef.current) return;
+			paintFrame();
+			try {
+				const canvas = map.getCanvas();
+				const rendered = map.queryRenderedFeatures(
+					[
+						[0, 0],
+						[canvas.clientWidth, canvas.clientHeight],
+					],
+					{ layers: ["listings-circle"] },
+				).length;
+				if (rendered > 0 || Date.now() > readyDeadline) {
+					onReadyRef.current?.();
+					return;
+				}
+			} catch {
+				// Layer not created yet — keep polling.
+			}
+			setTimeout(checkReady, 400);
+		};
+		map.on("load", () => checkReady());
 
 		map.addControl(
 			new mapboxgl.NavigationControl({ visualizePitch: true }),
@@ -957,71 +1027,98 @@ function MapCanvas({
 			map.on("moveend", () => {
 				amberSyncQueued = true;
 			});
-			// URL-based GeoJSON source on purpose: mapbox's web worker does the
-			// fetch + JSON.parse, so the multi-MB response never touches the UI
-			// thread (an inline `data` object gets JSON.stringify'd on the main
-			// thread first and blocked the map). Server-side, the route expands
-			// each ring ~2% about its centroid — the Standard style extrudes the
-			// SAME OSM footprints, so identical walls z-fight/interleave
-			// (stripes), and the expanded shell encloses the basemap volume —
-			// and keys every feature by OSM id (used by the feature-state height
-			// sync above). If the request fails the layer just stays empty; the
-			// map works without it.
-			map.addSource("buildings-rcn", {
-				type: "geojson",
-				data: apiUrl("/api/buildings/geojson"),
-			});
-			map.addLayer({
-				id: "3d-building",
-				type: "fill-extrusion",
-				source: "buildings-rcn",
-				paint: {
-					"fill-extrusion-color": "#f59e0b",
-					"fill-extrusion-height": [
-						// Take whichever is taller: the OSM-tag estimate or
-						// the basemap's own real height for this building
-						// (synced via feature-state; 0 until then). +2 m
-						// keeps our walls above the co-planar surfaces.
-						"max",
-						["+", ["get", "height"], 2],
-						["+", ["number", ["feature-state", "baseHeight"], 0], 2],
-					],
-					"fill-extrusion-base": 0,
-					// Fully opaque: any transparency lets the Standard
-					// style's own extrusion bleed through as stripes.
-					"fill-extrusion-opacity": 1,
-					"fill-extrusion-vertical-gradient": false,
-				},
-			});
-			// Queue a height sync for the initial viewport (the
-			// idle handler consumes it once the style is ready).
-			amberSyncQueued = true;
+			// Buildings are the heaviest thing on the map (~64 MB of
+			// footprints after server-side simplification): at overview zooms
+			// the shells are sub-pixel, so their sources/layers are created
+			// lazily once the user zooms to where they read. Until then the
+			// map opens with the basemap and all listing pins within seconds.
+			const addBuildingLayers = () => {
+				if (map.getLayer("3d-building")) return;
+				// URL-based GeoJSON source on purpose: mapbox's web worker does the
+				// fetch + JSON.parse, so the multi-MB response never touches the UI
+				// thread (an inline `data` object gets JSON.stringify'd on the main
+				// thread first and blocked the map). Server-side, the route expands
+				// each ring ~2% about its centroid — the Standard style extrudes the
+				// SAME OSM footprints, so identical walls z-fight/interleave
+				// (stripes), and the expanded shell encloses the basemap volume —
+				// and keys every feature by OSM id (used by the feature-state height
+				// sync above). If the request fails the layer just stays empty; the
+				// map works without it.
+				map.addSource("buildings-rcn", {
+					type: "geojson",
+					data: apiUrl("/api/buildings/geojson"),
+				});
+				map.addLayer({
+					id: "3d-building",
+					type: "fill-extrusion",
+					source: "buildings-rcn",
+					minzoom: 13,
+					paint: {
+						"fill-extrusion-color": "#f59e0b",
+						"fill-extrusion-height": [
+							// Take whichever is taller: the OSM-tag estimate or
+							// the basemap's own real height for this building
+							// (synced via feature-state; 0 until then). +2 m
+							// keeps our walls above the co-planar surfaces.
+							"max",
+							["+", ["get", "height"], 2],
+							["+", ["number", ["feature-state", "baseHeight"], 0], 2],
+						],
+						"fill-extrusion-base": 0,
+						// Fully opaque: any transparency lets the Standard
+						// style's own extrusion bleed through as stripes.
+						"fill-extrusion-opacity": 1,
+						"fill-extrusion-vertical-gradient": false,
+					},
+				});
+				// Queue a height sync for the initial viewport (the
+				// idle handler consumes it once the style is ready).
+				amberSyncQueued = true;
 
-			// Address labels on 3D footprints (street + housenumber),
-			// visible when zoomed in close. URL-based for the same
-			// reason as above; a failed load just means no labels.
-			map.addSource("building-labels", {
-				type: "geojson",
-				data: apiUrl("/api/buildings/labels"),
-			});
-			map.addLayer({
-				id: "building-address-labels",
-				type: "symbol",
-				source: "building-labels",
-				minzoom: 15.2,
-				layout: {
-					"text-field": ["get", "address"],
-					"text-size": 10,
-					"text-offset": [0, 0.6],
-					"text-anchor": "top",
-					"text-allow-overlap": false,
-				},
-				paint: {
-					"text-color": "#3d3d3d",
-					"text-halo-color": "#ffffff",
-					"text-halo-width": 1.5,
-				},
-			});
+				// Address labels on 3D footprints (street + housenumber),
+				// visible when zoomed in close. URL-based for the same
+				// reason as above; a failed load just means no labels.
+				map.addSource("building-labels", {
+					type: "geojson",
+					data: apiUrl("/api/buildings/labels"),
+				});
+				map.addLayer({
+					id: "building-address-labels",
+					type: "symbol",
+					source: "building-labels",
+					minzoom: 15.2,
+					layout: {
+						"text-field": ["get", "address"],
+						"text-size": 10,
+						"text-offset": [0, 0.6],
+						"text-anchor": "top",
+						"text-allow-overlap": false,
+					},
+					paint: {
+						"text-color": "#3d3d3d",
+						"text-halo-color": "#ffffff",
+						"text-halo-width": 1.5,
+					},
+				});
+				map.on("mouseenter", "3d-building", () => {
+					map.getCanvas().style.cursor = "pointer";
+				});
+				map.on("mouseleave", "3d-building", () => {
+					map.getCanvas().style.cursor = "";
+				});
+				map.on("click", "3d-building", showBuildingHistory);
+			};
+			if (map.getZoom() >= BUILDING_LAYERS_MINZOOM) {
+				addBuildingLayers();
+			} else {
+				const maybeAdd = () => {
+					if (map.getZoom() >= BUILDING_LAYERS_MINZOOM) {
+						map.off("zoomend", maybeAdd);
+						addBuildingLayers();
+					}
+				};
+				map.on("zoomend", maybeAdd);
+			}
 
 			// Listings as a GeoJSON circle layer (fast with thousands of points).
 			map.addSource("listings", {
@@ -1244,13 +1341,6 @@ function MapCanvas({
 						// Ignore fetch errors; the map stays usable.
 					});
 			};
-			map.on("mouseenter", "3d-building", () => {
-				map.getCanvas().style.cursor = "pointer";
-			});
-			map.on("mouseleave", "3d-building", () => {
-				map.getCanvas().style.cursor = "";
-			});
-			map.on("click", "3d-building", showBuildingHistory);
 
 			// ---- Cadastral parcels (podział geodezyjny, region-wide) -----
 			// `parcels` mixes RCN_Dzialka (Krakow) with GUGiK KIEG WFS rows for
@@ -1485,9 +1575,20 @@ function MapCanvas({
 				// handlers for the same click; bail when one of
 				// them covers this point so only the winner pops.
 				if (
-					map.queryRenderedFeatures(e.point, {
-						layers: ["listings-circle", "komornik-listings", "3d-building"],
-					}).length > 0
+					(() => {
+						// The building layer is created lazily and may not exist
+						// yet; queryRenderedFeatures throws for unknown layers.
+						const covering = [
+							"listings-circle",
+							"komornik-listings",
+							"3d-building",
+						].filter((id) => map.getLayer(id));
+						return (
+							covering.length > 0 &&
+							map.queryRenderedFeatures(e.point, { layers: covering }).length >
+								0
+						);
+					})()
 				) {
 					return;
 				}

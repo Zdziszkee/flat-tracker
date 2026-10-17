@@ -54,8 +54,18 @@ export const Route = createFileRoute("/api/buildings/labels")({
 					features: labels.map((l) => ({
 						type: "Feature",
 						id: l.osmId,
-						geometry: { type: "Point", coordinates: [l.lng, l.lat] },
-						properties: { osmId: l.osmId, address: l.address },
+						geometry: {
+							type: "Point",
+							// 5 decimals ≈ 1.1 m: full float precision doubled the
+							// label payload for no visible difference.
+							coordinates: [
+								Math.round(l.lng * 1e5) / 1e5,
+								Math.round(l.lat * 1e5) / 1e5,
+							],
+						},
+						// The feature id already carries the OSM id (the popup
+						// looks details up by it); only the text field is needed.
+						properties: { address: l.address },
 					})),
 				});
 			},

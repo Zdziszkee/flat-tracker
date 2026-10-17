@@ -8,7 +8,7 @@ const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 await page.goto("http://localhost:3000/map", { waitUntil: "domcontentloaded" });
 await page.waitForFunction(() => {
   const m = window.__map;
-  return m && m.getLayer("3d-building") && m.getSource("parcels") && m.isStyleLoaded();
+  return m && m.getLayer("listings-circle") && m.getSource("parcels") && m.isStyleLoaded();
 }, { timeout: 45000 });
 await page.evaluate(({ lng, lat, zoom }) => {
   const m = window.__map;
