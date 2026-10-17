@@ -39,6 +39,47 @@ const POWIAT_NAMES: Record<string, string> = {
 	"1261": "Kraków",
 	"1262": "Nowy Sącz",
 	"1263": "Tarnów",
+	// Śląskie (TERYT 24xx). Verified, not guessed: each code's average
+	// coordinate was computed from `transactions` (`substr(parcel_id, 1, 4)`
+	// group by, avg(lat/lng)) and matched against the powiat it sits in. The
+	// entries only surface once the query below is region-scoped instead of
+	// małopolska-only, but the chart would otherwise print the bare code.
+	"2401": "będziński",
+	"2402": "bielski",
+	"2403": "cieszyński",
+	"2404": "częstochowski",
+	"2405": "gliwicki",
+	"2406": "kłobucki",
+	"2407": "lubliniecki",
+	"2408": "mikołowski",
+	"2409": "myszkowski",
+	"2410": "pszczyński",
+	"2411": "raciborski",
+	"2412": "rybnicki",
+	"2413": "tarnogórski",
+	"2414": "bieruńsko-lędziński",
+	"2415": "wodzisławski",
+	"2416": "zawierciański",
+	"2417": "żywiecki",
+	"2461": "Bielsko-Biała",
+	"2462": "Bytom",
+	"2463": "Chorzów",
+	"2464": "Częstochowa",
+	"2465": "Dąbrowa Górnicza",
+	"2466": "Gliwice",
+	"2467": "Jastrzębie-Zdrój",
+	"2468": "Jaworzno",
+	"2469": "Katowice",
+	"2470": "Mysłowice",
+	"2471": "Piekary Śląskie",
+	"2472": "Ruda Śląska",
+	"2473": "Rybnik",
+	"2474": "Siemianowice Śląskie",
+	"2475": "Sosnowiec",
+	"2476": "Świętochłowice",
+	"2477": "Tychy",
+	"2478": "Zabrze",
+	"2479": "Żory",
 };
 
 /** Epoch cutoffs computed in JS (SQLite int-vs-text comparison trap). */
