@@ -245,17 +245,21 @@ Two consequences worth knowing:
   so they drop out of region-scoped aggregates. They could never be
   attributed to a powiat anyway.
 
-`/api/powiat-map` is the slow one (measured ~33 s cold on dev.db: 58
-powiaty over ~3.3M RCN transactions in the two regions). It is still
-O(points × candidate powiats) — the bbox prefilter keeps the candidate list
-at one or two — so adding a voivodeship doubled both factors. Two levers, in
-order of payoff: a region-wide partial index on `transactions` matching the
-union bbox predicate (the małopolska-only index cannot serve it, so the
-query currently scans all ~24M rows: 15 s of the 33 s), and a grid/rollup
-table (cell → powiat, precomputed sums/counts, refreshed after imports)
-which would make the endpoint O(cells) and cacheable. The rollup is not
-implemented yet: it trades exact on-demand aggregation for import-time
-staleness, so it needs a product decision, not just a faster loop.
+`/api/powiat-map` is the slow one (measured ~18 s cold on dev.db: 58
+powiaty over ~2.8M in-region RCN rows, of which 2.74M land in a powiat). The
+transaction side is now cheap — `inTrackedRegions` (`region is not null`)
+drives `transactions_region_price_idx`, so it is an index search, not a
+24M-row scan (33 s -> 18 s) — and what is left is the JS point-in-polygon
+loop, still O(points × candidate powiats) with the bbox prefilter keeping the
+candidates at one or two. The lever left is a grid/rollup table (cell →
+powiat, precomputed sums/counts, refreshed after imports), which would make
+the endpoint O(cells) and cacheable; it is not implemented because it trades
+exact on-demand aggregation for import-time staleness, a product decision
+rather than a faster loop. Note also that `rcnAvgM2` mixes land parcels with
+flats for GUGiK-sourced powiaty (61-80% of their priced rows are plots,
+44-67 zł/m², against ~12.4k zł/m² for flats in Kraków), so it reads far below
+the listing averages there; the listings path filters plots, the RCN path
+does not.
 
 **Server refreshes fetch only the first, newest-sorted page per site**
 (`firstPageOnly: true`, the default in `refreshAll`): each hourly run
