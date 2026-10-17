@@ -8,7 +8,11 @@ import {
 	uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
-import { MALOPOLSKA_BBOX_SQL } from "./region.ts";
+import {
+	MALOPOLSKA_REGION_PREDICATE_SQL,
+	REGION_CASE_SQL,
+	REGION_PREDICATE_SQL,
+} from "./region.ts";
 
 export const todos = sqliteTable("todos", {
 	id: integer({ mode: "number" }).primaryKey({
@@ -179,6 +183,17 @@ export const transactions = sqliteTable(
 		market: integer({ mode: "number" }),
 		lat: real(),
 		lng: real(),
+		/**
+		 * Tracked voivodeship this row sits in, derived from its coordinates
+		 * (`src/db/region.ts` owns the boxes; `regionOf` is the in-process
+		 * twin). NULL means "outside every tracked region", which is the case
+		 * for the rest of the national RCN drain and for rows without
+		 * geometry. Virtual, so adding it rewrote no rows, and every regional
+		 * query filters on it instead of on coordinates.
+		 */
+		region: text().generatedAlwaysAs(sql.raw(REGION_CASE_SQL), {
+			mode: "virtual",
+		}),
 		buildingId: integer("building_id").references(() => buildings.id),
 		/** Cadastral parcel (RCN_Dzialka registry id) this transaction sits on. */
 		parcelId: text("parcel_id"),
@@ -193,16 +208,28 @@ export const transactions = sqliteTable(
 		index("transactions_price_m2_date_idx").on(t.pricePerM2, t.date),
 		index("transactions_building_date_idx").on(t.buildingId, t.date),
 		/**
-		 * Partial index over the region the app tracks (`src/db/region.ts`):
-		 * the RCN import is national, so every regional aggregation would
-		 * otherwise scan ~20M out-of-region rows. Partial means the index
-		 * only holds małopolska rows (bounded) and SQLite only uses it for
-		 * queries that carry the identical predicate — see the note there
-		 * before editing this text.
+		 * Partial index over every tracked region (`src/db/region.ts`): the
+		 * RCN import is national, so a regional aggregation would otherwise
+		 * scan ~24M rows; this one holds the ~2.8M małopolskie + śląskie
+		 * rows and is index-only for price/date series. The predicate must
+		 * stay textually identical to `REGION_PREDICATE_SQL` (SQLite matches
+		 * a partial index by expression identity), and it deliberately goes
+		 * through the generated `region` column: an OR of the two boxes over
+		 * `lat`/`lng` matches no index at all (measured, see region.ts).
+		 */
+		index("transactions_region_price_idx")
+			.on(t.pricePerM2, t.date)
+			.where(sql.raw(REGION_PREDICATE_SQL)),
+		/**
+		 * The one consumer that is not region-wide is the powiat choropleth,
+		 * whose boundary dataset covers małopolskie alone. It gets its own
+		 * bounded index rather than filtering the region index down (which
+		 * would read a table row per candidate, the column is not in it).
+		 * Same rule: identical to `MALOPOLSKA_REGION_PREDICATE_SQL`.
 		 */
 		index("transactions_malopolska_price_idx")
 			.on(t.pricePerM2, t.date)
-			.where(sql.raw(MALOPOLSKA_BBOX_SQL)),
+			.where(sql.raw(MALOPOLSKA_REGION_PREDICATE_SQL)),
 	],
 );
 
