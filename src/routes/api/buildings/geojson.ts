@@ -56,7 +56,9 @@ const COORD_PRECISION = 1e5;
 function simplifyRing(pts: Array<[number, number]>): Array<[number, number]> {
 	// Iterative neighbor-chord decimation: drop vertices that sit within
 	// SIMPLIFY_TOL of the chord between their kept neighbours. Keeps ring
-	// closure (first/last always kept), unlike RDP on a closed ring.
+	// closure (first/last always kept), unlike RDP on a closed ring, and
+	// never decimates below 4 points (a tiny shed must not flatten into a
+	// zero-area sliver).
 	let cur = pts;
 	for (let pass = 0; pass < 3; pass++) {
 		if (cur.length <= 5) break;
@@ -75,6 +77,7 @@ function simplifyRing(pts: Array<[number, number]>): Array<[number, number]> {
 			if (d > SIMPLIFY_TOL) out.push(cur[i]);
 		}
 		out.push(cur[cur.length - 1]);
+		if (out.length < 4) break;
 		cur = out;
 	}
 	return cur.map(
@@ -89,6 +92,9 @@ function simplifyRing(pts: Array<[number, number]>): Array<[number, number]> {
 function expandRing(
 	ring: Array<{ lat: number; lng: number }>,
 ): [number, number][] {
+	// A polygon ring needs at least 3 vertices + closure; source rows with
+	// fewer are corrupt (or empty) and would extrude into artifacts.
+	if (!Array.isArray(ring) || ring.length < 4) return [];
 	const pts = ring.map((p) => [p.lng, p.lat] as [number, number]);
 	let cx = 0;
 	let cy = 0;
@@ -158,7 +164,7 @@ async function getFeatures(): Promise<CachedFeature[]> {
 				],
 			},
 		}))
-		.filter((f) => f.txCount > 0);
+		.filter((f) => f.txCount > 0 && f.geometry.coordinates[0].length >= 4);
 	cacheAt = Date.now();
 	return cache;
 }

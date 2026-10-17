@@ -39,7 +39,11 @@ await page.waitForFunction(
 	{ timeout: 45000 },
 );
 
-// Features with unique coordinates (no sibling row to steal the click).
+// Building shells are lazy (created at zoom >= 13): at the default
+// camera they must NOT exist yet.
+const shellsAbsentAtStart = await page.evaluate(
+	() => !window.__map.getLayer("3d-building"),
+);
 const picks = await page.evaluate(() => {
 	const m = window.__map;
 	const src = m.getSource("listings");
@@ -252,6 +256,72 @@ if (picks.bud) {
 } else {
 	check("budujesie popup renders", false, "no unique budujesie pick found");
 }
+
+// 3b. Building shells: the lazy creation fires on zoom-in (my refactor
+// also moved the click/hover handlers into it), the simplified geometry
+// still click-targets, and the building history popup renders.
+const shellInfo = await page.evaluate(() => {
+	const m = window.__map;
+	const created = Boolean(m.getLayer("3d-building"));
+	m.jumpTo({ center: [19.94, 50.06], zoom: 16 });
+	return { created };
+});
+await page.waitForTimeout(5000);
+const shellPts = await page.evaluate(() => {
+	const m = window.__map;
+	const r = document
+		.querySelector(".mapboxgl-canvas-container")
+		.getBoundingClientRect();
+	const rendered = m.queryRenderedFeatures(
+		[
+			[200, 100],
+			[1300, 850],
+		],
+		{ layers: ["3d-building"] },
+	).length;
+	const pts = [];
+	for (let x = 250; x <= 1250 && pts.length < 3; x += 20) {
+		for (let y = 120; y <= 820 && pts.length < 3; y += 20) {
+			if (m.queryRenderedFeatures([x, y], { layers: ["3d-building"] }).length === 0)
+				continue;
+			if (
+				m.queryRenderedFeatures([x, y], {
+					layers: ["listings-circle", "komornik-listings"],
+				}).length > 0
+			)
+				continue;
+			pts.push({ x: x + r.left, y: y + r.top });
+		}
+	}
+	return { rendered, pts };
+});
+let buildingPopup = null;
+for (const p of shellPts.pts) {
+	await page.mouse.click(p.x, p.y);
+	await page.waitForTimeout(1500);
+	buildingPopup = await page.evaluate(() => {
+		const el = document.querySelector(".mapboxgl-popup-content");
+		return el ? el.innerText : null;
+	});
+	if (
+		buildingPopup &&
+		(buildingPopup.includes("Historia transakcji") ||
+			buildingPopup.includes("Brak transakcji"))
+	)
+		break;
+}
+check(
+	"3d-building shells: lazy load + click popup",
+	shellsAbsentAtStart &&
+		shellInfo.created &&
+		shellPts.rendered > 0 &&
+		Boolean(
+			buildingPopup &&
+				(buildingPopup.includes("Historia transakcji") ||
+					buildingPopup.includes("Brak transakcji")),
+		),
+	`absent@start=${shellsAbsentAtStart} created=${shellInfo.created} rendered=${shellPts.rendered} popup=${JSON.stringify((buildingPopup ?? "").slice(0, 60))}`,
+);
 
 // 4. filters: days=7 + sale must not hide investment inventory
 const before = await page.evaluate(() => {
