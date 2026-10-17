@@ -2,6 +2,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { eq, gt, sql } from "drizzle-orm";
 
 import osmPbf, { type OsmItem } from "osm-pbf-parser";
 import RBush from "rbush";
@@ -128,14 +129,29 @@ async function downloadIfMissing(): Promise<void> {
 	}
 }
 
+/** Heap in use, for the rebuild's progress lines (it runs in-process). */
+function heapMb(): number {
+	return Math.round(process.memoryUsage().heapUsed / 1e6);
+}
+
 /**
- * Stream one extract, collect every building way, resolve polygons. Called
- * per region, never with two files in flight: the node and way maps below
- * are the memory hogs (~1.5M buildings each).
+ * Stream one extract, collect every building way, resolve polygons, and hand
+ * each finished batch to `onBatch`.
+ *
+ * Called per region, never with two files in flight, and deliberately
+ * frugal: this runs inside the server process (assign-buildings is called by
+ * the hourly refresh), where the default V8 heap is ~4.4 GB and two
+ * voivodeships of OSM data do not fit as objects. The nodes, which are the
+ * bulk (an extract references ~9M of them), live in one flat Float64Array
+ * addressed by a single Map — the previous `Set<needed>` plus
+ * `Map<id, {lat, lng}>` cost over a gigabyte per region and OOMed on the
+ * second one. Each building is also dropped from `ways` as soon as its ring
+ * is emitted, so the way/tag objects shrink as the pass proceeds.
  */
 async function extractBuildingsFromPbf(
 	pbfPath: string,
-): Promise<OsmBuilding[]> {
+	onBatch: (batch: OsmBuilding[]) => Promise<number>,
+): Promise<number> {
 	// Pass 1: collect all building ways (id, refs, tags) in the region.
 	const ways = new Map<
 		number,
@@ -159,17 +175,22 @@ async function extractBuildingsFromPbf(
 		createReadStream(pbfPath).pipe(osm);
 	});
 
-	console.log(`building ways in ${pbfPath}: ${ways.size}`);
+	console.log(
+		`building ways in ${pbfPath}: ${ways.size} (heap ${heapMb()} MB)`,
+	);
 
 	// Pass 2: collect coordinates for every referenced node. The extract is
-	// voivodeship-wide, so no geographic filtering is needed here.
-	const nodeCoords = new Map<number, { lat: number; lng: number }>();
-	const needed = new Set<number>();
+	// voivodeship-wide, so no geographic filtering is needed here. `slots`
+	// doubles as the "is this node referenced" test: -1 means referenced but
+	// not seen yet, >= 0 is a slot index into `coords`.
+	const slots = new Map<number, number>();
 	for (const w of ways.values()) {
 		for (const ref of w.refs) {
-			needed.add(ref);
+			slots.set(ref, -1);
 		}
 	}
+	let coords = new Float64Array(1 << 21); // grows by doubling (~2M nodes)
+	let nodeCount = 0;
 
 	await new Promise<void>((resolve, reject) => {
 		const osm = osmPbf();
@@ -177,11 +198,16 @@ async function extractBuildingsFromPbf(
 			for (const item of items) {
 				if (item.type !== "node") continue;
 				const id = item.id as number;
-				if (!needed.has(id)) continue;
-				nodeCoords.set(id, {
-					lat: item.lat as number,
-					lng: item.lon as number,
-				});
+				if (slots.get(id) !== -1) continue;
+				if (nodeCount * 2 + 2 > coords.length) {
+					const grown = new Float64Array(coords.length * 2);
+					grown.set(coords);
+					coords = grown;
+				}
+				coords[nodeCount * 2] = item.lat as number;
+				coords[nodeCount * 2 + 1] = item.lon as number;
+				slots.set(id, nodeCount);
+				nodeCount++;
 			}
 		});
 		osm.on("end", resolve);
@@ -189,21 +215,33 @@ async function extractBuildingsFromPbf(
 		createReadStream(pbfPath).pipe(osm);
 	});
 
-	console.log(`node coords kept in ${pbfPath}: ${nodeCoords.size}`);
+	console.log(
+		`node coords kept in ${pbfPath}: ${nodeCount} (heap ${heapMb()} MB)`,
+	);
 
-	// Build polygons; skip ways with unresolved refs (clipped at extract edge).
-	const buildings: OsmBuilding[] = [];
+	// Build polygons and emit them in batches (with unresolved refs, i.e.
+	// clipped at the extract edge, skipped). Emitting as we go is what keeps
+	// a region's worth of rings and tag objects out of the heap: each way is
+	// dropped once its building is handed over.
+	const BATCH = 2000;
+	let batch: OsmBuilding[] = [];
+	let found = 0;
+	let inserted = 0;
 	for (const [osmId, way] of ways) {
 		const ring: Array<{ lat: number; lng: number }> = [];
 		let complete = true;
 		for (const ref of way.refs) {
-			const c = nodeCoords.get(ref);
-			if (!c) {
+			const slot = slots.get(ref);
+			if (slot === undefined || slot < 0) {
 				complete = false;
 				break;
 			}
-			ring.push(c);
+			ring.push({
+				lat: coords[slot * 2],
+				lng: coords[slot * 2 + 1],
+			});
 		}
+		ways.delete(osmId);
 		if (!complete || ring.length < 3) continue;
 
 		const c = centroid(ring);
@@ -217,7 +255,7 @@ async function extractBuildingsFromPbf(
 			maxLat = Math.max(maxLat, p.lat);
 			maxLng = Math.max(maxLng, p.lng);
 		}
-		buildings.push({
+		batch.push({
 			osmId,
 			bboxMinLat: minLat,
 			bboxMinLng: minLng,
@@ -229,10 +267,22 @@ async function extractBuildingsFromPbf(
 			address: formatAddress(way.tags),
 			tags: way.tags,
 		});
+		if (batch.length >= BATCH) {
+			found += batch.length;
+			inserted += await onBatch(batch);
+			batch = [];
+		}
+	}
+	if (batch.length > 0) {
+		found += batch.length;
+		inserted += await onBatch(batch);
 	}
 
-	console.log(`buildings found in ${pbfPath}: ${buildings.length}`);
-	return buildings;
+	console.log(
+		`buildings from ${pbfPath}: found ${found}, inserted ${inserted} ` +
+			`(heap ${heapMb()} MB)`,
+	);
+	return inserted;
 }
 
 /** Write which regions the current `osm_buildings` rows came from. */
@@ -280,20 +330,19 @@ export async function buildOsmIndex(): Promise<number> {
 	}
 
 	await db.delete(osmBuildings);
-	const BATCH = 2000;
 	let total = 0;
-	// One extract at a time, inserted and released before the next one is
-	// parsed: a region's buildings are ~1.5M objects with their rings, so
-	// holding two of them (or a third concatenated copy — `push(...found)`
-	// overflows the argument limit at that size) is the whole memory budget.
-	for (const source of PBF_SOURCES) {
-		const found = await extractBuildingsFromPbf(source.path);
-		console.log(`  ${source.region}: ${found.length} buildings`);
-		total += found.length;
-		for (let i = 0; i < found.length; i += BATCH) {
-			const slice = found.slice(i, i + BATCH);
-			await db.insert(osmBuildings).values(
-				slice.map((b) => ({
+	/**
+	 * Insert one extracted batch, returning the rows that were actually new.
+	 * A building whose footprint straddles the małopolskie/śląskie border is
+	 * in BOTH extracts (Geofabrik keeps ways complete at its boundaries), so
+	 * the same osm id arrives twice; `osm_id` is unique, so the second copy
+	 * is ignored instead of aborting the rebuild halfway.
+	 */
+	const insertBatch = async (batch: OsmBuilding[]): Promise<number> => {
+		const rows = await db
+			.insert(osmBuildings)
+			.values(
+				batch.map((b) => ({
 					osmId: b.osmId,
 					bboxMinLat: b.bboxMinLat,
 					bboxMinLng: b.bboxMinLng,
@@ -305,64 +354,150 @@ export async function buildOsmIndex(): Promise<number> {
 					address: b.address,
 					tags: b.tags ? JSON.stringify(b.tags) : null,
 				})),
-			);
-		}
+			)
+			.onConflictDoNothing()
+			.returning({ id: osmBuildings.id });
+		return rows.length;
+	};
+
+	// One extract at a time, rows written as they are resolved: a region's
+	// buildings are ~1.6M objects with their rings and tag objects, and the
+	// next extract must fit in the same heap (see extractBuildingsFromPbf).
+	for (const source of PBF_SOURCES) {
+		const written = await extractBuildingsFromPbf(source.path, insertBatch);
+		console.log(`  ${source.region}: ${written} buildings inserted`);
+		total += written;
 	}
 	await saveBuildState(new Date());
 	console.log(`osm_buildings: ${total} rows inserted`);
 	return total;
 }
 
-interface IndexedBuilding extends OsmBuilding {
+/**
+ * A match-ready building. Deliberately not `OsmBuilding`: ~3.2M of these are
+ * resident (every footprint of both voivodeships), and the rebuild AND the
+ * assignment run inside the server process, whose default V8 heap is 4.4 GB.
+ * Measured on dev.db, one object + one Float64Array per footprint peaked at
+ * 3.9 GB, which is no margin at all, so:
+ *
+ *   - rings live in ONE shared Float64Array (`rings`), each building keeping
+ *     an offset + point count. A typed array per footprint costs ~320 B of
+ *     object/buffer overhead for ~10 points; 3.2M of them are ~1 GB.
+ *   - `polygon` and `tags` stay in the DB and are read only when a building is
+ *     first inserted into `buildings` (`osmBuildingDetails`).
+ */
+export interface IndexedBuilding {
 	id: number;
+	osmId: number;
+	centroidLat: number;
+	centroidLng: number;
+	/** Index of this building's first coordinate in the shared `rings`. */
+	ringOffset: number;
+	/** Number of points (pairs) in its ring. */
+	ringPoints: number;
+	address: string | null;
+	// RBush's own box fields (x = lng, y = lat), doubling as the footprint bbox.
 	minX: number;
 	minY: number;
 	maxX: number;
 	maxY: number;
 }
 
+/**
+ * All rings of the loaded index, `[lat, lng, lat, lng, ...]` back to back.
+ * Lives next to the tree because `IndexedBuilding.ringOffset` indexes into it.
+ */
+let rings: Float64Array = new Float64Array(0);
 let cached: RBush<IndexedBuilding> | null = null;
 
-/** Load the local index from the DB (cached in memory for the process). */
+/**
+ * Load the local index from the DB (cached in memory for the process).
+ * Rows are read in pages: `select()` over 3.2M rows materialises every row
+ * object plus a full item array before the tree exists, which was ~600 MB of
+ * short-lived garbage on top of the tree itself.
+ */
 export async function loadOsmIndex(): Promise<RBush<IndexedBuilding>> {
 	if (cached) return cached;
-	const rows = await db.select().from(osmBuildings);
 	const tree = new RBush<IndexedBuilding>();
-	const items: IndexedBuilding[] = rows.map((r) => ({
-		id: r.id,
-		osmId: r.osmId,
-		bboxMinLat: r.bboxMinLat,
-		bboxMinLng: r.bboxMinLng,
-		bboxMaxLat: r.bboxMaxLat,
-		bboxMaxLng: r.bboxMaxLng,
-		centroidLat: r.centroidLat,
-		centroidLng: r.centroidLng,
-		polygon: JSON.parse(r.polygon) as Array<{ lat: number; lng: number }>,
-		address: r.address,
-		tags: r.tags ? (JSON.parse(r.tags) as Record<string, string>) : null,
-		// RBush expects minX/minY/maxX/maxY (x = lng, y = lat).
-		minX: r.bboxMinLng,
-		minY: r.bboxMinLat,
-		maxX: r.bboxMaxLng,
-		maxY: r.bboxMaxLat,
-	}));
-	tree.load(items);
+
+	// One exact sizing query beats growing a 280 MB array by doubling.
+	const [size] = await db
+		.select({
+			points: sql<number>`coalesce(sum(json_array_length(${osmBuildings.polygon})), 0)`,
+		})
+		.from(osmBuildings);
+	rings = new Float64Array(Number(size?.points ?? 0) * 2);
+
+	const PAGE = 50_000;
+	let cursor = 0;
+	let used = 0;
+	let count = 0;
+	for (;;) {
+		const rows = await db
+			.select({
+				id: osmBuildings.id,
+				osmId: osmBuildings.osmId,
+				bboxMinLat: osmBuildings.bboxMinLat,
+				bboxMinLng: osmBuildings.bboxMinLng,
+				bboxMaxLat: osmBuildings.bboxMaxLat,
+				bboxMaxLng: osmBuildings.bboxMaxLng,
+				centroidLat: osmBuildings.centroidLat,
+				centroidLng: osmBuildings.centroidLng,
+				polygon: osmBuildings.polygon,
+				address: osmBuildings.address,
+			})
+			.from(osmBuildings)
+			.where(gt(osmBuildings.id, cursor))
+			.orderBy(osmBuildings.id)
+			.limit(PAGE);
+		if (rows.length === 0) break;
+
+		for (const r of rows) {
+			const points = JSON.parse(r.polygon) as Array<{
+				lat: number;
+				lng: number;
+			}>;
+			const offset = used;
+			for (let i = 0; i < points.length; i++) {
+				rings[used++] = points[i].lat;
+				rings[used++] = points[i].lng;
+			}
+			// RBush wants minX/minY/maxX/maxY (x = lng, y = lat); the same
+			// numbers are the footprint bbox.
+			tree.insert({
+				id: r.id,
+				osmId: r.osmId,
+				centroidLat: r.centroidLat,
+				centroidLng: r.centroidLng,
+				ringOffset: offset,
+				ringPoints: points.length,
+				address: r.address,
+				minX: r.bboxMinLng,
+				minY: r.bboxMinLat,
+				maxX: r.bboxMaxLng,
+				maxY: r.bboxMaxLat,
+			});
+			count++;
+		}
+		cursor = rows[rows.length - 1].id;
+	}
 	cached = tree;
-	console.log(`osm index loaded: ${items.length} buildings`);
+	console.log(
+		`osm index loaded: ${count} buildings, ${used / 2} ring points (heap ${heapMb()} MB)`,
+	);
 	return tree;
 }
 
-function pointInPolygon(
-	lat: number,
-	lng: number,
-	poly: Array<{ lat: number; lng: number }>,
-): boolean {
+/** Even-odd point-in-polygon over one ring slice of the shared `rings` array. */
+function pointInRing(b: IndexedBuilding, lat: number, lng: number): boolean {
+	const n = b.ringPoints;
+	const base = b.ringOffset;
 	let inside = false;
-	for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-		const xi = poly[i].lng;
-		const yi = poly[i].lat;
-		const xj = poly[j].lng;
-		const yj = poly[j].lat;
+	for (let i = 0, j = n - 1; i < n; j = i++) {
+		const xi = rings[base + i * 2 + 1];
+		const yi = rings[base + i * 2];
+		const xj = rings[base + j * 2 + 1];
+		const yj = rings[base + j * 2];
 		const intersect =
 			yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
 		if (intersect) inside = !inside;
@@ -404,7 +539,7 @@ export function matchPointLocal(
 
 	// 1. True containment.
 	for (const b of candidates) {
-		if (pointInPolygon(lat, lng, b.polygon)) return b;
+		if (pointInRing(b, lat, lng)) return b;
 	}
 	// 2. Nearest centroid within the radius.
 	let best: IndexedBuilding | null = null;
@@ -478,6 +613,26 @@ export function matchPointStreetAware(
  * would happily report ready and leave every śląskie transaction
  * unanchored, so a missing/stale build marker means "rebuild".
  */
+/** `osm_buildings.tags` + `polygon`, fetched on demand.
+ *
+ * The in-memory index carries neither: both are only needed when a footprint
+ * is first inserted into the `buildings` table (cached by osm id downstream),
+ * and holding them per building is what pushed the two-voivodeship index past
+ * the default heap. `polygon` comes back as the stored JSON verbatim, so
+ * `buildings.geometry` is byte-identical to the OSM index row.
+ */
+export async function osmBuildingDetails(id: number): Promise<{
+	tags: string | null;
+	polygon: string;
+} | null> {
+	const [row] = await db
+		.select({ tags: osmBuildings.tags, polygon: osmBuildings.polygon })
+		.from(osmBuildings)
+		.where(eq(osmBuildings.id, id))
+		.limit(1);
+	return row ?? null;
+}
+
 export async function osmIndexReady(): Promise<boolean> {
 	const rows = await db
 		.select({ id: osmBuildings.id })

@@ -15,10 +15,11 @@ import { buildings, listings, osmBuildings, transactions } from "#/db/schema";
 import { buildStreetIndex, matchByAddress } from "./address-index.ts";
 import {
 	buildOsmIndex,
+	type IndexedBuilding,
 	loadOsmIndex,
 	matchPointLocal,
 	matchPointStreetAware,
-	type OsmBuilding,
+	osmBuildingDetails,
 	osmIndexReady,
 } from "./osm-index.ts";
 
@@ -288,8 +289,13 @@ async function assignBuildingsToTransactionsLocal(): Promise<number> {
  */
 const buildingIdByOsmId = new Map<number, number>();
 
-/** Insert into the `buildings` table if not already present, return its id. */
-async function ensureBuilding(b: OsmBuilding): Promise<number | null> {
+/**
+ * Insert into the `buildings` table if not already present, return its id.
+ * The footprint and tags come from the `osm_buildings` row: the in-memory
+ * index deliberately drops them (it holds ~3.2M footprints), and this is the
+ * only place that needs them.
+ */
+async function ensureBuilding(b: IndexedBuilding): Promise<number | null> {
 	const cached = buildingIdByOsmId.get(b.osmId);
 	if (cached !== undefined) return cached;
 	const existing = await db.query.buildings.findFirst({
@@ -300,6 +306,7 @@ async function ensureBuilding(b: OsmBuilding): Promise<number | null> {
 		return existing.id;
 	}
 
+	const details = await osmBuildingDetails(b.id);
 	const [row] = await db
 		.insert(buildings)
 		.values({
@@ -307,8 +314,8 @@ async function ensureBuilding(b: OsmBuilding): Promise<number | null> {
 			lat: b.centroidLat,
 			lng: b.centroidLng,
 			address: b.address,
-			tags: b.tags ? JSON.stringify(b.tags) : null,
-			geometry: JSON.stringify(b.polygon),
+			tags: details?.tags ?? null,
+			geometry: details?.polygon ?? null,
 		})
 		.onConflictDoNothing()
 		.returning({ id: buildings.id });

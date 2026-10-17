@@ -345,6 +345,19 @@ is replaced, not merged — a footprint row does not record its extract).
 `bun run assign-buildings`
 assigns all 84k transactions in minutes, not hours.
 
+Both the rebuild and the matching index are memory-shaped for the server
+process, because that is where they run (the refresh calls
+`assign-buildings`): ~3.2M footprints are loaded at a time and the default
+V8 heap is 4.4 GB. What that costs, measured on dev.db: a typed array per
+footprint plus a parsed tag object peaked at 3.9 GB (one OOM away from
+killing the dev server), so rings now live in a single shared `Float64Array`
+addressed by offset/count, rows are read in pages instead of one
+`select()`, and `polygon`/`tags` are fetched per building only when a
+footprint is first inserted into `buildings`. Same load, 1.7 GB, and the
+whole flow (parse two extracts, insert, load, probes) finishes in ~3.5 min
+with the build's peak at ~2 GB. If you touch the loader, watch
+`process.memoryUsage()` — the failure mode is a crash, not a slow run.
+
 ## Data sources
 
 | Source | What | Access |
