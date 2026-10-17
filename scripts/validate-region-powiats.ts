@@ -18,6 +18,7 @@
  */
 
 import { regionPowiats } from "../src/data/region-powiats";
+import { makeDistrictMatcher } from "../src/lib/powiat-districts";
 
 type Ring = Array<[number, number]>;
 
@@ -59,6 +60,73 @@ const CITY_CENTRES: Array<[string, number, number]> = [
 
 /** Largest accepted share of sampled points inside more than one powiat. */
 const MAX_OVERLAP_SHARE = 0.001;
+
+/**
+ * District-string → powiat expectations, [expected, input]. The inputs are
+ * real `listings.district` values of coordinate-less offers (query the DB
+ * before adding one), plus the two traps the mapping exists for.
+ */
+const DISTRICT_CASES: Array<[string | null, string]> = [
+	// Śląskie city powiaty, written as the city.
+	["Częstochowa", "Częstochowa"],
+	["Bytom", "Bytom"],
+	["Dąbrowa Górnicza", "Dąbrowa Górnicza"],
+	["Zabrze", "Zabrze"],
+	["Sosnowiec", "Sosnowiec"],
+	["Gliwice", "Gliwice"],
+	["Ruda Śląska", "Ruda Śląska"],
+	["Tychy", "Tychy"],
+	["Rybnik", "Rybnik"],
+	["Jaworzno", "Jaworzno"],
+	["Żory", "Żory"],
+	["Mysłowice", "Mysłowice"],
+	["Świętochłowice", "Świętochłowice"],
+	["Jastrzębie-Zdrój", "Jastrzębie-Zdrój"],
+	["Bielsko-Biała", "Bielsko-Biała"],
+	["Bielsko-Biała", "Bielsko Biała"],
+	["Chorzów", "Chorzów"],
+	["Katowice", "Katowice"],
+	// Seat towns of land powiaty.
+	["tarnogórski", "Tarnowskie Góry"], // contains "tarnowski" (Małopolska)
+	["tarnogórski", "Radzionków"],
+	["tarnogórski", "powiat tarnogórski"],
+	["będziński", "Będzin"],
+	["będziński", "Czeladź"],
+	["będziński", "Sławków"],
+	["bielski", "Czechowice-Dziedzice"],
+	["bieruńsko-lędziński", "Lędziny"],
+	["cieszyński", "Cieszyn"],
+	["cieszyński", "Wisła"],
+	["cieszyński", "Ustroń"],
+	["cieszyński", "Kończyce Wielkie"],
+	["gliwicki", "Knurów"],
+	["mikołowski", "Mikołów"],
+	["mikołowski", "Łaziska Górne"],
+	["wodzisławski", "Wodzisław Śląski"],
+	["wodzisławski", "Rydułtowy"],
+	["zawierciański", "Zawiercie"],
+	["raciborski", "Racibórz"],
+	["pszczyński", "Pszczyna"],
+	["żywiecki", "Żywiec"],
+	// Małopolskie, including the seat-town gaps that used to fall through
+	// ("Olkusz"/"Wieliczka" do not prefix-match "olkuski"/"wielicki").
+	["Kraków", "Kraków Nowa Huta"],
+	["olkuski", "Olkusz"],
+	["wielicki", "Wieliczka"],
+	["miechowski", "Miechów"],
+	["oświęcimski", "Oświęcim"],
+	["chrzanowski", "Chrzanów"],
+	// A voivodeship / region name is not a powiat. "śląskie" substring-matches
+	// "Piekary Śląskie" through the prefix heuristic.
+	[null, "Śląskie"],
+	[null, "śląskie"],
+	[null, "Małopolskie"],
+	[null, "Zagłębie"],
+	// Known gap, asserted so a future change is deliberate: Kraków dzielnice
+	// other than the ones containing "Kraków" do not resolve (they need their
+	// own alias table, and only a handful of listings carry them).
+	[null, "Brynów"],
+];
 
 function pointInRing(lon: number, lat: number, ring: Ring): boolean {
 	let inside = false;
@@ -161,6 +229,19 @@ for (const [city, lon, lat] of CITY_CENTRES) {
 		fail(`${city} centre (${lat}, ${lon}) resolves to [${found.join(", ")}]`);
 	}
 }
+
+// --- district strings map to the right powiat ---
+const matchDistrict = makeDistrictMatcher(polys.map((p) => p.name));
+let districtPass = 0;
+for (const [expected, input] of DISTRICT_CASES) {
+	const got = matchDistrict(input);
+	if (got === expected) {
+		districtPass++;
+		continue;
+	}
+	fail(`district "${input}": got ${got ?? "null"}, expected ${expected ?? "null"}`);
+}
+console.log(`district strings: ${districtPass}/${DISTRICT_CASES.length} as expected`);
 
 // --- overlaps (grid sweep) ---
 let samples = 0;

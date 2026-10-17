@@ -5,6 +5,7 @@ import { type SQL, sql } from "drizzle-orm";
 import { REGIONS } from "#/crawler/regions";
 import { db } from "#/db/index";
 import { listings, transactions } from "#/db/schema";
+import { makeDistrictMatcher } from "#/lib/powiat-districts";
 
 /**
  * Voivodeship choropleth: per-powiat metrics joined onto the bundled OSM
@@ -116,80 +117,9 @@ function pointInRing(
 	return inside;
 }
 
-function norm(s: string): string {
-	return s
-		.toLowerCase()
-		.normalize("NFD")
-		.replace(/[\u0300-\u036f]/g, "")
-		.replace(/[^a-z0-9]/g, "");
-}
-
-const NAME_ALIASES: Record<string, string> = {
-	// małopolskie city powiaty (portals write the city, the dataset entry is
-	// the bare city name).
-	krakow: "Kraków",
-	tarnow: "Tarnów",
-	nowysacz: "Nowy Sącz",
-	// District strings that do NOT normalize onto a dataset name, because the
-	// portal writes the powiat seat town whose stem differs from the powiat
-	// adjective ("wielicki" vs "Wieliczka", "tarnogórski" vs "Tarnowskie
-	// Góry").
-	olkusz: "olkuski",
-	wieliczka: "wielicki",
-	zawiercie: "zawierciański",
-	raciborz: "raciborski",
-	pszczyna: "pszczyński",
-	wodzislawslaski: "wodzisławski",
-	rydultowy: "wodzisławski",
-	// "Tarnowskie Góry" contains "tarnowski" (powiat tarnowski, Małopolska):
-	// without this alias the prefix heuristic files a Śląsk town into Małopolska.
-	tarnowskiegory: "tarnogórski",
-	czestochowa: "Częstochowa",
-	katowice: "Katowice",
-	// Towns in a land powiat whose name shares no prefix with it.
-	czeladz: "będziński",
-	slawkow: "będziński",
-	czechowicedziedzice: "bielski",
-	ledziny: "bieruńsko-lędziński",
-	knurow: "gliwicki",
-	orzesze: "mikołowski",
-	poreba: "zawierciański",
-	lazy: "zawierciański",
-};
-
-/**
- * Normalized district strings that must NEVER resolve to a powiat. A
- * voivodeship name is not a powiat ("śląskie" used to substring-match
- * "Piekary Śląskie" through the prefix heuristic), and a bare region name
- * ("Zagłębie") carries no district information: unassigned beats wrong.
- */
-const NOT_A_POWIAT = new Set([
-	"malopolskie",
-	"malopolska",
-	"slaskie",
-	"slask",
-	"zaglebie",
-]);
-
-/** district string -> powiat name (normalized exact/prefix match). */
-function makeDistrictMatcher(polys: PowiatPoly[]) {
-	const powiatByNorm = new Map<string, string>();
-	for (const p of polys) powiatByNorm.set(norm(p.name), p.name);
-	return (district: string | null): string | null => {
-		if (!district) return null;
-		const key = norm(district);
-		if (NOT_A_POWIAT.has(key)) return null;
-		const alias = NAME_ALIASES[key];
-		if (alias) return alias;
-		const exact = powiatByNorm.get(key);
-		if (exact) return exact;
-		// Prefix match: covers adjectival forms ("krakowski"/"miechowski", exact
-		// above) and longer portal strings ("powiat wielicki", "Śródmieście").
-		for (const [k, name] of powiatByNorm) {
-			if (key.length >= 5 && (key.includes(k) || k.includes(key))) return name;
-		}
-		return null;
-	};
+/** district string -> powiat name (aliases + normalized exact/prefix match). */
+function makeMatcherForPolys(polys: PowiatPoly[]) {
+	return makeDistrictMatcher(polys.map((p) => p.name));
 }
 
 export const Route = createFileRoute("/api/powiat-map")({
@@ -197,7 +127,7 @@ export const Route = createFileRoute("/api/powiat-map")({
 		handlers: {
 			GET: async () => {
 				const polys = await loadPolys();
-				const powiatForDistrict = makeDistrictMatcher(polys);
+				const powiatForDistrict = makeMatcherForPolys(polys);
 				const metrics = new Map<
 					string,
 					{
