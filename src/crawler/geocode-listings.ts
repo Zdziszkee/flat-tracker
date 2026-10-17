@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 
 import { db } from "#/db/index";
+import { isInTrackedRegion, TRACKED_REGIONS } from "#/db/region";
 import { buildings, listings } from "#/db/schema";
 import {
 	buildCityCentroids,
@@ -29,7 +30,8 @@ import {
  *    speak, komornik notices, ...). The extracted address is persisted so
  *    later runs skip straight to the local index.
  * 3. Street found but not in the local index -> Photon geocoder (1 req/s,
- *    validated to Małopolska, per-address result cache).
+ *    validated to the tracked region (Małopolska + Śląsk), per-address
+ *    result cache).
  *
  * `nominatimLimit` bounds external calls for the hourly refresh; the CLI
  * (`bun run geocode-addresses`) passes no limit to drain the backlog.
@@ -37,13 +39,39 @@ import {
 
 const PHOTON = "https://photon.komoot.io/api/";
 
-/** Małopolska voivodeship bounding box. */
-const MALOPOLSKA_BOUNDS = {
-	minLng: 19.0,
-	minLat: 49.1,
-	maxLng: 21.6,
-	maxLat: 50.6,
-};
+/**
+ * Photon gets no voivodeship qualifier any more. The app used to append
+ * "Małopolska" to every query, which for a Śląskie address returns nothing
+ * ("ul. Mariacka 10, Katowice, Małopolska" -> 0 features) and, worse,
+ * silently reinterprets a Śląskie town as a Małopolskie one ("Bytom,
+ * małopolskie" -> three clothes shops in Kraków). The postal code is the
+ * honest disambiguator and works in both voivodeships ("41-902 Bytom",
+ * "Mariacka 10, Katowice, 40-014"), so it takes the suffix slot; without
+ * one the query stays unqualified and the tracked-region bounds check plus
+ * the locality hint (below) reject wrong answers.
+ */
+/**
+ * Tracked voivodeships as Photon spells them in `state` ("województwo
+ * śląskie" -> "slask"), derived from `TRACKED_REGIONS` so a new region needs
+ * no parallel list here.
+ */
+const REGION_STEMS = Object.keys(TRACKED_REGIONS).map((region) =>
+	region.replace(/ie$/, ""),
+);
+
+/**
+ * The tracked region a hint names, or null when it names a place. Portals
+ * do write "Małopolskie" where a city belongs, and that is a region hint:
+ * it can only be validated against Photon's `state`, never against `city`.
+ */
+function hintedRegionStem(hintKey: string): string | null {
+	return REGION_STEMS.find((stem) => hintKey.startsWith(stem)) ?? null;
+}
+
+/** A geocoder answer is only useful inside a region we track. */
+function inRegionBounds(lat: number, lng: number): boolean {
+	return isInTrackedRegion(lat, lng);
+}
 
 /**
  * Inflected city names that portals put in titles but not in the structured
@@ -109,13 +137,22 @@ function zipOf(address: string | null | undefined): string | null {
 /**
  * Photon (komoot) forward geocoder — free, keyless, OSM-based, and far less
  * rate-limited than Nominatim. Returns a point only when it shares a word
- * with the query and lies inside Małopolska.
+ * with the street we asked for and lies inside a tracked region.
+ *
+ * With three candidates (not one) a result that also answers the locality
+ * hint beats a lone street-name match: the same street exists in both
+ * voivodeships ("Mariacka" in Kraków and Katowice, "Zwycięstwa" in Gliwice
+ * and Knurów), and the voivodeship suffix that used to filter those out is
+ * gone. A street-name match that cannot confirm the hint is still accepted
+ * as a fallback, so this only ever turns a miss into a pin, never the other
+ * way round.
  */
 async function photonGeocode(
 	address: string,
 	streetPart: string,
+	hint?: string | null,
 ): Promise<{ lat: number; lng: number } | null> {
-	const url = `${PHOTON}?q=${encodeURIComponent(address)}&limit=1`;
+	const url = `${PHOTON}?q=${encodeURIComponent(address)}&limit=3`;
 	try {
 		const res = await fetch(url, {
 			headers: { accept: "application/json" },
@@ -128,37 +165,54 @@ async function photonGeocode(
 				properties?: Record<string, string>;
 			}>;
 		};
-		const feature = j.features?.[0];
-		const coords = feature?.geometry?.coordinates;
-		const lat = coords?.[1];
-		const lng = coords?.[0];
-		if (
-			typeof lat !== "number" ||
-			typeof lng !== "number" ||
-			!Number.isFinite(lat) ||
-			!Number.isFinite(lng)
-		)
-			return null;
-		if (
-			lat < MALOPOLSKA_BOUNDS.minLat ||
-			lat > MALOPOLSKA_BOUNDS.maxLat ||
-			lng < MALOPOLSKA_BOUNDS.minLng ||
-			lng > MALOPOLSKA_BOUNDS.maxLng
-		)
-			return null;
-
-		const props = feature?.properties ?? {};
-		const shown = normalizeWord(
-			[props.name, props.street, props.city].filter(Boolean).join(" "),
-		);
+		// No meaningful word to check ("73", a bare house number): accepting
+		// any in-bounds result is how listings end up on random points.
 		const wanted = normalizeWord(streetPart)
 			.split(" ")
 			.filter((w) => w.length >= 3);
-		// No meaningful word to check ("73", a bare house number): accepting
-		// any in-bounds result is how listings end up on random points.
-		if (wanted.length === 0 || !wanted.some((w) => shown.includes(w)))
-			return null;
-		return { lat, lng };
+		if (wanted.length === 0) return null;
+
+		const hintKey = normalizeWord(hint ?? "");
+		const stem = hintKey ? hintedRegionStem(hintKey) : null;
+		let fallback: { lat: number; lng: number } | null = null;
+
+		for (const feature of j.features ?? []) {
+			const coords = feature.geometry?.coordinates;
+			const lat = coords?.[1];
+			const lng = coords?.[0];
+			if (
+				typeof lat !== "number" ||
+				typeof lng !== "number" ||
+				!Number.isFinite(lat) ||
+				!Number.isFinite(lng)
+			)
+				continue;
+			if (!inRegionBounds(lat, lng)) continue;
+
+			const props = feature.properties ?? {};
+			const shown = normalizeWord(
+				[
+					props.name,
+					props.street,
+					props.city,
+					props.district,
+					props.state,
+					props.postcode,
+				]
+					.filter(Boolean)
+					.join(" "),
+			);
+			if (!wanted.some((w) => shown.includes(w))) continue;
+
+			const point = { lat, lng };
+			if (!hintKey) return point;
+			const answersHint = stem
+				? normalizeWord(props.state ?? "").includes(stem)
+				: shown.includes(hintKey);
+			if (answersHint) return point;
+			fallback ??= point;
+		}
+		return fallback;
 	} catch {
 		return null;
 	}
@@ -182,14 +236,15 @@ const PLACE_VALUES = new Set([
  * The offline city index only knows cities tagged on OSM buildings, so small
  * villages must fall back to Photon's place nodes. Restricts to place-typed
  * features (a church/house with a similar name must not win) and requires the
- * result to contain every significant query word. `zip` disambiguates
- * same-name towns ("Leśnica" in gm. Stryszów vs. near Krościenko).
+ * result to contain every significant query word. `qualifier` is the postal
+ * code (disambiguates same-name towns: "Leśnica" in gm. Stryszów vs. near
+ * Krościenko) or a voivodeship name, and `null` means "ask for the bare name".
  */
 async function geocodeLocality(
 	name: string,
-	zip?: string | null,
+	qualifier?: string | null,
 ): Promise<{ lat: number; lng: number } | null> {
-	const query = `${zip ? `${zip} ` : ""}${name}, małopolskie`;
+	const query = [qualifier, name].filter(Boolean).join(" ");
 	const url = `${PHOTON}?q=${encodeURIComponent(query)}&limit=5`;
 	try {
 		const res = await fetch(url, {
@@ -222,13 +277,7 @@ async function geocodeLocality(
 				!Number.isFinite(lng)
 			)
 				continue;
-			if (
-				lat < MALOPOLSKA_BOUNDS.minLat ||
-				lat > MALOPOLSKA_BOUNDS.maxLat ||
-				lng < MALOPOLSKA_BOUNDS.minLng ||
-				lng > MALOPOLSKA_BOUNDS.maxLng
-			)
-				continue;
+			if (!inRegionBounds(lat, lng)) continue;
 			const shown = normalizeWord(
 				[props.name, props.city].filter(Boolean).join(" "),
 			);
@@ -593,22 +642,32 @@ export async function geocodeUnlocatedListings(
 			if (cityHint) {
 				const zip = zipOf(row.address);
 				const localityKey = normStreet(`loc:${cityHint} ${zip ?? ""}`);
-				let locality =
-					localityKey in nomCache ? nomCache[localityKey] : undefined;
-				if (locality === undefined) {
-					if (nomBudget <= 0) {
-						report.misses++;
-						continue;
-					}
-					nomBudget--;
-					locality = await geocodeLocality(cityHint, zip);
-					// Fall back to the bare name when the zip-qualified lookup
-					// finds nothing (postcode not indexed for that village).
-					if (!locality && zip && nomBudget > 0) {
+				let locality: { lat: number; lng: number } | null | undefined;
+				if (localityKey in nomCache) {
+					locality = nomCache[localityKey];
+				} else if (nomBudget <= 0) {
+					report.misses++;
+					continue;
+				} else {
+					// Three attempts, cheapest signal first: the postal code
+					// (unambiguous, and the only qualifier that works in both
+					// voivodeships), then the legacy "małopolskie" hint — the
+					// same-name village in the other voivodeship is the trap it
+					// guards against, so it keeps its precedence — then the bare
+					// name, which is how a Śląskie locality that no Małopolska
+					// query can find finally resolves ("Sączów").
+					const attempts: Array<string | null> = zip
+						? [zip, "małopolskie", null]
+						: ["małopolskie", null];
+					let found: { lat: number; lng: number } | null = null;
+					for (const qualifier of attempts) {
+						if (found || nomBudget <= 0) break;
 						nomBudget--;
-						locality = await geocodeLocality(cityHint);
+						found = await geocodeLocality(cityHint, qualifier);
 					}
-					nomCache[localityKey] = locality;
+					locality = found;
+					// A known miss is cached as null, so the drain never re-asks.
+					nomCache[localityKey] = found;
 					nomWrites++;
 					await new Promise((r) => setTimeout(r, 1050));
 				}
@@ -646,13 +705,15 @@ export async function geocodeUnlocatedListings(
 			const query = extractedAddress
 				? // A mined street must not fall back to the stored street-less
 					// address ("32-065, Nawojowa Góra") — query what we mined.
-					[streetPart, cityHint ?? row.district, "Małopolska"]
+					[streetPart, cityHint ?? row.district, zipOf(row.address)]
 						.filter(Boolean)
 						.join(", ")
 				: hasStoredAddress && row.address
 					? row.address
-					: [streetPart, row.district, "Małopolska"].filter(Boolean).join(", ");
-			geo = await photonGeocode(query, namePart);
+					: [streetPart, row.district, zipOf(row.address)]
+							.filter(Boolean)
+							.join(", ");
+			geo = await photonGeocode(query, namePart, cityHint ?? row.district);
 			if (streetKey) {
 				nomCache[streetKey] = geo;
 				nomWrites++;
