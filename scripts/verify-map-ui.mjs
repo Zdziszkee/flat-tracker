@@ -381,23 +381,28 @@ check(
 	`before=${before.total} after=${after.total}`,
 );
 
-// 5. /listings shows the Realizacja caption
+// 5. /listings shows the Realizacja caption. Scan every row in-page: the
+// table holds tens of thousands of rows and shipping its text over CDP is
+// slow and eventually oversized.
 await page.goto("http://localhost:3000/listings", { waitUntil: "domcontentloaded" });
 await page.waitForFunction(
 	() => document.querySelectorAll("tbody tr").length > 10,
 	null,
 	{ timeout: 45000 },
 );
-const listingsText = await page.evaluate(() =>
-	[...document.querySelectorAll("tbody tr")]
-		.slice(0, 2500)
-		.map((r) => r.innerText)
-		.join("\n"),
-);
+const captionSample = await page.evaluate(() => {
+	const re =
+		/Realizacja: [^\n]+ · (w budowie|planowany termin minął)/;
+	for (const tr of document.querySelectorAll("tbody tr")) {
+		const m = tr.innerText.match(re);
+		if (m) return m[0];
+	}
+	return null;
+});
 check(
 	"/listings shows Realizacja caption",
-	/Realizacja: [^\n]+ · (w budowie|planowany termin minął)/.test(listingsText),
-	(listingsText.match(/Realizacja: [^\n]+/)?.[0] ?? "none").slice(0, 80),
+	Boolean(captionSample),
+	(captionSample ?? "none").slice(0, 80),
 );
 
 // 6. /listings: clicking an inv- row expands (valuation panel appears).
@@ -413,16 +418,16 @@ const invRowClicked = await page.evaluate(() => {
 	return true;
 });
 await page.waitForTimeout(3000);
-const expandedText = await page.evaluate(() =>
-	[...document.querySelectorAll("td")]
-		.slice(0, 6000)
-		.map((r) => r.innerText)
-		.join("\n"),
-);
+const panelFound = await page.evaluate(() => {
+	for (const td of document.querySelectorAll("td")) {
+		if (/wycen/i.test(td.innerText)) return true;
+	}
+	return false;
+});
 check(
 	"/listings inv- row expands",
-	invRowClicked && /wycen/i.test(expandedText),
-	invRowClicked ? "row clicked, panel text found" : "no inv- row visible",
+	invRowClicked && panelFound,
+	invRowClicked ? `row clicked, panel=${panelFound}` : "no inv- row visible",
 );
 
 await browser.close();
