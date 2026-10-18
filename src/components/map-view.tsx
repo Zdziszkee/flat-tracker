@@ -701,6 +701,7 @@ export default function MapView({
 	offerType,
 	kind,
 	showParcels,
+	showRailways,
 	showOccupancy,
 	occupancySource,
 	occupancyMonth,
@@ -710,6 +711,7 @@ export default function MapView({
 	offerType: "all" | "sale" | "rental";
 	kind: "all" | PropertyKind;
 	showParcels: boolean;
+	showRailways: boolean;
 	showOccupancy: boolean;
 	occupancySource: "airbnb" | "booking" | "all";
 	occupancyMonth: string;
@@ -784,6 +786,7 @@ export default function MapView({
 			<MapCanvas
 				listings={listings}
 				showParcels={showParcels}
+				showRailways={showRailways}
 				showOccupancy={showOccupancy}
 				occupancy={occupancyCells}
 				onReady={() => setMapReady(true)}
@@ -812,6 +815,14 @@ export default function MapView({
 				<span className="flex items-center gap-1">
 					<span className="inline-block h-2.5 w-2.5 rounded-sm border border-amber-700/50 bg-amber-400/25" />{" "}
 					działka z historią RCN
+				</span>
+				<span className="flex items-center gap-1">
+					<span className="inline-block h-1 w-4 rounded-full bg-slate-800 ring-1 ring-white" />{" "}
+					kolej
+				</span>
+				<span className="flex items-center gap-1">
+					<span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-700 ring-1 ring-white" />{" "}
+					stacja kolejowa
 				</span>
 				{showOccupancy && (
 					<>
@@ -872,12 +883,14 @@ function occupancyToGeoJson(cells: OccupancyCell[]): GeoJsonFeatureCollection {
 function MapCanvas({
 	listings,
 	showParcels,
+	showRailways,
 	showOccupancy,
 	occupancy,
 	onReady,
 }: {
 	listings: ApiListing[];
 	showParcels: boolean;
+	showRailways: boolean;
 	showOccupancy: boolean;
 	occupancy: OccupancyCell[];
 	/** Fires once the first full render settles (map "idle"). */
@@ -888,6 +901,8 @@ function MapCanvas({
 	const popupRef = useRef<mapboxgl.Popup | null>(null);
 	// Read by the parcel sync inside the map callbacks, which outlive renders.
 	const showParcelsRef = useRef(showParcels);
+	// Same for the "Kolej" overlay.
+	const showRailwaysRef = useRef(showRailways);
 	// Same for the occupancy heatmap toggle.
 	const showOccupancyRef = useRef(showOccupancy);
 	// Set by the mount effect: re-reads the viewport and refetches if needed.
@@ -1219,6 +1234,68 @@ function MapCanvas({
 				map.on("zoomend", maybeAdd);
 			}
 
+			// Railways + stations (generated src/data/region-railways.ts, see
+			// /api/railways): the basemap draws rails as faint grey — users
+			// asked for them to READ: white casing under a thick dark line,
+			// stations as blue dots with names. One mixed source, layers split
+			// by geometry type; under the listings so pins stay clickable.
+			map.addSource("railways", {
+				type: "geojson",
+				data: apiUrl("/api/railways"),
+			});
+			map.addLayer({
+				id: "railway-line-casing",
+				type: "line",
+				source: "railways",
+				filter: ["==", ["geometry-type"], "LineString"],
+				paint: {
+					"line-color": "#ffffff",
+					"line-opacity": 0.85,
+					"line-width": ["interpolate", ["linear"], ["zoom"], 8, 3, 18, 12],
+				},
+			});
+			map.addLayer({
+				id: "railway-line",
+				type: "line",
+				source: "railways",
+				filter: ["==", ["geometry-type"], "LineString"],
+				paint: {
+					"line-color": "#1f2937",
+					"line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 18, 8],
+				},
+			});
+			map.addLayer({
+				id: "railway-station",
+				type: "circle",
+				source: "railways",
+				filter: ["==", ["geometry-type"], "Point"],
+				paint: {
+					"circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 3.5, 16, 7],
+					"circle-color": "#1d4ed8",
+					"circle-stroke-color": "#ffffff",
+					"circle-stroke-width": 1.5,
+				},
+			});
+			map.addLayer({
+				id: "railway-station-label",
+				type: "symbol",
+				source: "railways",
+				minzoom: 10,
+				filter: ["==", ["geometry-type"], "Point"],
+				layout: {
+					"text-field": ["get", "name"],
+					"text-size": 11,
+					"text-offset": [0, 0.9],
+					"text-anchor": "top",
+					"text-allow-overlap": false,
+				},
+				paint: {
+					"text-color": "#1e3a8a",
+					"text-halo-color": "#ffffff",
+					"text-halo-width": 1.5,
+				},
+			});
+
 			// Listings as a GeoJSON circle layer (fast with thousands of points).
 			map.addSource("listings", {
 				type: "geojson",
@@ -1277,6 +1354,17 @@ function MapCanvas({
 						"icon-allow-overlap": true,
 					},
 				});
+			}
+
+			// Stations belong ABOVE the dense price circles (a station under ten
+			// pins is invisible) but below the komornik/budujesie symbols.
+			if (map.getLayer("komornik-listings")) {
+				if (map.getLayer("railway-station")) {
+					map.moveLayer("railway-station", "komornik-listings");
+				}
+				if (map.getLayer("railway-station-label")) {
+					map.moveLayer("railway-station-label", "komornik-listings");
+				}
 			}
 
 			// Short-term rental occupancy heatmap (rendered on top of listings).
@@ -1953,6 +2041,28 @@ function MapCanvas({
 		showParcelsRef.current = showParcels;
 		syncParcelsRef.current?.();
 	}, [showParcels]);
+
+	// "Kolej" visibility toggle (lines + stations; data is static, only the
+	// layers flip).
+	useEffect(() => {
+		showRailwaysRef.current = showRailways;
+		const map = mapRef.current;
+		if (!map) return;
+		for (const id of [
+			"railway-line-casing",
+			"railway-line",
+			"railway-station",
+			"railway-station-label",
+		]) {
+			if (map.getLayer(id)) {
+				map.setLayoutProperty(
+					id,
+					"visibility",
+					showRailways ? "visible" : "none",
+				);
+			}
+		}
+	}, [showRailways]);
 
 	// Occupancy heatmap visibility toggle. Data updates live in the effect
 	// below — kept separate so flipping visibility never re-serializes or

@@ -18,7 +18,10 @@ const browser = await chromium.launch({
 	executablePath: "/usr/bin/chromium",
 });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-await page.goto("http://localhost:3000/map", { waitUntil: "domcontentloaded" });
+// Generous: a dev server booting with its background crawl (camoufox
+// browsers, CPU-saturating) can take >30 s to serve a cold page.
+page.setDefaultTimeout(120_000);
+await page.goto("http://localhost:3000/map", { waitUntil: "domcontentloaded", timeout: 120_000 });
 await page.waitForFunction(
 	() => {
 		const m = window.__map;
@@ -420,6 +423,41 @@ check(
 	`all=${beforeKind} plots=${plotState.total} wrong=${plotState.wrong}`,
 );
 await page.locator("select").nth(2).selectOption("all");
+
+// 4c. "Kolej" overlay: railway lines + stations render and the toggle
+// hides them (queryRenderedFeatures sees only visible layers). Frame
+// Kraków Główny so stations are actually in view.
+const railBefore = await page.evaluate(() => {
+	const m = window.__map;
+	m.jumpTo({ center: [19.9435, 50.0685], zoom: 12 });
+	return { jumped: true };
+});
+await page.waitForTimeout(2500);
+const railState = await page.evaluate(() => {
+	const m = window.__map;
+	return {
+		layers: Boolean(m.getLayer("railway-line")) && Boolean(m.getLayer("railway-station")),
+		lines: m.queryRenderedFeatures([[0, 0], [2800, 1500]], { layers: ["railway-line"] }).length,
+		stations: m.queryRenderedFeatures([[0, 0], [2800, 1500]], { layers: ["railway-station"] }).length,
+	};
+});
+await page.locator('input[type="checkbox"]').nth(1).uncheck();
+await page.waitForTimeout(800);
+const railHidden = await page.evaluate(
+	() =>
+		window.__map.queryRenderedFeatures([[0, 0], [2800, 1500]], {
+			layers: ["railway-line", "railway-station"],
+		}).length,
+);
+await page.locator('input[type="checkbox"]').nth(1).check();
+check(
+	"railway overlay renders and toggles",
+	railState.layers &&
+		railState.lines > 0 &&
+		railState.stations > 0 &&
+		railHidden === 0,
+	`lines=${railState.lines} stations=${railState.stations} hidden=${railHidden}`,
+);
 
 // 5. /listings shows the Realizacja caption. Scan every row in-page: the
 // table holds tens of thousands of rows and shipping its text over CDP is

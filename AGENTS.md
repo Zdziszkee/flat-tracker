@@ -531,6 +531,12 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   block never rendered for any source). `showListingPopup` therefore
   hydrates the full row from the GeoJSON source data by `id`; keep
   nested data out of click-feature reads or hydrate the same way.
+- **Railways/stations overlay** ("Kolej" toggle): generated
+  `src/data/region-railways.ts` via `bun run build:railways`, which parses
+  the same Geofabrik PBFs `osm-index.ts` uses (Overpass was unusable when
+  this was written). Served by `/api/railways` (lazy import), drawn as a
+  white-cased dark line + blue station dots with names; regenerate when a
+  fresh PBF lands.
 - The RCN importer skips the download when `RCN_GML_PATH` points at an
   already-extracted file (handy for testing with a partial slice).
 - `src/data/region-powiats.ts` is generated (`bun run build:powiats`,

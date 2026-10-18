@@ -12,6 +12,8 @@ export const Route = createFileRoute("/map")({
 
 /** localStorage key for the "granice działek" toggle. */
 const PARCELS_STORAGE_KEY = "flat-tracker:show-parcels";
+/** localStorage key for the "Kolej" overlay toggle. */
+const RAILWAYS_STORAGE_KEY = "flat-tracker:show-railways";
 const OCCUPANCY_STORAGE_KEY = "flat-tracker:show-occupancy";
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -53,6 +55,8 @@ function MapPage() {
 	 * and the API cannot return them all).
 	 */
 	const [showParcels, setShowParcels] = useState(true);
+	// Torowiska i stacje kolejowe (wygenerowany overlay OSM).
+	const [showRailways, setShowRailways] = useState(true);
 	/** Short-term rental occupancy heatmap layer. */
 	const [showOccupancy, setShowOccupancy] = useState(false);
 	const [occupancySource, setOccupancySource] = useState<
@@ -68,6 +72,8 @@ function MapPage() {
 		try {
 			const stored = window.localStorage.getItem(PARCELS_STORAGE_KEY);
 			if (stored !== null) setShowParcels(stored === "1");
+			const railStored = window.localStorage.getItem(RAILWAYS_STORAGE_KEY);
+			if (railStored !== null) setShowRailways(railStored === "1");
 			const occStored = window.localStorage.getItem(OCCUPANCY_STORAGE_KEY);
 			if (occStored !== null) setShowOccupancy(occStored === "1");
 		} catch {
@@ -156,6 +162,24 @@ function MapPage() {
 				<label className="flex items-center gap-1.5 text-sm text-gray-700">
 					<input
 						type="checkbox"
+						checked={showRailways}
+						onChange={(e) => {
+							setShowRailways(e.target.checked);
+							try {
+								window.localStorage.setItem(
+									RAILWAYS_STORAGE_KEY,
+									e.target.checked ? "1" : "0",
+								);
+							} catch {
+								// Not fatal: the toggle just won't persist.
+							}
+						}}
+					/>
+					Kolej
+				</label>
+				<label className="flex items-center gap-1.5 text-sm text-gray-700">
+					<input
+						type="checkbox"
 						checked={showOccupancy}
 						onChange={(e) => {
 							setShowOccupancy(e.target.checked);
@@ -221,6 +245,7 @@ function MapPage() {
 							offerType={offerType}
 							kind={kind}
 							showParcels={showParcels}
+							showRailways={showRailways}
 							showOccupancy={showOccupancy}
 							occupancySource={occupancySource}
 							occupancyMonth={occupancyMonth}
