@@ -5,6 +5,7 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { HIDDEN_SOURCES } from "#/crawler/hidden-sources";
 import { db } from "#/db/index";
 import { buildings, listings, transactions } from "#/db/schema";
+import { propertyKindOf } from "#/lib/property-kind";
 
 interface BuildingSummary {
 	buildingId: number | null;
@@ -245,6 +246,14 @@ export const Route = createFileRoute("/api/listings")({
 				return json({
 					listings: unique.map((r) => ({
 						...r,
+						// dom / mieszkanie / działka — derived once, here, so
+						// map and listings filter on the same classifier.
+						propertyKind: propertyKindOf({
+							source: r.source,
+							title: r.title,
+							propertyType: r.propertyType,
+							externalId: r.externalId,
+						}),
 						// Prefer building centroid (assigned via point-in-polygon) as the
 						// map anchor: offers are shown on the building they belong to.
 						mapLat: r.buildingLat ?? r.lat,

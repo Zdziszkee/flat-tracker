@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
+import { PROPERTY_KIND_LABELS, type PropertyKind } from "#/lib/property-kind";
 
 interface Row {
 	id: number;
@@ -17,6 +18,7 @@ interface Row {
 	firstSeenAt: string | null;
 	heatingType: string | null;
 	propertyType: string | null;
+	propertyKind?: PropertyKind | null;
 	features: string | null;
 	constructionEndLabel: string | null;
 	constructionEndDate: string | null;
@@ -298,6 +300,7 @@ export const Route = createFileRoute("/listings")({
 function ListingsPage() {
 	const [source, setSource] = useState("all");
 	const [days, setDays] = useState<DaysFilter>(0);
+	const [kind, setKind] = useState<PropertyKind | "all">("all");
 	const [expanded, setExpanded] = useState<number | null>(null);
 	const { data, isLoading } = useQuery<ListingsResponse>({
 		queryKey: ["listings"],
@@ -323,8 +326,21 @@ function ListingsPage() {
 	for (const r of daysRows) {
 		countsBySource.set(r.source, (countsBySource.get(r.source) ?? 0) + 1);
 	}
+	const countsByKind = new Map<string, number>();
+	for (const r of daysRows) {
+		if (r.propertyKind)
+			countsByKind.set(
+				r.propertyKind,
+				(countsByKind.get(r.propertyKind) ?? 0) + 1,
+			);
+	}
 
-	const rows = daysRows.filter((r) => source === "all" || r.source === source);
+	const rows = daysRows.filter(
+		(r) =>
+			(source === "all" || r.source === source) &&
+			// dom / mieszkanie / działka: untyped rows show only under "Wszystkie".
+			(kind === "all" || r.propertyKind === kind),
+	);
 
 	return (
 		<div className="p-6">
@@ -344,6 +360,21 @@ function ListingsPage() {
 								{SOURCE_LABELS[s] ?? s} ({countsBySource.get(s) ?? 0})
 							</option>
 						))}
+					</select>
+					<select
+						value={kind}
+						onChange={(e) => setKind(e.target.value as PropertyKind | "all")}
+						className="rounded border px-2 py-1"
+						title="Rodzaj nieruchomości"
+					>
+						<option value="all">Wszystkie ({daysRows.length})</option>
+						{(Object.keys(PROPERTY_KIND_LABELS) as Array<PropertyKind>).map(
+							(k) => (
+								<option key={k} value={k}>
+									{PROPERTY_KIND_LABELS[k]} ({countsByKind.get(k) ?? 0})
+								</option>
+							),
+						)}
 					</select>
 					<select
 						value={days}

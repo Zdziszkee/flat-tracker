@@ -359,7 +359,8 @@ const before = await page.evaluate(() => {
 	};
 });
 await page.locator("select").nth(1).selectOption("sale");
-await page.locator("select").nth(2).selectOption("7");
+// select order: source(0), offerType(1), kind(2), days(3)
+await page.locator("select").nth(3).selectOption("7");
 await page.waitForTimeout(2000);
 const after = await page.evaluate(() => {
 	const src = window.__map.getSource("listings");
@@ -387,6 +388,38 @@ check(
 	after.total < before.total,
 	`before=${before.total} after=${after.total}`,
 );
+
+// 4b. property-kind filter (dom / mieszkanie / działka): choosing
+// "Działka" must leave only plot pins and cut the count. Start from a
+// clean filter state — the sale/7d window would hide older auction plots.
+await page.locator("select").nth(1).selectOption("all");
+await page.locator("select").nth(3).selectOption("0");
+await page.waitForTimeout(1500);
+const beforeKind = await page.evaluate(() => {
+	const src = window.__map.getSource("listings");
+	const feats = (typeof src.getData === "function" ? src.getData() : src._data)
+		.features;
+	return feats.length;
+});
+await page.locator("select").nth(2).selectOption("plot");
+await page.waitForTimeout(1500);
+const plotState = await page.evaluate(() => {
+	const src = window.__map.getSource("listings");
+	const feats = (typeof src.getData === "function" ? src.getData() : src._data)
+		.features;
+	return {
+		total: feats.length,
+		wrong: feats.filter((f) => f.properties.propertyKind !== "plot").length,
+	};
+});
+check(
+	"property-kind filter shows only plots",
+	plotState.total > 0 &&
+		plotState.total < beforeKind &&
+		plotState.wrong === 0,
+	`all=${beforeKind} plots=${plotState.total} wrong=${plotState.wrong}`,
+);
+await page.locator("select").nth(2).selectOption("all");
 
 // 5. /listings shows the Realizacja caption. Scan every row in-page: the
 // table holds tens of thousands of rows and shipping its text over CDP is

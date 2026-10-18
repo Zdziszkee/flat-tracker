@@ -432,6 +432,19 @@ This is the same RCN data that portals like deweloperuch.pl aggregate —
 imported locally by the refresh pipeline (`import-rcn.ts`), no extra
 scraping needed.
 
+### Property kind filter (dom / mieszkanie / działka)
+
+Map and listings filter by property kind via `propertyKind` on each
+`/api/listings` row, derived once in `src/lib/property-kind.ts` and shared
+by both screens. The classifier only trusts evidence: the portal's own
+`propertyType` (airbnb fills it), feed semantics (the `/mieszkania/` sale
+portals default to flats; investmap flats are flats, `inv-` stand-ins are
+investments), and honest title hints ("działka"/"nieruchomość gruntowa" →
+plot, "budynek mieszkalny"/"bliźniak" → house, built-up land → house).
+Rows with no evidence stay untyped and show only under "Wszystkie" — a
+guess would misfile them; when adding a source, feed the classifier real
+signals (or leave it untyped) rather than defaulting.
+
 ### Adding a new site (e.g. Facebook Marketplace, Morizon)
 
 1. Create `src/crawler/sites/<site>.ts` exporting a `CheerioAdapter` (or

@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
+import { PROPERTY_KIND_LABELS, type PropertyKind } from "#/lib/property-kind";
 
 // mapbox-gl touches `window` at module load, so it must never be imported
 // during SSR. The lazy import is only triggered after mount on the client.
@@ -42,6 +43,7 @@ function MapPage() {
 	const [source, setSource] = useState("all");
 	const [days, setDays] = useState<DaysFilter>(0);
 	const [offerType, setOfferType] = useState<"all" | "sale" | "rental">("all");
+	const [kind, setKind] = useState<PropertyKind | "all">("all");
 	const [sources, setSources] = useState<string[]>([]);
 	const [mounted, setMounted] = useState(false);
 	/**
@@ -107,6 +109,20 @@ function MapPage() {
 					<option value="all">Wszystkie typy</option>
 					<option value="sale">Sprzedaż</option>
 					<option value="rental">Najem</option>
+				</select>
+				<select
+					value={kind}
+					onChange={(e) => setKind(e.target.value as PropertyKind | "all")}
+					className="rounded border px-2 py-1 text-sm"
+					title="Rodzaj nieruchomości"
+				>
+					{(
+						Object.keys(PROPERTY_KIND_LABELS) as Array<PropertyKind | "all">
+					).map((k) => (
+						<option key={k} value={k}>
+							{PROPERTY_KIND_LABELS[k]}
+						</option>
+					))}
 				</select>
 				<select
 					value={days}
@@ -203,6 +219,7 @@ function MapPage() {
 							source={source}
 							days={days}
 							offerType={offerType}
+							kind={kind}
 							showParcels={showParcels}
 							showOccupancy={showOccupancy}
 							occupancySource={occupancySource}

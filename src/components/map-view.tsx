@@ -6,6 +6,7 @@ import "mapbox-gl/dist/mapbox-gl.css";
 
 import { REGIONS } from "#/crawler/regions";
 import { env } from "#/env";
+import type { PropertyKind } from "#/lib/property-kind";
 
 interface ApiListing {
 	id: number;
@@ -26,6 +27,8 @@ interface ApiListing {
 	firstSeenAt: string | null;
 	heatingType: string | null;
 	propertyType: string | null;
+	/** dom / mieszkanie / działka (derived server-side, see property-kind.ts). */
+	propertyKind?: PropertyKind | null;
 	features: string | null;
 	constructionEndLabel?: string | null;
 	constructionEndDate?: string | null;
@@ -696,6 +699,7 @@ export default function MapView({
 	source,
 	days,
 	offerType,
+	kind,
 	showParcels,
 	showOccupancy,
 	occupancySource,
@@ -704,6 +708,7 @@ export default function MapView({
 	source: string;
 	days: 0 | 1 | 7 | 30;
 	offerType: "all" | "sale" | "rental";
+	kind: "all" | PropertyKind;
 	showParcels: boolean;
 	showOccupancy: boolean;
 	occupancySource: "airbnb" | "booking" | "all";
@@ -732,6 +737,9 @@ export default function MapView({
 			(data?.listings ?? []).filter(
 				(l) =>
 					(source === "all" || l.source === source) &&
+					// dom / mieszkanie / działka: untyped rows (investments, odd
+					// stays) show only under "Wszystkie".
+					(kind === "all" || l.propertyKind === kind) &&
 					// Long-lived construction investments are inventory, not fresh
 					// offers: the "listed within N days" window must not hide them.
 					(l.source === "budujesie" ||
@@ -742,7 +750,7 @@ export default function MapView({
 							? l.offerType !== "sale"
 							: l.offerType === "sale")),
 			),
-		[data, source, days, offerType],
+		[data, source, days, offerType, kind],
 	);
 	const occupancyCells = useMemo(
 		() => occupancyData?.cells ?? [],
