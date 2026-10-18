@@ -22,6 +22,7 @@ import { Route as ApiMarketInsightsRouteImport } from './routes/api/market-insig
 import { Route as ApiOccupancyHeatmapRouteImport } from './routes/api/occupancy-heatmap'
 import { Route as ApiParcelsRouteImport } from './routes/api/parcels'
 import { Route as ApiPowiatMapRouteImport } from './routes/api/powiat-map'
+import { Route as ApiRailwaysRouteImport } from './routes/api/railways'
 import { Route as ApiRefreshRouteImport } from './routes/api/refresh'
 import { Route as ApiRentalAnalyticsRouteImport } from './routes/api/rental-analytics'
 import { Route as ApiRentalGuestPricesRouteImport } from './routes/api/rental-guest-prices'
@@ -101,6 +102,11 @@ const ApiParcelsRoute = ApiParcelsRouteImport.update({
 const ApiPowiatMapRoute = ApiPowiatMapRouteImport.update({
   id: '/api/powiat-map',
   path: '/api/powiat-map',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiRailwaysRoute = ApiRailwaysRouteImport.update({
+  id: '/api/railways',
+  path: '/api/railways',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiRefreshRoute = ApiRefreshRouteImport.update({
@@ -193,6 +199,7 @@ export interface FileRoutesByFullPath {
   '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
   '/api/powiat-map': typeof ApiPowiatMapRoute
+  '/api/railways': typeof ApiRailwaysRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -223,6 +230,7 @@ export interface FileRoutesByTo {
   '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
   '/api/powiat-map': typeof ApiPowiatMapRoute
+  '/api/railways': typeof ApiRailwaysRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -254,6 +262,7 @@ export interface FileRoutesById {
   '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
   '/api/powiat-map': typeof ApiPowiatMapRoute
+  '/api/railways': typeof ApiRailwaysRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
   '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
@@ -286,6 +295,7 @@ export interface FileRouteTypes {
     | '/api/occupancy-heatmap'
     | '/api/parcels'
     | '/api/powiat-map'
+    | '/api/railways'
     | '/api/refresh'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -316,6 +326,7 @@ export interface FileRouteTypes {
     | '/api/occupancy-heatmap'
     | '/api/parcels'
     | '/api/powiat-map'
+    | '/api/railways'
     | '/api/refresh'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -346,6 +357,7 @@ export interface FileRouteTypes {
     | '/api/occupancy-heatmap'
     | '/api/parcels'
     | '/api/powiat-map'
+    | '/api/railways'
     | '/api/refresh'
     | '/api/rental-analytics'
     | '/api/rental-guest-prices'
@@ -377,6 +389,7 @@ export interface RootRouteChildren {
   ApiOccupancyHeatmapRoute: typeof ApiOccupancyHeatmapRoute
   ApiParcelsRoute: typeof ApiParcelsRouteWithChildren
   ApiPowiatMapRoute: typeof ApiPowiatMapRoute
+  ApiRailwaysRoute: typeof ApiRailwaysRoute
   ApiRefreshRoute: typeof ApiRefreshRoute
   ApiRentalAnalyticsRoute: typeof ApiRentalAnalyticsRoute
   ApiRentalGuestPricesRoute: typeof ApiRentalGuestPricesRoute
@@ -483,6 +496,13 @@ declare module '@tanstack/react-router' {
       path: '/api/powiat-map'
       fullPath: '/api/powiat-map'
       preLoaderRoute: typeof ApiPowiatMapRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/railways': {
+      id: '/api/railways'
+      path: '/api/railways'
+      fullPath: '/api/railways'
+      preLoaderRoute: typeof ApiRailwaysRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/refresh': {
@@ -631,6 +651,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiOccupancyHeatmapRoute: ApiOccupancyHeatmapRoute,
   ApiParcelsRoute: ApiParcelsRouteWithChildren,
   ApiPowiatMapRoute: ApiPowiatMapRoute,
+  ApiRailwaysRoute: ApiRailwaysRoute,
   ApiRefreshRoute: ApiRefreshRoute,
   ApiRentalAnalyticsRoute: ApiRentalAnalyticsRoute,
   ApiRentalGuestPricesRoute: ApiRentalGuestPricesRoute,
