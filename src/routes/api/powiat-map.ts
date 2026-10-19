@@ -6,6 +6,7 @@ import { db } from "#/db/index";
 import { inTrackedRegions } from "#/db/region";
 import { listings, transactions } from "#/db/schema";
 import { makeDistrictMatcher } from "#/lib/powiat-districts";
+import { withCache } from "#/lib/server-cache";
 
 /**
  * Voivodeship choropleth: per-powiat metrics joined onto the bundled OSM
@@ -108,157 +109,169 @@ function makeMatcherForPolys(polys: PowiatPoly[]) {
 	return makeDistrictMatcher(polys.map((p) => p.name));
 }
 
+/** Let queued requests run between chunks of the point-in-polygon pass. */
+const yieldToEventLoop = () =>
+	new Promise<void>((resolve) => setImmediate(resolve));
+
+async function computePowiatMap() {
+	const polys = await loadPolys();
+	const powiatForDistrict = makeMatcherForPolys(polys);
+	const metrics = new Map<
+		string,
+		{
+			saleSum: number;
+			saleN: number;
+			saleCount: number;
+			rentSum: number;
+			rentN: number;
+			rentCount: number;
+		}
+	>();
+	const bucket = (name: string) => {
+		let m = metrics.get(name);
+		if (!m) {
+			m = {
+				saleSum: 0,
+				saleN: 0,
+				saleCount: 0,
+				rentSum: 0,
+				rentN: 0,
+				rentCount: 0,
+			};
+			metrics.set(name, m);
+		}
+		return m;
+	};
+
+	// --- coordinate-first listing assignment ---
+	// Plots ("działka", area > 500 m²) are excluded from sale
+	// price/m² averages: a 630 m² plot at 120k zł would drag a
+	// powiat's average down to nonsense (118 zł/m²).
+	const rows = await db
+		.select({
+			lat: listings.lat,
+			lng: listings.lng,
+			district: listings.district,
+			offerType: listings.offerType,
+			pricePerM2: listings.pricePerM2,
+			areaM2: listings.areaM2,
+			title: listings.title,
+		})
+		.from(listings)
+		.where(sql`${listings.isActive} = 1`)
+		.all();
+
+	const isPlot = (r: { areaM2: number | null; title: string | null }) =>
+		(r.areaM2 ?? 0) > 500 ||
+		(r.title?.toLowerCase().includes("działka") ?? false);
+
+	for (let i = 0; i < rows.length; i++) {
+		const r = rows[i];
+		// ~30k listings: a short slice of the point-in-polygon pass,
+		// then let the event loop serve other requests.
+		if (i % 30_000 === 0) await yieldToEventLoop();
+		let name: string | null = null;
+		if (r.lat != null && r.lng != null) {
+			for (const p of polys) {
+				if (
+					r.lng < p.minLon ||
+					r.lng > p.maxLon ||
+					r.lat < p.minLat ||
+					r.lat > p.maxLat
+				)
+					continue;
+				if (insidePowiat(r.lng, r.lat, p)) {
+					name = p.name;
+					break;
+				}
+			}
+		}
+		if (!name) name = powiatForDistrict(r.district);
+		if (!name) continue;
+
+		const m = bucket(name);
+		if (r.offerType === "sale") {
+			m.saleCount++;
+			if (r.pricePerM2 != null && r.pricePerM2 > 0 && !isPlot(r)) {
+				m.saleSum += r.pricePerM2;
+				m.saleN++;
+			}
+		} else if (r.offerType === "long_term_rental") {
+			m.rentCount++;
+			if (r.pricePerM2 != null) {
+				m.rentSum += r.pricePerM2;
+				m.rentN++;
+			}
+		}
+	}
+
+	// --- RCN transacted price/m² per powiat (all have coords) ---
+	// Region-scoped so a national RCN drain never drags out-of-region
+	// rows through the point-in-polygon loop.
+	const txs = await db
+		.select({
+			lat: transactions.lat,
+			lng: transactions.lng,
+			pricePerM2: transactions.pricePerM2,
+		})
+		.from(transactions)
+		.where(
+			sql`${transactions.pricePerM2} is not null and ${transactions.lat} is not null and ${transactions.lng} is not null and ${inTrackedRegions}`,
+		)
+		.all();
+	const rcn = new Map<string, { sum: number; n: number }>();
+	for (let i = 0; i < txs.length; i++) {
+		const t = txs[i];
+		if (i % 30_000 === 0) await yieldToEventLoop();
+		if (t.lat == null || t.lng == null) continue;
+		for (const p of polys) {
+			if (
+				t.lng < p.minLon ||
+				t.lng > p.maxLon ||
+				t.lat < p.minLat ||
+				t.lat > p.maxLat
+			)
+				continue;
+			if (insidePowiat(t.lng, t.lat, p)) {
+				const e = rcn.get(p.name) ?? { sum: 0, n: 0 };
+				e.sum += t.pricePerM2 ?? 0;
+				e.n += 1;
+				rcn.set(p.name, e);
+				break;
+			}
+		}
+	}
+
+	const features = polys.map((p) => {
+		const m = metrics.get(p.name);
+		const tx = rcn.get(p.name);
+		const saleAvgM2 = m && m.saleN > 0 ? m.saleSum / m.saleN : null;
+		const rentAvgM2 = m && m.rentN > 0 ? m.rentSum / m.rentN : null;
+		const yieldPct =
+			saleAvgM2 != null && rentAvgM2 != null && saleAvgM2 > 0
+				? Number((((rentAvgM2 * 12) / saleAvgM2) * 100).toFixed(1))
+				: null;
+		return {
+			name: p.name,
+			voivodeship: p.voivodeship,
+			saleCount: m?.saleCount ?? 0,
+			saleAvgM2: saleAvgM2 != null ? Number(saleAvgM2.toFixed(0)) : null,
+			rentCount: m?.rentCount ?? 0,
+			rentAvgM2: rentAvgM2 != null ? Number(rentAvgM2.toFixed(1)) : null,
+			yieldPct,
+			rcnCount: tx?.n ?? 0,
+			rcnAvgM2: tx && tx.n > 0 ? Number((tx.sum / tx.n).toFixed(0)) : null,
+		};
+	});
+
+	return { features };
+}
+
 export const Route = createFileRoute("/api/powiat-map")({
 	server: {
 		handlers: {
-			GET: async () => {
-				const polys = await loadPolys();
-				const powiatForDistrict = makeMatcherForPolys(polys);
-				const metrics = new Map<
-					string,
-					{
-						saleSum: number;
-						saleN: number;
-						saleCount: number;
-						rentSum: number;
-						rentN: number;
-						rentCount: number;
-					}
-				>();
-				const bucket = (name: string) => {
-					let m = metrics.get(name);
-					if (!m) {
-						m = {
-							saleSum: 0,
-							saleN: 0,
-							saleCount: 0,
-							rentSum: 0,
-							rentN: 0,
-							rentCount: 0,
-						};
-						metrics.set(name, m);
-					}
-					return m;
-				};
-
-				// --- coordinate-first listing assignment ---
-				// Plots ("działka", area > 500 m²) are excluded from sale
-				// price/m² averages: a 630 m² plot at 120k zł would drag a
-				// powiat's average down to nonsense (118 zł/m²).
-				const rows = await db
-					.select({
-						lat: listings.lat,
-						lng: listings.lng,
-						district: listings.district,
-						offerType: listings.offerType,
-						pricePerM2: listings.pricePerM2,
-						areaM2: listings.areaM2,
-						title: listings.title,
-					})
-					.from(listings)
-					.where(sql`${listings.isActive} = 1`)
-					.all();
-
-				const isPlot = (r: { areaM2: number | null; title: string | null }) =>
-					(r.areaM2 ?? 0) > 500 ||
-					(r.title?.toLowerCase().includes("działka") ?? false);
-
-				for (const r of rows) {
-					let name: string | null = null;
-					if (r.lat != null && r.lng != null) {
-						for (const p of polys) {
-							if (
-								r.lng < p.minLon ||
-								r.lng > p.maxLon ||
-								r.lat < p.minLat ||
-								r.lat > p.maxLat
-							)
-								continue;
-							if (insidePowiat(r.lng, r.lat, p)) {
-								name = p.name;
-								break;
-							}
-						}
-					}
-					if (!name) name = powiatForDistrict(r.district);
-					if (!name) continue;
-
-					const m = bucket(name);
-					if (r.offerType === "sale") {
-						m.saleCount++;
-						if (r.pricePerM2 != null && r.pricePerM2 > 0 && !isPlot(r)) {
-							m.saleSum += r.pricePerM2;
-							m.saleN++;
-						}
-					} else if (r.offerType === "long_term_rental") {
-						m.rentCount++;
-						if (r.pricePerM2 != null) {
-							m.rentSum += r.pricePerM2;
-							m.rentN++;
-						}
-					}
-				}
-
-				// --- RCN transacted price/m² per powiat (all have coords) ---
-				// Region-scoped so a national RCN drain never drags out-of-region
-				// rows through the point-in-polygon loop.
-				const txs = await db
-					.select({
-						lat: transactions.lat,
-						lng: transactions.lng,
-						pricePerM2: transactions.pricePerM2,
-					})
-					.from(transactions)
-					.where(
-						sql`${transactions.pricePerM2} is not null and ${transactions.lat} is not null and ${transactions.lng} is not null and ${inTrackedRegions}`,
-					)
-					.all();
-				const rcn = new Map<string, { sum: number; n: number }>();
-				for (const t of txs) {
-					if (t.lat == null || t.lng == null) continue;
-					for (const p of polys) {
-						if (
-							t.lng < p.minLon ||
-							t.lng > p.maxLon ||
-							t.lat < p.minLat ||
-							t.lat > p.maxLat
-						)
-							continue;
-						if (insidePowiat(t.lng, t.lat, p)) {
-							const e = rcn.get(p.name) ?? { sum: 0, n: 0 };
-							e.sum += t.pricePerM2 ?? 0;
-							e.n += 1;
-							rcn.set(p.name, e);
-							break;
-						}
-					}
-				}
-
-				const features = polys.map((p) => {
-					const m = metrics.get(p.name);
-					const tx = rcn.get(p.name);
-					const saleAvgM2 = m && m.saleN > 0 ? m.saleSum / m.saleN : null;
-					const rentAvgM2 = m && m.rentN > 0 ? m.rentSum / m.rentN : null;
-					const yieldPct =
-						saleAvgM2 != null && rentAvgM2 != null && saleAvgM2 > 0
-							? Number((((rentAvgM2 * 12) / saleAvgM2) * 100).toFixed(1))
-							: null;
-					return {
-						name: p.name,
-						voivodeship: p.voivodeship,
-						saleCount: m?.saleCount ?? 0,
-						saleAvgM2: saleAvgM2 != null ? Number(saleAvgM2.toFixed(0)) : null,
-						rentCount: m?.rentCount ?? 0,
-						rentAvgM2: rentAvgM2 != null ? Number(rentAvgM2.toFixed(1)) : null,
-						yieldPct,
-						rcnCount: tx?.n ?? 0,
-						rcnAvgM2:
-							tx && tx.n > 0 ? Number((tx.sum / tx.n).toFixed(0)) : null,
-					};
-				});
-
-				return json({ features });
-			},
+			GET: async () =>
+				json(await withCache("powiat-map", 5 * 60_000, computePowiatMap)),
 		},
 	},
 });

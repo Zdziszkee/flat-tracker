@@ -22,6 +22,38 @@ const refreshPlugin = fileURLToPath(
 
 const config = defineConfig({
 	resolve: { tsconfigPaths: true },
+	// Vite's dependency scanner walks the *raw* module graph, before TanStack
+	// Start strips server handlers from route modules. From `src/routes/` it
+	// therefore reaches every API route, `#/db` (better-sqlite3, drizzle) and,
+	// through the refresh route's lazy import, the whole crawler graph
+	// (Crawlee, Playwright, camoufox, Effect). Prebundling that server-only
+	// graph took minutes on a cold dep cache and blocked the first page load;
+	// none of it is ever requested by the browser. With discovery off, only
+	// the packages below are prebundled, which is all the client imports.
+	optimizeDeps: {
+		noDiscovery: true,
+		include: [
+			"@t3-oss/env-core",
+			"@tanstack/charts",
+			"@tanstack/charts/react",
+			"@tanstack/charts/scales/band",
+			"@tanstack/charts/scales/linear",
+			"@tanstack/react-devtools",
+			"@tanstack/react-query",
+			"@tanstack/react-query-devtools",
+			"@tanstack/react-router",
+			"@tanstack/react-router-devtools",
+			"@tanstack/react-router-ssr-query",
+			"mapbox-gl",
+			"react",
+			"react-dom",
+			"react-dom/client",
+			"react/compiler-runtime",
+			"react/jsx-dev-runtime",
+			"react/jsx-runtime",
+			"zod",
+		],
+	},
 	plugins: [
 		devtools(),
 		nitro({

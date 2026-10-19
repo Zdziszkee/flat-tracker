@@ -184,7 +184,15 @@ The server itself runs the refresh: a Nitro scheduled task `refresh`
 `experimental.tasks`) executes `refreshAll()` from `src/crawler/refresh.ts`.
 It runs in dev AND prod node servers, and the dev server additionally fires
 one refresh on startup (`server/plugins/refresh-on-start.ts`, gated on
-`import.meta.dev`).
+`import.meta.dev`). That boot crawl runs in a **child process**
+(`server/boot-refresh.ts`, launched as `node --import tsx`), not through
+`runTask`: Vite's dev module runner would otherwise load the whole crawler
+graph inside the server process, and that first load blocked every request
+for minutes on a cold start. Live progress and the cross-process
+single-flight guard travel through `data/crawler/refresh.json`
+(`src/crawler/refresh-lock.ts`): `/api/crawl-status` merges it, `/api/refresh`
+reports it as already running, and `refreshAll()` refuses to start while a
+live child holds it.
 
 Manual equivalents:
 
@@ -285,7 +293,8 @@ Małopolska + Śląsk court-auction feeds are tiny, so every run re-syncs the wh
 list; budujesie: the forum list is sorted by last-post activity, so the
 deep pages hold the corpus and every run re-syncs all ~52 topic pages).
 
-**Dev-start runs are diff-only** (`payload: { mode: "dev" }`): each site's
+**Dev-start runs are diff-only** (`server/boot-refresh.ts` calls
+`refreshAll({ sinceDays: DEV_SINCE_DAYS, diffOnly: true })`): each site's
 `since` window is `max(now - 7 days, last successful crawl)` — per-site
 last-run timestamps live in `data/crawler/state.json` — so a boot only
 loads what the portals added since the previous load, and otodom/olx
@@ -494,6 +503,14 @@ price, pricePerM2, areaM2, rooms, floor, district, lat, lng, listedAt).
   geo-fallback assignments that disagree with the address.
 - The older Overpass path (`geocode.ts`) remains for ad-hoc lookups but is
   not used for bulk assignment (rate-limited: 429s on all mirrors).
+- `buildStreetIndex()` / `buildCityCentroids()` (in `address-index.ts`) read
+  `osm_buildings` **in pages with a `setImmediate` yield** and memoize the
+  result for the process lifetime (`invalidateAddressIndex()` runs when
+  `buildOsmIndex()` replaces the table). A single raw `select()` over the
+  ~3.2M footprints materialised every row at once and blocked the boot
+  refresh (and every HTTP request) for minutes; the paged version keeps the
+  event loop responsive and the cache removes the repeat builds that
+  `assign-buildings` + geocoding used to trigger in the same run.
 
 ## Effect TS usage
 
@@ -518,6 +535,27 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   persistStorage: false }) })` — truly in-memory, never writes `storage/`
   dirs, and concurrent crawls (dev server + hourly task) can't race over
   queue files on disk.
+- **Dev startup: never let Vite scan the server graph, and keep generated
+  data out of Tailwind's scanner.** Two independent traps made a cold
+  `bun run dev` block every request for minutes:
+  (1) Vite's dependency scanner follows the *raw* route tree into the API
+  routes and the crawler graph, so it prebundled Crawlee, Playwright,
+  better-sqlite3, drizzle and Effect into the client dependency cache (the
+  browser never requests them). `optimizeDeps` in `vite.config.ts` now sets
+  `noDiscovery: true` with an explicit list of the packages the client
+  actually imports — add a client dependency there when introducing one.
+  (2) Tailwind v4's oxide scanner never returns from the 2.7 MB single-line
+  `src/data/region-railways.ts`; `src/styles.css` excludes the generated data
+  modules with `@source not`. Both have the same symptom: the first
+  `styles.css` request hangs and every other request queues behind it.
+- **Heavy read endpoints are cached and yield**: `/api/market-charts` and
+  `/api/powiat-map` are multi-second synchronous better-sqlite3
+  aggregations (the choropleth also does a JS point-in-polygon pass over
+  millions of rows). `src/lib/server-cache.ts` holds their result for five
+  minutes with single-flight, and the handlers yield between queries /
+  every 30k rows so the event loop keeps serving other requests while a
+  cold computation runs. The first view after a server restart still pays
+  the computation; repeat views are milliseconds.
 - **Map is client-only**: `mapbox-gl` touches `window` at import time and
   crashes SSR. `src/routes/map.tsx` gates the lazy `import()` behind a
   `useEffect` mount flag — never import mapbox-gl in a route module

@@ -1,6 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
 import { getProgress, isRunning } from "#/crawler/progress";
+import {
+	refreshLockedByOther,
+	remoteRefreshRunning,
+} from "#/crawler/refresh-lock";
 
 /**
  * Kick off a full data refresh from the UI. Runs in the background; the
@@ -10,11 +14,14 @@ export const Route = createFileRoute("/api/refresh")({
 	server: {
 		handlers: {
 			POST: async () => {
-				if (isRunning()) {
+				// A dev-boot crawl lives in a child process; `isRunning()` only
+				// sees this one, so the shared lock is checked too.
+				const remote = remoteRefreshRunning();
+				if (isRunning() || remote) {
 					return json({
 						started: false,
 						alreadyRunning: true,
-						runId: getProgress()?.runId ?? null,
+						runId: getProgress()?.runId ?? remote?.runId ?? null,
 					});
 				}
 				// Lazy-import so the crawler graph (crawlee/playwright) is not
@@ -23,11 +30,12 @@ export const Route = createFileRoute("/api/refresh")({
 				const { refreshAll } = await import("#/crawler/refresh");
 				// Re-check after the (async) import: a concurrent POST may have
 				// started a refresh while this handler was loading the module.
-				if (isRunning()) {
+				if (isRunning() || refreshLockedByOther()) {
 					return json({
 						started: false,
 						alreadyRunning: true,
-						runId: getProgress()?.runId ?? null,
+						runId:
+							getProgress()?.runId ?? remoteRefreshRunning()?.runId ?? null,
 					});
 				}
 				void refreshAll()

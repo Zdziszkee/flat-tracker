@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
 import { and, eq, sql } from "drizzle-orm";
 import { getProgress, isRunning } from "#/crawler/progress";
+import { remoteRefreshRunning } from "#/crawler/refresh-lock";
 import { sourceDescriptors } from "#/crawler/source-status";
 import { db } from "#/db/index";
 import { crawlRuns } from "#/db/schema";
@@ -70,10 +71,13 @@ export const Route = createFileRoute("/api/crawl-status")({
 					});
 				}
 
-				const progress = getProgress();
+				// The dev-boot crawl runs in a child process, so fall back to
+				// the shared record it publishes every second.
+				const remote = remoteRefreshRunning();
+				const progress = getProgress() ?? remote;
 
 				return json({
-					running: isRunning(),
+					running: isRunning() || remote != null,
 					progress: progress
 						? {
 								runId: progress.runId,

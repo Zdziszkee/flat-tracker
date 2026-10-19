@@ -2,6 +2,17 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
 
+/**
+ * Generated data modules are not UI sources: they hold coordinates and
+ * boundary rings, never class names. They must stay out of the scanner
+ * explicitly — `region-railways.ts` is a 2.7 MB single-line payload, and
+ * Tailwind v4's oxide scanner never returns from it (the whole dev server
+ * then hangs on the first styles.css request, which is what made startup
+ * look frozen for minutes).
+ */
+@source not './data/region-railways.ts';
+@source not './data/region-powiats.ts';
+
 @import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));

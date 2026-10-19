@@ -10,6 +10,7 @@ import RBush from "rbush";
 import { db } from "#/db/index";
 import { TRACKED_REGIONS, type TrackedRegion } from "#/db/region";
 import { osmBuildings } from "#/db/schema";
+import { invalidateAddressIndex } from "./address-index.ts";
 
 /**
  * Local OSM building index for every tracked region (małopolskie + śląskie).
@@ -369,6 +370,9 @@ export async function buildOsmIndex(): Promise<number> {
 		total += written;
 	}
 	await saveBuildState(new Date());
+	// The memoized street/city lookups were derived from the rows just
+	// replaced; drop them so the next refresh sees the new footprints.
+	invalidateAddressIndex();
 	console.log(`osm_buildings: ${total} rows inserted`);
 	return total;
 }

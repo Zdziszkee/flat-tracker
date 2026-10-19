@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { inTrackedRegions } from "#/db/region";
+import { withCache } from "#/lib/server-cache";
 
 /**
  * Market-charts feed: 15 pre-aggregated series for the /market dashboard.
@@ -83,9 +84,8 @@ const POWIAT_NAMES: Record<string, string> = {
 };
 
 /** Epoch cutoffs computed in JS (SQLite int-vs-text comparison trap). */
-const now = Date.now();
 const daysAgo = (d: number): number =>
-	Math.floor((now - d * 86_400_000) / 1000);
+	Math.floor((Date.now() - d * 86_400_000) / 1000);
 
 /** City buckets by lat/lng for rental-market analytics. */
 const CITY_CASE = sql`
@@ -103,19 +103,20 @@ const CITY_CASE = sql`
 `;
 
 async function all<T>(q: ReturnType<typeof sql>): Promise<T[]> {
+	// Between queries, let queued HTTP requests run: a full dashboard refresh
+	// is a sequence of multi-second synchronous SQLite aggregations, and
+	// without a yield they all block one after another.
+	await new Promise<void>((resolve) => setImmediate(resolve));
 	return db.all<T>(q);
 }
 
-export const Route = createFileRoute("/api/market-charts")({
-	server: {
-		handlers: {
-			GET: async () => {
-				// ---- 1. RCN price trend by month ----------------------------
-				const priceTrend = await all<{
-					month: string;
-					avgM2: number;
-					tx: number;
-				}>(sql`
+async function computeMarketCharts() {
+	// ---- 1. RCN price trend by month ----------------------------
+	const priceTrend = await all<{
+		month: string;
+		avgM2: number;
+		tx: number;
+	}>(sql`
 					SELECT substr(datetime(date, 'unixepoch'), 1, 7) AS month,
 					       avg(pricePerM2) AS avgM2,
 					       count(*) AS tx
@@ -125,13 +126,13 @@ export const Route = createFileRoute("/api/market-charts")({
 					GROUP BY month ORDER BY month
 				`);
 
-				// ---- 2. YoY price growth by powiat --------------------------
-				const yoyRaw = await all<{
-					teryt: string;
-					window: string;
-					avgM2: number;
-					windowTx: number;
-				}>(sql`
+	// ---- 2. YoY price growth by powiat --------------------------
+	const yoyRaw = await all<{
+		teryt: string;
+		window: string;
+		avgM2: number;
+		windowTx: number;
+	}>(sql`
 					SELECT substr(parcel_id, 1, 4) AS teryt,
 					       CASE WHEN date >= ${daysAgo(365)}
 					            THEN 'recent' ELSE 'prior' END AS window,
@@ -143,51 +144,51 @@ export const Route = createFileRoute("/api/market-charts")({
 					  AND date BETWEEN ${daysAgo(365 * 12)} AND ${daysAgo(0)}
 					GROUP BY teryt, window
 				`);
-				const txCountRaw = await all<{ teryt: string; tx: number }>(sql`
+	const txCountRaw = await all<{ teryt: string; tx: number }>(sql`
 					SELECT substr(parcel_id, 1, 4) AS teryt, count(*) AS tx
 					FROM transactions
 					WHERE ${inTrackedRegions} AND parcel_id IS NOT NULL AND date >= ${daysAgo(365)}
 					GROUP BY teryt
 				`);
-				const txCount = new Map(txCountRaw.map((r) => [r.teryt, r.tx]));
-				const byPowiat = new Map<string, { recent?: number; prior?: number }>();
-				const winTx = new Map<string, number>();
-				for (const r of yoyRaw) {
-					const e = byPowiat.get(r.teryt) ?? {};
-					if (r.window === "recent") e.recent = r.avgM2;
-					else e.prior = r.avgM2;
-					byPowiat.set(r.teryt, e);
-					winTx.set(`${r.teryt}:${r.window}`, r.windowTx);
-				}
-				const yoyByPowiat = [...byPowiat.entries()]
-					.filter(([teryt]) => POWIAT_NAMES[teryt] != null)
-					.map(([teryt, e]) => ({
-						powiat: POWIAT_NAMES[teryt] ?? teryt,
-						growthPct:
-							e.recent != null && e.prior != null && e.prior > 0
-								? ((e.recent - e.prior) / e.prior) * 100
-								: null,
-						recent: e.recent != null ? Math.round(e.recent) : null,
-						prior: e.prior != null ? Math.round(e.prior) : null,
-						tx: txCount.get(teryt) ?? 0,
-					}))
-					.filter((r) => {
-						if (r.growthPct == null || Math.abs(r.growthPct) > 200) {
-							return false;
-						}
-						const key = Object.keys(POWIAT_NAMES).find(
-							(k) => POWIAT_NAMES[k] === r.powiat,
-						);
-						if (!key) return false;
-						return (
-							(winTx.get(`${key}:recent`) ?? 0) >= 10 &&
-							(winTx.get(`${key}:prior`) ?? 0) >= 10
-						);
-					})
-					.sort((a, b) => (b.growthPct ?? 0) - (a.growthPct ?? 0));
+	const txCount = new Map(txCountRaw.map((r) => [r.teryt, r.tx]));
+	const byPowiat = new Map<string, { recent?: number; prior?: number }>();
+	const winTx = new Map<string, number>();
+	for (const r of yoyRaw) {
+		const e = byPowiat.get(r.teryt) ?? {};
+		if (r.window === "recent") e.recent = r.avgM2;
+		else e.prior = r.avgM2;
+		byPowiat.set(r.teryt, e);
+		winTx.set(`${r.teryt}:${r.window}`, r.windowTx);
+	}
+	const yoyByPowiat = [...byPowiat.entries()]
+		.filter(([teryt]) => POWIAT_NAMES[teryt] != null)
+		.map(([teryt, e]) => ({
+			powiat: POWIAT_NAMES[teryt] ?? teryt,
+			growthPct:
+				e.recent != null && e.prior != null && e.prior > 0
+					? ((e.recent - e.prior) / e.prior) * 100
+					: null,
+			recent: e.recent != null ? Math.round(e.recent) : null,
+			prior: e.prior != null ? Math.round(e.prior) : null,
+			tx: txCount.get(teryt) ?? 0,
+		}))
+		.filter((r) => {
+			if (r.growthPct == null || Math.abs(r.growthPct) > 200) {
+				return false;
+			}
+			const key = Object.keys(POWIAT_NAMES).find(
+				(k) => POWIAT_NAMES[k] === r.powiat,
+			);
+			if (!key) return false;
+			return (
+				(winTx.get(`${key}:recent`) ?? 0) >= 10 &&
+				(winTx.get(`${key}:prior`) ?? 0) >= 10
+			);
+		})
+		.sort((a, b) => (b.growthPct ?? 0) - (a.growthPct ?? 0));
 
-				// ---- 3. Transaction volume by month -------------------------
-				const txVolume = await all<{ month: string; tx: number }>(sql`
+	// ---- 3. Transaction volume by month -------------------------
+	const txVolume = await all<{ month: string; tx: number }>(sql`
 					SELECT substr(datetime(date, 'unixepoch'), 1, 7) AS month,
 					       count(*) AS tx
 					FROM transactions
@@ -195,12 +196,12 @@ export const Route = createFileRoute("/api/market-charts")({
 					GROUP BY month ORDER BY month
 				`);
 
-				// ---- 4. Primary vs secondary by powiat ----------------------
-				const primaryRaw = await all<{
-					teryt: string;
-					market: number;
-					avgM2: number;
-				}>(sql`
+	// ---- 4. Primary vs secondary by powiat ----------------------
+	const primaryRaw = await all<{
+		teryt: string;
+		market: number;
+		avgM2: number;
+	}>(sql`
 					SELECT substr(parcel_id, 1, 4) AS teryt, market,
 					       avg(pricePerM2) AS avgM2
 					FROM transactions
@@ -210,26 +211,26 @@ export const Route = createFileRoute("/api/market-charts")({
 					  AND date BETWEEN ${daysAgo(365 * 12)} AND ${daysAgo(0)}
 					GROUP BY teryt, market HAVING count(*) >= 5
 				`);
-				const pv = new Map<string, { wtorny?: number; pierwotny?: number }>();
-				for (const r of primaryRaw) {
-					const e = pv.get(r.teryt) ?? {};
-					// RCN market codes follow our Kraków zip import: 1 = wtórny,
-					// 2 = pierwotny.
-					if (r.market === 1) e.wtorny = Math.round(r.avgM2);
-					else e.pierwotny = Math.round(r.avgM2);
-					pv.set(r.teryt, e);
-				}
-				const primaryVsSecondary = [...pv.entries()]
-					.filter(([teryt]) => POWIAT_NAMES[teryt] != null)
-					.filter(([, e]) => e.wtorny != null && e.pierwotny != null)
-					.map(([teryt, e]) => ({
-						powiat: POWIAT_NAMES[teryt] ?? teryt,
-						wtorny: e.wtorny ?? 0,
-						pierwotny: e.pierwotny ?? 0,
-					}));
+	const pv = new Map<string, { wtorny?: number; pierwotny?: number }>();
+	for (const r of primaryRaw) {
+		const e = pv.get(r.teryt) ?? {};
+		// RCN market codes follow our Kraków zip import: 1 = wtórny,
+		// 2 = pierwotny.
+		if (r.market === 1) e.wtorny = Math.round(r.avgM2);
+		else e.pierwotny = Math.round(r.avgM2);
+		pv.set(r.teryt, e);
+	}
+	const primaryVsSecondary = [...pv.entries()]
+		.filter(([teryt]) => POWIAT_NAMES[teryt] != null)
+		.filter(([, e]) => e.wtorny != null && e.pierwotny != null)
+		.map(([teryt, e]) => ({
+			powiat: POWIAT_NAMES[teryt] ?? teryt,
+			wtorny: e.wtorny ?? 0,
+			pierwotny: e.pierwotny ?? 0,
+		}));
 
-				// ---- 5. Asking vs transaction price by month ----------------
-				const askTrend = await all<{ month: string; avgM2: number }>(sql`
+	// ---- 5. Asking vs transaction price by month ----------------
+	const askTrend = await all<{ month: string; avgM2: number }>(sql`
 					SELECT substr(datetime(first_seen_at, 'unixepoch'), 1, 7) AS month,
 					       avg(pricePerM2) AS avgM2
 					FROM listings
@@ -238,27 +239,27 @@ export const Route = createFileRoute("/api/market-charts")({
 					  AND first_seen_at >= ${daysAgo(730)}
 					GROUP BY month
 				`);
-				const askMap = new Map(askTrend.map((r) => [r.month, r.avgM2]));
-				const offerVsTxGap = priceTrend
-					.filter((r) => askMap.has(r.month))
-					.map((r) => {
-						const ask = askMap.get(r.month) as number;
-						return {
-							month: r.month,
-							askM2: Math.round(ask),
-							txM2: Math.round(r.avgM2),
-							gapPct: ((ask - r.avgM2) / r.avgM2) * 100,
-						};
-					});
+	const askMap = new Map(askTrend.map((r) => [r.month, r.avgM2]));
+	const offerVsTxGap = priceTrend
+		.filter((r) => askMap.has(r.month))
+		.map((r) => {
+			const ask = askMap.get(r.month) as number;
+			return {
+				month: r.month,
+				askM2: Math.round(ask),
+				txM2: Math.round(r.avgM2),
+				gapPct: ((ask - r.avgM2) / r.avgM2) * 100,
+			};
+		});
 
-				// ---- 6. Long-term gross yield by city -----------------------
-				const grossYieldByCity = await all<{
-					city: string;
-					saleM2: number;
-					rentM2: number;
-					saleCount: number;
-					rentCount: number;
-				}>(sql`
+	// ---- 6. Long-term gross yield by city -----------------------
+	const grossYieldByCity = await all<{
+		city: string;
+		saleM2: number;
+		rentM2: number;
+		saleCount: number;
+		rentCount: number;
+	}>(sql`
 					WITH s AS (
 						SELECT ${CITY_CASE} AS city, avg(pricePerM2) AS saleM2,
 						       count(*) AS saleCount
@@ -276,19 +277,19 @@ export const Route = createFileRoute("/api/market-charts")({
 					FROM s JOIN r ON r.city = s.city
 					ORDER BY (r.rentM2 * 12 * 100.0 / s.saleM2) DESC
 				`);
-				const yieldRows = grossYieldByCity
-					.filter((r) => r.city !== "brak lokalizacji")
-					.map((r) => ({
-						...r,
-						yieldPct: (r.rentM2 * 12 * 100) / r.saleM2,
-					}));
+	const yieldRows = grossYieldByCity
+		.filter((r) => r.city !== "brak lokalizacji")
+		.map((r) => ({
+			...r,
+			yieldPct: (r.rentM2 * 12 * 100) / r.saleM2,
+		}));
 
-				// ---- 7. STR occupancy by city -------------------------------
-				const strOccupancyByCity = await all<{
-					city: string;
-					occupancy: number;
-					n: number;
-				}>(sql`
+	// ---- 7. STR occupancy by city -------------------------------
+	const strOccupancyByCity = await all<{
+		city: string;
+		occupancy: number;
+		n: number;
+	}>(sql`
 					SELECT ${CITY_CASE} AS city,
 					       avg(o.occupancy_rate) AS occupancy,
 					       count(*) AS n
@@ -300,12 +301,12 @@ export const Route = createFileRoute("/api/market-charts")({
 					ORDER BY occupancy DESC
 				`);
 
-				// ---- 8. STR nightly price by month (airbnb vs booking) ------
-				const strPriceByMonth = await all<{
-					month: string;
-					source: string;
-					avgPrice: number;
-				}>(sql`
+	// ---- 8. STR nightly price by month (airbnb vs booking) ------
+	const strPriceByMonth = await all<{
+		month: string;
+		source: string;
+		avgPrice: number;
+	}>(sql`
 					SELECT m.month AS month, l.source AS source,
 					       avg(m.avg_effective_nightly_price) AS avgPrice
 					FROM listing_monthly_price m
@@ -316,22 +317,22 @@ export const Route = createFileRoute("/api/market-charts")({
 					ORDER BY m.month
 				`);
 
-				// ---- 9. Occupancy by month (seasonality) --------------------
-				const occupancyByMonth = await all<{
-					month: string;
-					occupancy: number;
-				}>(sql`
+	// ---- 9. Occupancy by month (seasonality) --------------------
+	const occupancyByMonth = await all<{
+		month: string;
+		occupancy: number;
+	}>(sql`
 					SELECT month, avg(occupancy_rate) AS occupancy
 					FROM listing_occupancy
 					GROUP BY month ORDER BY month
 				`);
 
-				// ---- 10. Weekday premium ------------------------------------
-				const weekdayPremium = await all<{
-					weekday: number;
-					avgPrice: number;
-					bookedShare: number;
-				}>(sql`
+	// ---- 10. Weekday premium ------------------------------------
+	const weekdayPremium = await all<{
+		weekday: number;
+		avgPrice: number;
+		bookedShare: number;
+	}>(sql`
 					SELECT weekday, avg(avg_effective_nightly_price) AS avgPrice,
 					       avg(CASE WHEN sample_days > 0
 					            THEN booked_nights * 1.0 / sample_days ELSE 0 END)
@@ -341,24 +342,22 @@ export const Route = createFileRoute("/api/market-charts")({
 					GROUP BY weekday ORDER BY weekday
 				`);
 
-				// ---- 11. Occupancy vs yield scatter (city level) ------------
-				const occMap = new Map(
-					strOccupancyByCity.map((r) => [r.city, r.occupancy]),
-				);
-				const occupancyVsYield = yieldRows
-					.filter((r) => occMap.has(r.city))
-					.map((r) => ({
-						city: r.city,
-						yieldPct: r.yieldPct,
-						occupancy: (occMap.get(r.city) ?? 0) * 100,
-					}));
+	// ---- 11. Occupancy vs yield scatter (city level) ------------
+	const occMap = new Map(strOccupancyByCity.map((r) => [r.city, r.occupancy]));
+	const occupancyVsYield = yieldRows
+		.filter((r) => occMap.has(r.city))
+		.map((r) => ({
+			city: r.city,
+			yieldPct: r.yieldPct,
+			occupancy: (occMap.get(r.city) ?? 0) * 100,
+		}));
 
-				// ---- 12. Price per m2 by area segment -----------------------
-				const areaSegments = await all<{
-					label: string;
-					avgM2: number;
-					n: number;
-				}>(sql`
+	// ---- 12. Price per m2 by area segment -----------------------
+	const areaSegments = await all<{
+		label: string;
+		avgM2: number;
+		n: number;
+	}>(sql`
 					SELECT label, avg(pricePerM2) AS avgM2, count(*) AS n
 					FROM (
 						SELECT CASE
@@ -378,12 +377,12 @@ export const Route = createFileRoute("/api/market-charts")({
 						WHEN '70-100' THEN 4 ELSE 5 END
 				`);
 
-				// ---- 13. New supply: listings per month by segment ----------
-				const newSupply = await all<{
-					month: string;
-					segment: string;
-					n: number;
-				}>(sql`
+	// ---- 13. New supply: listings per month by segment ----------
+	const newSupply = await all<{
+		month: string;
+		segment: string;
+		n: number;
+	}>(sql`
 					SELECT substr(datetime(first_seen_at, 'unixepoch'), 1, 7) AS month,
 					       CASE WHEN offer_type = 'rental' THEN 'najem'
 					            WHEN source IN ('airbnb', 'booking') THEN 'STR'
@@ -395,13 +394,13 @@ export const Route = createFileRoute("/api/market-charts")({
 					GROUP BY month, segment ORDER BY month
 				`);
 
-				// ---- 14. Avg nightly by city (STR asking price) -------------
-				const nightlyByCity = await all<{
-					city: string;
-					source: string;
-					avgNightly: number;
-					n: number;
-				}>(sql`
+	// ---- 14. Avg nightly by city (STR asking price) -------------
+	const nightlyByCity = await all<{
+		city: string;
+		source: string;
+		avgNightly: number;
+		n: number;
+	}>(sql`
 					SELECT ${CITY_CASE} AS city, source,
 					       avg(price) AS avgNightly, count(*) AS n
 					FROM listings
@@ -411,136 +410,131 @@ export const Route = createFileRoute("/api/market-charts")({
 					ORDER BY avgNightly DESC
 				`);
 
-				// ---- 1b. Rent histogram: liczba ofert wg przedziału czynszu --
-				interface RentHistRow {
-					price: number;
-					utilities: string | null;
-				}
-				const rentRows = await all<RentHistRow>(sql`
+	// ---- 1b. Rent histogram: liczba ofert wg przedziału czynszu --
+	interface RentHistRow {
+		price: number;
+		utilities: string | null;
+	}
+	const rentRows = await all<RentHistRow>(sql`
 					SELECT price, utilities
 					FROM listings
 					WHERE offer_type = 'long_term_rental'
 					  AND price IS NOT NULL AND price > 0
 				`);
-				const rentBuckets = [
-					{ label: "<1500", max: 1500 },
-					{ label: "1500-1999", max: 2000 },
-					{ label: "2000-2499", max: 2500 },
-					{ label: "2500-2999", max: 3000 },
-					{ label: "3000-3499", max: 3500 },
-					{ label: "3500-3999", max: 4000 },
-					{ label: "4000-4999", max: 5000 },
-					{ label: "5000+", max: Infinity },
-				];
-				const rentPrices = rentRows.map((r) => r.price);
-				const rentHistogram = rentBuckets.map((b) => ({
-					label: b.label,
-					n: rentPrices.filter((p) => p < b.max).length,
-				}));
-				// overlapping ranges need cumulative subtraction
-				for (let i = rentHistogram.length - 1; i > 0; i--) {
-					rentHistogram[i].n -= rentHistogram[i - 1].n;
-				}
-				const rentSorted = [...rentPrices].sort((a, b) => a - b);
-				const rentMeta = {
-					avg: Math.round(
-						rentPrices.reduce((a, b) => a + b, 0) /
-							Math.max(1, rentPrices.length),
-					),
-					median:
-						rentSorted.length > 0
-							? rentSorted[Math.floor(rentSorted.length / 2)]
-							: 0,
-				};
+	const rentBuckets = [
+		{ label: "<1500", max: 1500 },
+		{ label: "1500-1999", max: 2000 },
+		{ label: "2000-2499", max: 2500 },
+		{ label: "2500-2999", max: 3000 },
+		{ label: "3000-3499", max: 3500 },
+		{ label: "3500-3999", max: 4000 },
+		{ label: "4000-4999", max: 5000 },
+		{ label: "5000+", max: Infinity },
+	];
+	const rentPrices = rentRows.map((r) => r.price);
+	const rentHistogram = rentBuckets.map((b) => ({
+		label: b.label,
+		n: rentPrices.filter((p) => p < b.max).length,
+	}));
+	// overlapping ranges need cumulative subtraction
+	for (let i = rentHistogram.length - 1; i > 0; i--) {
+		rentHistogram[i].n -= rentHistogram[i - 1].n;
+	}
+	const rentSorted = [...rentPrices].sort((a, b) => a - b);
+	const rentMeta = {
+		avg: Math.round(
+			rentPrices.reduce((a, b) => a + b, 0) / Math.max(1, rentPrices.length),
+		),
+		median:
+			rentSorted.length > 0 ? rentSorted[Math.floor(rentSorted.length / 2)] : 0,
+	};
 
-				// ---- 1c. Opłaty (czynsz adm.) histogram ---------------------
-				const czynszVals: number[] = [];
-				for (const r of rentRows) {
-					try {
-						const u = JSON.parse(r.utilities ?? "{}") as {
-							czynsz?: number | null;
-						};
-						if (typeof u.czynsz === "number" && u.czynsz > 0) {
-							czynszVals.push(u.czynsz);
-						}
-					} catch {
-						// malformed utilities JSON
-					}
-				}
-				const czynszBuckets = [
-					{ label: "0-199", max: 200 },
-					{ label: "200-399", max: 400 },
-					{ label: "400-599", max: 600 },
-					{ label: "600-799", max: 800 },
-					{ label: "800-999", max: 1000 },
-					{ label: "1000-1499", max: 1500 },
-					{ label: "1500+", max: Infinity },
-				];
-				const oplatyHistogram = czynszBuckets.map((b) => ({
-					label: b.label,
-					n: czynszVals.filter((p) => p < b.max).length,
-				}));
-				for (let i = oplatyHistogram.length - 1; i > 0; i--) {
-					oplatyHistogram[i].n -= oplatyHistogram[i - 1].n;
-				}
-				const czynszSorted = [...czynszVals].sort((a, b) => a - b);
-				const oplatyMeta = {
-					avg: Math.round(
-						czynszVals.reduce((a, b) => a + b, 0) /
-							Math.max(1, czynszVals.length),
-					),
-					median:
-						czynszSorted.length > 0
-							? czynszSorted[Math.floor(czynszSorted.length / 2)]
-							: 0,
-				};
+	// ---- 1c. Opłaty (czynsz adm.) histogram ---------------------
+	const czynszVals: number[] = [];
+	for (const r of rentRows) {
+		try {
+			const u = JSON.parse(r.utilities ?? "{}") as {
+				czynsz?: number | null;
+			};
+			if (typeof u.czynsz === "number" && u.czynsz > 0) {
+				czynszVals.push(u.czynsz);
+			}
+		} catch {
+			// malformed utilities JSON
+		}
+	}
+	const czynszBuckets = [
+		{ label: "0-199", max: 200 },
+		{ label: "200-399", max: 400 },
+		{ label: "400-599", max: 600 },
+		{ label: "600-799", max: 800 },
+		{ label: "800-999", max: 1000 },
+		{ label: "1000-1499", max: 1500 },
+		{ label: "1500+", max: Infinity },
+	];
+	const oplatyHistogram = czynszBuckets.map((b) => ({
+		label: b.label,
+		n: czynszVals.filter((p) => p < b.max).length,
+	}));
+	for (let i = oplatyHistogram.length - 1; i > 0; i--) {
+		oplatyHistogram[i].n -= oplatyHistogram[i - 1].n;
+	}
+	const czynszSorted = [...czynszVals].sort((a, b) => a - b);
+	const oplatyMeta = {
+		avg: Math.round(
+			czynszVals.reduce((a, b) => a + b, 0) / Math.max(1, czynszVals.length),
+		),
+		median:
+			czynszSorted.length > 0
+				? czynszSorted[Math.floor(czynszSorted.length / 2)]
+				: 0,
+	};
 
-				// ---- 1c2. Total cost (czynsz + opłaty) histogram ------------
-				const totalVals = rentRows.map((r) => {
-					let czynsz = 0;
-					try {
-						const u = JSON.parse(r.utilities ?? "{}") as {
-							czynsz?: number | null;
-						};
-						if (typeof u.czynsz === "number") czynsz = u.czynsz;
-					} catch {
-						// no utilities info -> treat as 0
-					}
-					return r.price + czynsz;
-				});
-				const totalBuckets = [
-					{ label: "<2000", max: 2000 },
-					{ label: "2000-2499", max: 2500 },
-					{ label: "2500-2999", max: 3000 },
-					{ label: "3000-3499", max: 3500 },
-					{ label: "3500-3999", max: 4000 },
-					{ label: "4000-4999", max: 5000 },
-					{ label: "5000+", max: Infinity },
-				];
-				const totalHistogram = totalBuckets.map((b) => ({
-					label: b.label,
-					n: totalVals.filter((p) => p < b.max).length,
-				}));
-				for (let i = totalHistogram.length - 1; i > 0; i--) {
-					totalHistogram[i].n -= totalHistogram[i - 1].n;
-				}
-				const totalSorted = [...totalVals].sort((a, b) => a - b);
-				const totalMeta = {
-					avg: Math.round(
-						totalVals.reduce((a, b) => a + b, 0) /
-							Math.max(1, totalVals.length),
-					),
-					median:
-						totalSorted.length > 0
-							? totalSorted[Math.floor(totalSorted.length / 2)]
-							: 0,
-				};
+	// ---- 1c2. Total cost (czynsz + opłaty) histogram ------------
+	const totalVals = rentRows.map((r) => {
+		let czynsz = 0;
+		try {
+			const u = JSON.parse(r.utilities ?? "{}") as {
+				czynsz?: number | null;
+			};
+			if (typeof u.czynsz === "number") czynsz = u.czynsz;
+		} catch {
+			// no utilities info -> treat as 0
+		}
+		return r.price + czynsz;
+	});
+	const totalBuckets = [
+		{ label: "<2000", max: 2000 },
+		{ label: "2000-2499", max: 2500 },
+		{ label: "2500-2999", max: 3000 },
+		{ label: "3000-3499", max: 3500 },
+		{ label: "3500-3999", max: 4000 },
+		{ label: "4000-4999", max: 5000 },
+		{ label: "5000+", max: Infinity },
+	];
+	const totalHistogram = totalBuckets.map((b) => ({
+		label: b.label,
+		n: totalVals.filter((p) => p < b.max).length,
+	}));
+	for (let i = totalHistogram.length - 1; i > 0; i--) {
+		totalHistogram[i].n -= totalHistogram[i - 1].n;
+	}
+	const totalSorted = [...totalVals].sort((a, b) => a - b);
+	const totalMeta = {
+		avg: Math.round(
+			totalVals.reduce((a, b) => a + b, 0) / Math.max(1, totalVals.length),
+		),
+		median:
+			totalSorted.length > 0
+				? totalSorted[Math.floor(totalSorted.length / 2)]
+				: 0,
+	};
 
-				const txByRooms = await all<{
-					label: string;
-					avgM2: number;
-					n: number;
-				}>(sql`
+	const txByRooms = await all<{
+		label: string;
+		avgM2: number;
+		n: number;
+	}>(sql`
 					SELECT CASE
 						WHEN rooms IS NULL OR rooms = 0 THEN 'n/d'
 						WHEN rooms = 1 THEN '1 pokój'
@@ -559,13 +553,13 @@ export const Route = createFileRoute("/api/market-charts")({
 						WHEN '3 pokoje' THEN 3 WHEN '4 pokoje' THEN 4 ELSE 5 END
 				`);
 
-				// ---- 15. Price-drop activity by city ------------------------
-				const priceDropsByCity = await all<{
-					city: string;
-					dropped: number;
-					total: number;
-					dropPct: number;
-				}>(sql`
+	// ---- 15. Price-drop activity by city ------------------------
+	const priceDropsByCity = await all<{
+		city: string;
+		dropped: number;
+		total: number;
+		dropPct: number;
+	}>(sql`
 					WITH hist AS (
 						SELECT l.id AS lid, ${CITY_CASE} AS city,
 						       min(h.price) AS minP, max(h.price) AS maxP
@@ -587,31 +581,37 @@ export const Route = createFileRoute("/api/market-charts")({
 					ORDER BY dropPct DESC
 				`);
 
-				return json({
-					rentHistogram,
-					rentMeta,
-					oplatyHistogram,
-					oplatyMeta,
-					totalHistogram,
-					totalMeta,
-					txByRooms,
-					priceTrend,
-					yoyByPowiat,
-					txVolume,
-					primaryVsSecondary,
-					offerVsTxGap,
-					grossYieldByCity: yieldRows,
-					strOccupancyByCity,
-					strPriceByMonth,
-					occupancyByMonth,
-					weekdayPremium,
-					occupancyVsYield,
-					areaSegments,
-					newSupply,
-					nightlyByCity,
-					priceDropsByCity,
-				});
-			},
+	return {
+		rentHistogram,
+		rentMeta,
+		oplatyHistogram,
+		oplatyMeta,
+		totalHistogram,
+		totalMeta,
+		txByRooms,
+		priceTrend,
+		yoyByPowiat,
+		txVolume,
+		primaryVsSecondary,
+		offerVsTxGap,
+		grossYieldByCity: yieldRows,
+		strOccupancyByCity,
+		strPriceByMonth,
+		occupancyByMonth,
+		weekdayPremium,
+		occupancyVsYield,
+		areaSegments,
+		newSupply,
+		nightlyByCity,
+		priceDropsByCity,
+	};
+}
+
+export const Route = createFileRoute("/api/market-charts")({
+	server: {
+		handlers: {
+			GET: async () =>
+				json(await withCache("market-charts", 5 * 60_000, computeMarketCharts)),
 		},
 	},
 });

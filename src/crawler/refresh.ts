@@ -23,6 +23,7 @@ import {
 	setPhase,
 	setSourceProgress,
 } from "./progress.ts";
+import { refreshLockedByOther } from "./refresh-lock.ts";
 import { adapters } from "./sites/index.ts";
 import type { SiteAdapter } from "./types.ts";
 
@@ -131,9 +132,10 @@ export async function refreshAll(
 		firstPageOnly?: boolean;
 	} = {},
 ): Promise<RefreshSummary> {
-	// Single-flight: the hourly task, the dev-boot plugin and the manual
-	// /api/refresh button all land here; never overlap crawls in one process.
-	if (isRunning()) {
+	// Single-flight: the hourly task, the manual /api/refresh button and the
+	// dev-boot child process all land here; never overlap crawls. `isRunning`
+	// covers this process, the lock covers the dev child in another one.
+	if (isRunning() || refreshLockedByOther()) {
 		console.warn("[refresh] already running; skipping concurrent refresh");
 		return {
 			sites: [],
