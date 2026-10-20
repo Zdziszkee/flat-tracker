@@ -6,61 +6,28 @@ import "mapbox-gl/dist/mapbox-gl.css";
 
 import { REGIONS } from "#/crawler/regions";
 import { env } from "#/env";
+import {
+	dateLabel,
+	formatPln,
+	formatUtilities,
+	realizationCaption,
+	yearOf,
+} from "#/lib/format";
+import { escapeHtml } from "#/lib/html";
+import {
+	filterListings,
+	type ListingFilters,
+	parseListingFeatures,
+} from "#/lib/listing-features";
 import type { PropertyKind } from "#/lib/property-kind";
+import { SOURCE_COLORS } from "#/lib/sources";
+import type {
+	ListingDto,
+	ListingsResponse,
+	OfferValuation,
+} from "#/types/listing";
 
-interface ApiListing {
-	id: number;
-	source: string;
-	externalId: string;
-	url: string;
-	title: string;
-	price: number | null;
-	pricePerM2: number | null;
-	areaM2: number | null;
-	rooms: number | null;
-	floor: string | null;
-	district: string | null;
-	address: string | null;
-	lat: number | null;
-	lng: number | null;
-	listedAt: string | null;
-	firstSeenAt: string | null;
-	heatingType: string | null;
-	propertyType: string | null;
-	/** dom / mieszkanie / działka (derived server-side, see property-kind.ts). */
-	propertyKind?: PropertyKind | null;
-	features: string | null;
-	constructionEndLabel?: string | null;
-	constructionEndDate?: string | null;
-	buildingId: number | null;
-	buildingAddress: string | null;
-	mapLat: number | null;
-	mapLng: number | null;
-	offerType?: string;
-	pricePeriod?: string | null;
-	maxGuests?: number | null;
-	bedrooms?: number | null;
-	beds?: number | null;
-	bathrooms?: number | null;
-	rating?: number | null;
-	reviewsCount?: number | null;
-	availabilityCount?: number | null;
-	minimumStayNights?: number | null;
-	utilities?: string | null;
-	transactionStats: {
-		buildingId: number;
-		address: string | null;
-		txCount: number;
-		txAvgPricePerM2: number | null;
-		txMinDate: string | number | null;
-		txMaxDate: string | number | null;
-	} | null;
-}
-
-interface ListingsResponse {
-	listings: ApiListing[];
-	generatedAt: string;
-}
+type ApiListing = ListingDto;
 
 /**
  * Bounding box of every tracked voivodeship (Małopolska + Śląsk), unioned so
@@ -116,24 +83,6 @@ const BUILDING_LAYERS_MINZOOM = 13;
 const DETAIL_3D_MINZOOM = 12;
 
 const TOKEN = env.VITE_MAPBOX_TOKEN;
-
-/** Distinct dot color per data source (legend + map points). */
-const SOURCE_COLORS: Record<string, string> = {
-	otodom: "#2563eb",
-	olx: "#f97316",
-	morizon: "#16a34a",
-	gratka: "#4ade80",
-	domiporta: "#a855f7",
-	"nieruchomosci-online": "#ca8a04",
-	rynekpierwotny: "#06b6d4",
-	investmap: "#0891b2",
-	airbnb: "#ff385c",
-	booking: "#003580",
-	books: "#8b5cf6",
-	skaleczna: "#d946ef",
-	"licytacje-komornik": "#6b7280",
-	budujesie: "#f59e0b",
-};
 
 /** Mapbox match expression coloring each point by its source. */
 function sourceColorExpr(): mapboxgl.ExpressionSpecification {
@@ -210,64 +159,9 @@ function makeBudujesieIcon(): ImageData {
 	return new ImageData(size, size);
 }
 
-function formatPln(n: number | null): string {
-	if (n === null) return "n/d";
-	return new Intl.NumberFormat("pl-PL", {
-		style: "currency",
-		currency: "PLN",
-		maximumFractionDigits: 0,
-	}).format(n);
-}
-
-/** Render parsed utility/administrative fees as a short "Czynsz: ..." line. */
-function formatUtilities(json: string | null | undefined): string {
-	if (!json) return "";
-	try {
-		const u = JSON.parse(json) as Record<string, number | null>;
-		const parts: string[] = [];
-		for (const [key, label] of [
-			["czynsz", "czynsz"],
-			["ogrzewanie", "ogrz."],
-			["prad", "prąd"],
-			["woda", "woda"],
-			["gaz", "gaz"],
-			["smieci", "śmieci"],
-		] as Array<[string, string]>) {
-			const v = u[key];
-			if (typeof v === "number") parts.push(`${label} ${v} zł`);
-		}
-		return parts.length > 0 ? `Opłaty: ${parts.join(" · ")}` : "";
-	} catch {
-		return "";
-	}
-}
-
-/** Extract the 4-digit year from a date string ("2022-05-30") or unix timestamp. */
-function yearOf(d: string | number | null | undefined): string {
-	if (d === null || d === undefined) return "";
-	if (typeof d === "number") {
-		return new Date(d * 1000).getUTCFullYear().toString();
-	}
-	return d.slice(0, 4);
-}
-
-/** 0 = no time window; otherwise keep offers listed within the last N days. */
-function addedWithin(listedAt: string | null, days: 0 | 1 | 7 | 30): boolean {
-	if (days === 0) return true;
-	if (!listedAt) return false;
-	return Date.now() - new Date(listedAt).getTime() <= days * 24 * 3600 * 1000;
-}
-
-function escapeHtml(s: string): string {
-	return s
-		.replaceAll("&", "&amp;")
-		.replaceAll("<", "&lt;")
-		.replaceAll(">", "&gt;")
-		.replaceAll('"', "&quot;");
-}
-
 function popupHtml(l: ApiListing): string {
 	const stats = l.transactionStats;
+	const features = parseListingFeatures(l.features);
 	const minYear = yearOf(stats?.txMinDate);
 	const maxYear = yearOf(stats?.txMaxDate);
 	const range = minYear && maxYear ? ` (${minYear}-${maxYear})` : "";
@@ -315,81 +209,62 @@ function popupHtml(l: ApiListing): string {
 	// while the thread is alive (posts within 18 months) and degrades to a
 	// factual last-activity stamp for archived topics.
 	let budLabel = "Inwestycja";
-	if (isBudujesie && l.features) {
-		try {
-			const f = JSON.parse(l.features) as {
-				replies?: number;
-				views?: number;
-				lastPostAt?: string;
-			};
-			const parts: string[] = [];
-			if (typeof f.replies === "number") parts.push(`${f.replies} odp.`);
-			if (typeof f.views === "number")
-				parts.push(`${f.views.toLocaleString("pl-PL")} wyśw.`);
-			threadStats = parts.join(" · ");
-			const last = f.lastPostAt ? new Date(f.lastPostAt) : null;
-			const fresh =
-				last != null &&
-				!Number.isNaN(last.getTime()) &&
-				Date.now() - last.getTime() < 548 * 24 * 3600e3;
-			budLabel = fresh
-				? "Inwestycja w budowie"
-				: `Inwestycja · ostatnia aktywność ${
-						last && !Number.isNaN(last.getTime())
-							? `${String(last.getMonth() + 1).padStart(2, "0")}.${last.getFullYear()}`
-							: "?"
-					}`;
-		} catch {
-			// malformed features JSON: skip thread stats silently
-		}
+	const budujesie = features.budujesie;
+	if (isBudujesie && budujesie) {
+		const parts: string[] = [];
+		if (typeof budujesie.replies === "number")
+			parts.push(`${budujesie.replies} odp.`);
+		if (typeof budujesie.views === "number")
+			parts.push(`${budujesie.views.toLocaleString("pl-PL")} wyśw.`);
+		threadStats = parts.join(" · ");
+		const last = budujesie.lastPostAt ? new Date(budujesie.lastPostAt) : null;
+		const fresh =
+			last != null &&
+			!Number.isNaN(last.getTime()) &&
+			Date.now() - last.getTime() < 548 * 24 * 3600e3;
+		budLabel = fresh
+			? "Inwestycja w budowie"
+			: `Inwestycja · ostatnia aktywność ${
+					last && !Number.isNaN(last.getTime())
+						? `${String(last.getMonth() + 1).padStart(2, "0")}.${last.getFullYear()}`
+						: "?"
+				}`;
 	}
 
 	// The investment description and the comments under it (scraped from
 	// the topic's first page, features.posts).
 	let threadHtml = "";
-	if (isBudujesie && l.features) {
-		try {
-			const f = JSON.parse(l.features) as {
-				posts?: { author?: string | null; at?: string | null; text?: string }[];
-			};
-			const posts = Array.isArray(f.posts) ? f.posts : [];
-			const opText = posts[0]?.text ?? "";
-			if (opText) {
-				const dateLabel = (at?: string | null): string => {
-					if (!at) return "";
-					const d = new Date(at);
-					return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("pl-PL");
-				};
-				const excerpt = opText.slice(0, 220);
-				const comments = posts.slice(1, 4);
-				threadHtml = `
-      <div class="border-t pt-1 text-xs">
-        <div class="font-medium text-amber-700">Inwestycja</div>
-        <div class="text-gray-600">${escapeHtml(excerpt)}${
-					opText.length > 220 ? "…" : ""
-				}</div>${
-					comments.length > 0
-						? `
-        <div class="mt-1 font-medium text-amber-700">Komentarze</div>${comments
-					.map((c) => {
-						const text = c.text ?? "";
-						const date = dateLabel(c.at);
-						return `
-        <div class="mt-1 text-gray-600"><span class="font-medium text-gray-700">${escapeHtml(
-					c.author ?? "anonim",
-				)}${
-					date ? ` · ${escapeHtml(date)}` : ""
-				}</span>: ${escapeHtml(text.slice(0, 160))}${
-					text.length > 160 ? "…" : ""
-				}</div>`;
-					})
-					.join("")}`
-						: ""
-				}
-      </div>`;
-			}
-		} catch {
-			// malformed features JSON: skip the section silently
+	if (isBudujesie) {
+		const posts = features.budujesie?.posts ?? [];
+		const opText = posts[0]?.text ?? "";
+		if (opText) {
+			const excerpt = opText.slice(0, 220);
+			const comments = posts.slice(1, 4);
+			threadHtml = `
+	      <div class="border-t pt-1 text-xs">
+	        <div class="font-medium text-amber-700">Inwestycja</div>
+	        <div class="text-gray-600">${escapeHtml(excerpt)}${
+						opText.length > 220 ? "…" : ""
+					}</div>${
+						comments.length > 0
+							? `
+	        <div class="mt-1 font-medium text-amber-700">Komentarze</div>${comments
+						.map((c) => {
+							const text = c.text ?? "";
+							const date = dateLabel(c.at);
+							return `
+	        <div class="mt-1 text-gray-600"><span class="font-medium text-gray-700">${escapeHtml(
+						c.author ?? "anonim",
+					)}${
+						date ? ` · ${escapeHtml(date)}` : ""
+					}</span>: ${escapeHtml(text.slice(0, 160))}${
+						text.length > 160 ? "…" : ""
+					}</div>`;
+						})
+						.join("")}`
+							: ""
+					}
+	      </div>`;
 		}
 	}
 
@@ -397,23 +272,9 @@ function popupHtml(l: ApiListing): string {
 	// only: the planned quarter having passed is not proof of delivery.
 	let realizationHtml = "";
 	if (l.constructionEndLabel) {
-		const start = l.constructionEndDate
-			? new Date(l.constructionEndDate)
-			: null;
-		let status = "";
-		if (start && !Number.isNaN(start.getTime())) {
-			// The label names a quarter: its last month ends 3 months after
-			// the quarter-start date stored behind it.
-			const quarterEnd = new Date(start);
-			quarterEnd.setMonth(quarterEnd.getMonth() + 3);
-			status =
-				quarterEnd.getTime() > Date.now()
-					? " · w budowie"
-					: " · planowany termin minął";
-		}
-		realizationHtml = `<div class="text-amber-700">Realizacja: ${escapeHtml(
-			l.constructionEndLabel,
-		)}${status}</div>`;
+		realizationHtml = `<div class="text-amber-700">${escapeHtml(
+			realizationCaption(l.constructionEndLabel, l.constructionEndDate),
+		)}</div>`;
 	}
 
 	// Short-term-rental context lines.
@@ -429,27 +290,19 @@ function popupHtml(l: ApiListing): string {
 
 	// Amenities preview from the enriched features JSON.
 	let amenitiesHtml = "";
-	try {
-		const f: unknown = l.features ? JSON.parse(l.features) : null;
-		const amenities =
-			f &&
-			typeof f === "object" &&
-			Array.isArray((f as Record<string, unknown>).amenities)
-				? ((f as Record<string, unknown>).amenities as unknown[])
-				: [];
-		if (amenities.length > 0) {
-			const shown = amenities.slice(0, 6).map((a) => escapeHtml(String(a)));
-			const rest = amenities.length - shown.length;
-			amenitiesHtml = `
-      <div class="border-t pt-1 text-xs">
-        <div class="font-medium text-emerald-700">Udogodnienia</div>
-        <div class="text-gray-600">${shown.join(", ")}${
-					rest > 0 ? ` <span class="text-gray-400">+${rest} więcej</span>` : ""
-				}</div>
-      </div>`;
-		}
-	} catch {
-		// malformed features JSON: skip the section silently
+	const amenities = features.airbnb?.amenities ?? [];
+	if (amenities.length > 0) {
+		const shown = amenities.slice(0, 6).map((a) => escapeHtml(a));
+		const rest = amenities.length - shown.length;
+		amenitiesHtml = `
+	      <div class="border-t pt-1 text-xs">
+	        <div class="font-medium text-emerald-700">Udogodnienia</div>
+	        <div class="text-gray-600">${shown.join(", ")}${
+						rest > 0
+							? ` <span class="text-gray-400">+${rest} więcej</span>`
+							: ""
+					}</div>
+	      </div>`;
 	}
 
 	return `
@@ -731,28 +584,16 @@ export default function MapView({
 		staleTime: 5 * 60 * 1000,
 	});
 
+	const filters: ListingFilters = useMemo(
+		() => ({ source, days, offerType, kind }),
+		[source, days, offerType, kind],
+	);
 	// Memoized so MapCanvas's data-sync effects only re-run on real changes
 	// (a fresh array identity every render used to re-serialize + re-push the
 	// whole GeoJSON payload into mapbox on every parent render).
 	const listings = useMemo(
-		() =>
-			(data?.listings ?? []).filter(
-				(l) =>
-					(source === "all" || l.source === source) &&
-					// dom / mieszkanie / działka: untyped rows (investments, odd
-					// stays) show only under "Wszystkie".
-					(kind === "all" || l.propertyKind === kind) &&
-					// Long-lived construction investments are inventory, not fresh
-					// offers: the "listed within N days" window must not hide them.
-					(l.source === "budujesie" ||
-						(l.source === "investmap" && l.externalId.startsWith("inv-")) ||
-						addedWithin(l.listedAt ?? l.firstSeenAt, days)) &&
-					(offerType === "all" ||
-						(offerType === "rental"
-							? l.offerType !== "sale"
-							: l.offerType === "sale")),
-			),
-		[data, source, days, offerType, kind],
+		() => filterListings(data?.listings ?? [], filters),
+		[data, filters],
 	);
 	const occupancyCells = useMemo(
 		() => occupancyData?.cells ?? [],
@@ -1889,33 +1730,6 @@ function MapCanvas({
 			map.on("mouseleave", "parcel-fill", () => {
 				map.getCanvas().style.cursor = "";
 			});
-			interface OfferValuation {
-				offer: { id: number; price: number | null; pricePerM2: number | null };
-				comps: {
-					building: { avgM2: number; n: number } | null;
-					area: { avgM2: number; n: number } | null;
-					rcn: { avgM2: number; n: number } | null;
-					fairM2: number | null;
-				};
-				overUnderPct: number | null;
-				rating: { label: string; tone: string } | null;
-				lt: {
-					rentAvg: number;
-					czynszAvg: number;
-					n: number;
-					netMonthly: number;
-					netYearly: number;
-					netYieldPct: number | null;
-				} | null;
-				str: {
-					nightlyAvg: number;
-					occupancy: number;
-					n: number;
-					netMonthly: number;
-					netYearly: number;
-					netYieldPct: number | null;
-				} | null;
-			}
 			const renderValuation = (v: OfferValuation): string => {
 				const pl = (n: number) => Math.round(n).toLocaleString("pl-PL");
 				const comp = (label: string, x: { avgM2: number; n: number } | null) =>

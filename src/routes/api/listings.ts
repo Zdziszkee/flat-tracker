@@ -5,6 +5,7 @@ import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { HIDDEN_SOURCES } from "#/crawler/hidden-sources";
 import { db } from "#/db/index";
 import { buildings, listings, transactions } from "#/db/schema";
+import { parseListingFeatures } from "#/lib/listing-features";
 import { propertyKindOf } from "#/lib/property-kind";
 
 interface BuildingSummary {
@@ -152,15 +153,9 @@ export const Route = createFileRoute("/api/listings")({
 					// out, never re-emitted) — those would otherwise double-pin
 					// with their stand-in forever.
 					investmapFlatTitles.add(r.title.split(" — ")[0] ?? "");
-					try {
-						const f = r.features
-							? (JSON.parse(r.features) as { investment_id?: unknown })
-							: null;
-						if (f?.investment_id != null)
-							investmapFlatIds.add(String(f.investment_id));
-					} catch {
-						// malformed features JSON: no investment id to dedupe on
-					}
+					const features = parseListingFeatures(r.features);
+					const investmentId = features.investmap?.investmentId;
+					if (investmentId) investmapFlatIds.add(investmentId);
 				}
 				const visibleRows = notHidden.filter(
 					(r) =>

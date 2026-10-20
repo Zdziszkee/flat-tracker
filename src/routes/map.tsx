@@ -1,6 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
+import {
+	DAY_OPTIONS,
+	type DaysFilter,
+	type OfferTypeFilter,
+} from "#/lib/listing-features";
 import { PROPERTY_KIND_LABELS, type PropertyKind } from "#/lib/property-kind";
+import { sourceLabel } from "#/lib/sources";
 
 // mapbox-gl touches `window` at module load, so it must never be imported
 // during SSR. The lazy import is only triggered after mount on the client.
@@ -16,35 +22,10 @@ const PARCELS_STORAGE_KEY = "flat-tracker:show-parcels";
 const RAILWAYS_STORAGE_KEY = "flat-tracker:show-railways";
 const OCCUPANCY_STORAGE_KEY = "flat-tracker:show-occupancy";
 
-const SOURCE_LABELS: Record<string, string> = {
-	otodom: "Otodom",
-	olx: "OLX",
-	morizon: "Morizon",
-	gratka: "Gratka",
-	domiporta: "Domiporta",
-	"nieruchomosci-online": "Nieruchomosci-online",
-	rynekpierwotny: "Rynekpierwotny",
-	investmap: "Investmap",
-	budujesie: "BudujeSie (forum inwestycji)",
-	"licytacje-komornik": "Licytacje komornicze",
-	airbnb: "Airbnb",
-	booking: "Booking",
-};
-
-/** 0 = no time window (all offers). */
-type DaysFilter = 0 | 1 | 7 | 30;
-
-const DAY_OPTIONS: Array<{ value: DaysFilter; label: string }> = [
-	{ value: 0, label: "Wszystkie" },
-	{ value: 30, label: "Ostatnie 30 dni" },
-	{ value: 7, label: "Ostatnie 7 dni" },
-	{ value: 1, label: "Ostatnie 24 h" },
-];
-
 function MapPage() {
 	const [source, setSource] = useState("all");
 	const [days, setDays] = useState<DaysFilter>(0);
-	const [offerType, setOfferType] = useState<"all" | "sale" | "rental">("all");
+	const [offerType, setOfferType] = useState<OfferTypeFilter>("all");
 	const [kind, setKind] = useState<PropertyKind | "all">("all");
 	const [sources, setSources] = useState<string[]>([]);
 	const [mounted, setMounted] = useState(false);
@@ -101,7 +82,7 @@ function MapPage() {
 					<option value="all">Wszystkie</option>
 					{sources.map((s) => (
 						<option key={s} value={s}>
-							{SOURCE_LABELS[s] ?? s}
+							{sourceLabel(s)}
 						</option>
 					))}
 				</select>

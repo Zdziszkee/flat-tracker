@@ -1,121 +1,26 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import {
+	dateLabel,
+	formatDate,
+	formatNumber,
+	realizationCaption,
+} from "#/lib/format";
+import {
+	DAY_OPTIONS,
+	type DaysFilter,
+	filterListings,
+	listingFacets,
+	parseListingFeatures,
+} from "#/lib/listing-features";
 import { PROPERTY_KIND_LABELS, type PropertyKind } from "#/lib/property-kind";
-
-interface Row {
-	id: number;
-	source: string;
-	offerType: string;
-	title: string;
-	price: number | null;
-	pricePerM2: number | null;
-	areaM2: number | null;
-	rooms: number | null;
-	district: string | null;
-	url: string;
-	listedAt: string | null;
-	firstSeenAt: string | null;
-	heatingType: string | null;
-	propertyType: string | null;
-	propertyKind?: PropertyKind | null;
-	features: string | null;
-	constructionEndLabel: string | null;
-	constructionEndDate: string | null;
-}
-
-interface ListingsResponse {
-	listings: Row[];
-	generatedAt: string;
-}
-
-function fmt(n: number | null): string {
-	if (n === null) return "";
-	return new Intl.NumberFormat("pl-PL", { maximumFractionDigits: 0 }).format(n);
-}
-
-/**
- * Investmap's "realizacja" quarter is a planned completion, so the status
- * must stay factual: the quarter carrying the planned end having passed is
- * not proof of delivery.
- */
-function realizationCaption(label: string, date: string | null): string {
-	let status = "";
-	if (date) {
-		const start = new Date(date);
-		if (!Number.isNaN(start.getTime())) {
-			// The label names a quarter: its last month ends 3 months after
-			// the quarter-start date stored behind it.
-			const quarterEnd = new Date(start);
-			quarterEnd.setMonth(quarterEnd.getMonth() + 3);
-			status =
-				quarterEnd.getTime() > Date.now()
-					? " · w budowie"
-					: " · planowany termin minął";
-		}
-	}
-	return `Realizacja: ${label}${status}`;
-}
-
-/** 0 = no time window (all offers). */
-type DaysFilter = 0 | 1 | 7 | 30;
-
-const DAY_OPTIONS: Array<{ value: DaysFilter; label: string }> = [
-	{ value: 0, label: "Wszystkie" },
-	{ value: 30, label: "Ostatnie 30 dni" },
-	{ value: 7, label: "Ostatnie 7 dni" },
-	{ value: 1, label: "Ostatnie 24 h" },
-];
-
-const SOURCE_LABELS: Record<string, string> = {
-	otodom: "Otodom",
-	olx: "OLX",
-	morizon: "Morizon",
-	gratka: "Gratka",
-	domiporta: "Domiporta",
-	"nieruchomosci-online": "Nieruchomosci-online",
-	rynekpierwotny: "Rynekpierwotny",
-	"licytacje-komornik": "Licytacje komornicze",
-	budujesie: "BudujeSie (forum inwestycji)",
-	airbnb: "Airbnb",
-	booking: "Booking",
-};
-
-interface OfferValuation {
-	offer: {
-		id: number;
-		price: number | null;
-		pricePerM2: number | null;
-		areaM2: number | null;
-		offerType: string;
-	};
-	comps: {
-		building: { avgM2: number; n: number } | null;
-		area: { avgM2: number; n: number } | null;
-		rcn: { avgM2: number; n: number } | null;
-		fairM2: number | null;
-	};
-	overUnderPct: number | null;
-	rating: { label: string; tone: string } | null;
-	lt: {
-		rentAvg: number;
-		czynszAvg: number;
-		n: number;
-		basis: string;
-		netMonthly: number;
-		netYearly: number;
-		netYieldPct: number | null;
-	} | null;
-	str: {
-		nightlyAvg: number;
-		occupancy: number;
-		n: number;
-		basis: string;
-		netMonthly: number;
-		netYearly: number;
-		netYieldPct: number | null;
-	} | null;
-}
+import { sourceLabel } from "#/lib/sources";
+import type {
+	ListingDto,
+	ListingsResponse,
+	OfferValuation,
+} from "#/types/listing";
 
 function ValuationPanel({ id }: { id: number }) {
 	const { data, isLoading } = useQuery<OfferValuation>({
@@ -140,7 +45,7 @@ function ValuationPanel({ id }: { id: number }) {
 			<div className="flex justify-between">
 				<span className="text-gray-500">{label}</span>
 				<span>
-					{Math.round(v.avgM2).toLocaleString("pl-PL")} zł/m²
+					{formatNumber(Math.round(v.avgM2))} zł/m²
 					<span className="text-gray-400"> ({v.n})</span>
 				</span>
 			</div>
@@ -151,12 +56,11 @@ function ValuationPanel({ id }: { id: number }) {
 				<span className="font-medium">Wycena:</span>
 				{c.fairM2 != null && (
 					<span>
-						wartość godziwa <b>{c.fairM2.toLocaleString("pl-PL")} zł/m²</b>
+						wartość godziwa <b>{formatNumber(c.fairM2)} zł/m²</b>
 						{data.offer.pricePerM2 != null && (
 							<span className="text-gray-500">
 								{" "}
-								(oferta{" "}
-								{Math.round(data.offer.pricePerM2).toLocaleString("pl-PL")})
+								(oferta {formatNumber(Math.round(data.offer.pricePerM2))})
 							</span>
 						)}
 					</span>
@@ -183,12 +87,12 @@ function ValuationPanel({ id }: { id: number }) {
 							Najem długoterminowy (netto)
 						</div>
 						<div className="text-gray-600">
-							{data.lt.rentAvg.toLocaleString("pl-PL")} zł −{" "}
-							{data.lt.czynszAvg.toLocaleString("pl-PL")} opłaty =
-							<b> {data.lt.netMonthly.toLocaleString("pl-PL")} zł/mies.</b>
+							{formatNumber(data.lt.rentAvg)} zł −{" "}
+							{formatNumber(data.lt.czynszAvg)} opłaty =
+							<b> {formatNumber(data.lt.netMonthly)} zł/mies.</b>
 						</div>
 						<div className="text-gray-500">
-							rocznie netto {data.lt.netYearly.toLocaleString("pl-PL")} zł · ROI{" "}
+							rocznie netto {formatNumber(data.lt.netYearly)} zł · ROI{" "}
 							<b>{data.lt.netYieldPct?.toFixed(1) ?? "—"}%</b> ({data.lt.basis},{" "}
 							{data.lt.n})
 						</div>
@@ -200,13 +104,13 @@ function ValuationPanel({ id }: { id: number }) {
 							Najem krótkoterminowy (netto, szac.)
 						</div>
 						<div className="text-gray-600">
-							{data.str.nightlyAvg.toLocaleString("pl-PL")} zł/noc ×{" "}
+							{formatNumber(data.str.nightlyAvg)} zł/noc ×{" "}
 							{(data.str.occupancy * 100).toFixed(0)}% obłożenia =
-							<b> {data.str.netMonthly.toLocaleString("pl-PL")} zł/mies.</b>
+							<b> {formatNumber(data.str.netMonthly)} zł/mies.</b>
 						</div>
 						<div className="text-gray-500">
-							rocznie netto {data.str.netYearly.toLocaleString("pl-PL")} zł ·
-							ROI <b>{data.str.netYieldPct?.toFixed(1) ?? "—"}%</b> (
+							rocznie netto {formatNumber(data.str.netYearly)} zł · ROI{" "}
+							<b>{data.str.netYieldPct?.toFixed(1) ?? "—"}%</b> (
 							{data.str.basis}, {data.str.n})
 						</div>
 					</div>
@@ -221,49 +125,23 @@ function ValuationPanel({ id }: { id: number }) {
 	);
 }
 
-function addedWithin(listedAt: string | null, days: DaysFilter): boolean {
-	if (days === 0) return true;
-	if (!listedAt) return false;
-	return Date.now() - new Date(listedAt).getTime() <= days * 24 * 3600 * 1000;
-}
-
-function addedLabel(row: Row): string {
-	const added = row.listedAt ?? row.firstSeenAt;
-	return added ? new Date(added).toLocaleDateString("pl-PL") : "";
-}
-
-interface ThreadPostView {
-	author?: string | null;
-	at?: string | null;
-	text?: string;
-}
-
-/** Forum investment detail: the topic description with the comments under
- * it (scraped from the thread's first page into features.posts). */
-function BudujesieThreadPanel({ row }: { row: Row }) {
-	let posts: ThreadPostView[] = [];
-	try {
-		const f: unknown = row.features ? JSON.parse(row.features) : null;
-		const raw =
-			f && typeof f === "object" ? (f as { posts?: unknown }).posts : null;
-		if (Array.isArray(raw)) posts = raw as ThreadPostView[];
-	} catch {
-		// malformed features JSON: no posts
-	}
+/**
+ * Forum investment detail: the topic description with the comments under it
+ * (scraped from the thread's first page into features.posts).
+ */
+function BudujesieThreadPanel({ row }: { row: ListingDto }) {
+	const features = parseListingFeatures(row.features);
+	const posts = features.budujesie?.posts ?? [];
 	const opText = posts[0]?.text ?? "";
 	const comments = posts.slice(1, 8);
-	const dateLabel = (at?: string | null): string => {
-		if (!at) return "";
-		const d = new Date(at);
-		return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("pl-PL");
-	};
-	if (!opText && comments.length === 0)
+	if (!opText && comments.length === 0) {
 		return (
 			<div className="p-4 text-sm text-gray-500">
 				Brak pobranej treści wątku — odśwież źródło, aby pobrać opis inwestycji
 				i komentarze.
 			</div>
 		);
+	}
 	return (
 		<div className="p-4 text-sm">
 			{opText && (
@@ -313,34 +191,13 @@ function ListingsPage() {
 	const sourceOptions = sources?.sources ?? ["otodom", "olx"];
 
 	const allRows = data?.listings ?? [];
-	// Counts must respect the active time window so every option shows how
-	// many offers it would actually list when selected.
-	const daysRows = allRows.filter(
-		// Construction investments are long-lived inventory: the fresh-offers
-		// window must not hide them (same rule as the map).
-		(r) =>
-			r.source === "budujesie" ||
-			addedWithin(r.listedAt ?? r.firstSeenAt, days),
-	);
-	const countsBySource = new Map<string, number>();
-	for (const r of daysRows) {
-		countsBySource.set(r.source, (countsBySource.get(r.source) ?? 0) + 1);
-	}
-	const countsByKind = new Map<string, number>();
-	for (const r of daysRows) {
-		if (r.propertyKind)
-			countsByKind.set(
-				r.propertyKind,
-				(countsByKind.get(r.propertyKind) ?? 0) + 1,
-			);
-	}
-
-	const rows = daysRows.filter(
-		(r) =>
-			(source === "all" || r.source === source) &&
-			// dom / mieszkanie / działka: untyped rows show only under "Wszystkie".
-			(kind === "all" || r.propertyKind === kind),
-	);
+	const facets = listingFacets(allRows, days);
+	const rows = filterListings(allRows, {
+		source,
+		days,
+		kind,
+		offerType: "all",
+	});
 
 	return (
 		<div className="p-6">
@@ -353,11 +210,12 @@ function ListingsPage() {
 						value={source}
 						onChange={(e) => setSource(e.target.value)}
 						className="rounded border px-2 py-1"
+						aria-label="Źródło"
 					>
-						<option value="all">Wszystkie ({daysRows.length})</option>
+						<option value="all">Wszystkie ({facets.total})</option>
 						{sourceOptions.map((s) => (
 							<option key={s} value={s}>
-								{SOURCE_LABELS[s] ?? s} ({countsBySource.get(s) ?? 0})
+								{sourceLabel(s)} ({facets.bySource.get(s) ?? 0})
 							</option>
 						))}
 					</select>
@@ -365,13 +223,13 @@ function ListingsPage() {
 						value={kind}
 						onChange={(e) => setKind(e.target.value as PropertyKind | "all")}
 						className="rounded border px-2 py-1"
-						title="Rodzaj nieruchomości"
+						aria-label="Rodzaj nieruchomości"
 					>
-						<option value="all">Wszystkie ({daysRows.length})</option>
+						<option value="all">Wszystkie ({facets.total})</option>
 						{(Object.keys(PROPERTY_KIND_LABELS) as Array<PropertyKind>).map(
 							(k) => (
 								<option key={k} value={k}>
-									{PROPERTY_KIND_LABELS[k]} ({countsByKind.get(k) ?? 0})
+									{PROPERTY_KIND_LABELS[k]} ({facets.byKind.get(k) ?? 0})
 								</option>
 							),
 						)}
@@ -380,6 +238,7 @@ function ListingsPage() {
 						value={days}
 						onChange={(e) => setDays(Number(e.target.value) as DaysFilter)}
 						className="rounded border px-2 py-1"
+						aria-label="Data dodania"
 					>
 						{DAY_OPTIONS.map((o) => (
 							<option key={o.value} value={o.value}>
@@ -420,88 +279,79 @@ function ListingsPage() {
 							</tr>
 						)}
 						{!isLoading &&
-							rows.map((r) => (
-								<>
-									<tr
-										key={`${r.source}-${r.id}`}
-										className={`border-t ${r.offerType === "sale" || r.offerType === "long_term_rental" || r.source === "budujesie" ? "cursor-pointer hover:bg-gray-50" : ""}`}
-										onClick={() => {
-											if (
-												r.offerType !== "sale" &&
-												r.offerType !== "long_term_rental" &&
-												r.source !== "budujesie"
-											) {
-												return;
-											}
-											setExpanded(expanded === r.id ? null : r.id);
-										}}
-									>
-										<td className="px-3 py-1.5">
-											<span
-												className={
-													r.source === "otodom"
-														? "rounded bg-blue-100 px-1.5 py-0.5 text-xs font-medium text-blue-700"
-														: "rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700"
-												}
-											>
-												{r.source}
-											</span>
-										</td>
-										<td className="max-w-96 px-3 py-1.5">
-											<div className="truncate">
-												<a
-													href={r.url}
-													target="_blank"
-													rel="noreferrer"
-													className="hover:text-blue-600 hover:underline"
-												>
-													{r.title}
-												</a>
-											</div>
-											{r.constructionEndLabel && (
-												<div className="truncate text-xs text-amber-700">
-													{realizationCaption(
-														r.constructionEndLabel,
-														r.constructionEndDate,
-													)}
+							rows.map((r) => {
+								const expandable =
+									r.offerType === "sale" ||
+									r.offerType === "long_term_rental" ||
+									r.source === "budujesie";
+								return (
+									<Fragment key={`${r.source}-${r.id}`}>
+										<tr
+											className={`border-t ${expandable ? "cursor-pointer hover:bg-gray-50" : ""}`}
+											onClick={() => {
+												if (!expandable) return;
+												setExpanded(expanded === r.id ? null : r.id);
+											}}
+										>
+											<td className="px-3 py-1.5">
+												<span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">
+													{sourceLabel(r.source)}
+												</span>
+											</td>
+											<td className="max-w-96 px-3 py-1.5">
+												<div className="truncate">
+													<a
+														href={r.url}
+														target="_blank"
+														rel="noreferrer"
+														className="hover:text-blue-600 hover:underline"
+													>
+														{r.title}
+													</a>
 												</div>
-											)}
-										</td>
-										<td className="px-3 py-1.5 text-right font-medium">
-											{fmt(r.price)}
-										</td>
-										<td className="px-3 py-1.5 text-right">
-											{fmt(r.pricePerM2)}
-										</td>
-										<td className="px-3 py-1.5 text-right">{fmt(r.areaM2)}</td>
-										<td className="px-3 py-1.5 text-right">{r.rooms ?? ""}</td>
-										<td className="px-3 py-1.5">{r.district ?? ""}</td>
-										<td className="px-3 py-1.5 text-gray-500">
-											{addedLabel(r)}
-										</td>
-										<td className="px-2 py-1.5 text-center text-gray-400">
-											{r.offerType === "sale" ||
-											r.offerType === "long_term_rental" ||
-											r.source === "budujesie"
-												? expanded === r.id
-													? "▾"
-													: "▸"
-												: ""}
-										</td>
-									</tr>
-									{expanded === r.id && (
-										<tr key={`${r.source}-${r.id}-x`}>
-											<td colSpan={9} className="border-t bg-gray-50 p-0">
-												{r.source === "budujesie" ? (
-													<BudujesieThreadPanel row={r} />
-												) : (
-													<ValuationPanel id={r.id} />
+												{r.constructionEndLabel && (
+													<div className="truncate text-xs text-amber-700">
+														{realizationCaption(
+															r.constructionEndLabel,
+															r.constructionEndDate,
+														)}
+													</div>
 												)}
 											</td>
+											<td className="px-3 py-1.5 text-right font-medium">
+												{formatNumber(r.price)}
+											</td>
+											<td className="px-3 py-1.5 text-right">
+												{formatNumber(r.pricePerM2)}
+											</td>
+											<td className="px-3 py-1.5 text-right">
+												{formatNumber(r.areaM2)}
+											</td>
+											<td className="px-3 py-1.5 text-right">
+												{r.rooms ?? ""}
+											</td>
+											<td className="px-3 py-1.5">{r.district ?? ""}</td>
+											<td className="px-3 py-1.5 text-gray-500">
+												{formatDate(r.listedAt ?? r.firstSeenAt)}
+											</td>
+											<td className="px-2 py-1.5 text-center text-gray-400">
+												{expandable ? (expanded === r.id ? "▾" : "▸") : ""}
+											</td>
 										</tr>
-									)}
-								</>
-							))}
+										{expanded === r.id && (
+											<tr>
+												<td colSpan={9} className="border-t bg-gray-50 p-0">
+													{r.source === "budujesie" ? (
+														<BudujesieThreadPanel row={r} />
+													) : (
+														<ValuationPanel id={r.id} />
+													)}
+												</td>
+											</tr>
+										)}
+									</Fragment>
+								);
+							})}
 					</tbody>
 				</table>
 			</div>

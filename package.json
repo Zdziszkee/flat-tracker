@@ -32,7 +32,8 @@
     "build:powiats": "tsx scripts/build-powiats-geojson.ts",
     "build:railways": "tsx scripts/build-railways.ts",
     "validate:powiats": "tsx scripts/validate-region-powiats.ts",
-    "validate:regions": "tsx scripts/validate-region-scope.ts"
+    "validate:regions": "tsx scripts/validate-region-scope.ts",
+    "validate:listing-view": "tsx scripts/validate-listing-view.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",
