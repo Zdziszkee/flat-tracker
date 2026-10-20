@@ -221,10 +221,12 @@ export const transactions = sqliteTable(
 		 * feed. The price-first index cannot drive `date >= ?` on its own, so
 		 * the planner fell back to the global `parcel_id` index and scanned
 		 * ~24M rows (measured ~35 s cold). This one holds only the ~3.4M
-		 * regional rows and keeps the last-year count index-only.
+		 * regional rows and keeps the last-year count index-only. The price
+		 * column is included so the monthly price/volume series can scan the
+		 * date range instead of the whole price band.
 		 */
 		index("transactions_region_date_idx")
-			.on(t.date, t.parcelId)
+			.on(t.date, t.pricePerM2, t.parcelId)
 			.where(sql.raw(REGION_PREDICATE_SQL)),
 	],
 );

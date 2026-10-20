@@ -45,6 +45,27 @@ function parseStreetNumber(address: string | null): {
 	return { street, number };
 }
 
+/**
+ * `features` is a full scraper payload, but the client only reads the
+ * amenities preview for Airbnb and the forum posts for Budujesie. Investmap
+ * features are only needed server-side (investment-id dedupe), so dropping
+ * them here removes several MB from the map/table feed without changing a
+ * popup.
+ */
+function clientFeatures(row: {
+	source: string;
+	features: string | null;
+}): string | null {
+	if (row.source === "investmap") return null;
+	if (row.source === "airbnb") {
+		const parsed = parseListingFeatures(row.features);
+		return parsed.airbnb
+			? JSON.stringify({ amenities: parsed.airbnb.amenities })
+			: null;
+	}
+	return row.features;
+}
+
 export const Route = createFileRoute("/api/listings")({
 	server: {
 		handlers: {
@@ -205,6 +226,7 @@ export const Route = createFileRoute("/api/listings")({
 				return json({
 					listings: unique.map((r) => ({
 						...r,
+						features: clientFeatures(r),
 						// dom / mieszkanie / działka — derived once, here, so
 						// map and listings filter on the same classifier.
 						propertyKind: propertyKindOf({

@@ -141,6 +141,13 @@
       "when": 1792525299518,
       "tag": "0019_mean_stepford_cuckoos",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792526602658,
+      "tag": "0020_freezing_vengeance",
+      "breakpoints": true
     }
   ]
 }

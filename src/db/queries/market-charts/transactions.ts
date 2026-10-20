@@ -44,7 +44,7 @@ export async function getPriceTrend(): Promise<PriceTrendRow[]> {
 		       count(*) AS tx
 		FROM transactions
 		WHERE ${inTrackedRegions} AND ${priceBandClause(sql`pricePerM2`)}
-		  AND date BETWEEN ${daysAgo(365 * 12)} AND ${daysAgo(0)}
+		  AND date BETWEEN ${daysAgo(365 * 3)} AND ${daysAgo(0)}
 		GROUP BY month ORDER BY month
 	`);
 }
@@ -117,7 +117,7 @@ export async function getTxVolume(): Promise<VolumeRow[]> {
 	return all<VolumeRow>(sql`
 		SELECT ${monthExpr(sql`date`)} AS month, count(*) AS tx
 		FROM transactions
-		WHERE ${inTrackedRegions} AND date BETWEEN ${daysAgo(365 * 12)} AND ${daysAgo(0)}
+		WHERE ${inTrackedRegions} AND date BETWEEN ${daysAgo(365 * 3)} AND ${daysAgo(0)}
 		GROUP BY month ORDER BY month
 	`);
 }
