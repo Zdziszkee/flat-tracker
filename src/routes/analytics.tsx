@@ -5,6 +5,7 @@ import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { DEFAULT_LISTING_SEARCH } from "#/lib/listing-features";
 
 /**
  * Analityka rynku — 19 wykresów: najem (histogramy czynszu, opłat i
@@ -628,10 +629,18 @@ function AnalyticsPage() {
 					Analityka rynku · Małopolska i Śląsk
 				</h1>
 				<div className="flex items-center gap-3 text-sm">
-					<Link to="/map" className="text-blue-600 underline">
+					<Link
+						to="/map"
+						search={DEFAULT_LISTING_SEARCH}
+						className="text-blue-600 underline"
+					>
 						Mapa
 					</Link>
-					<Link to="/listings" className="text-blue-600 underline">
+					<Link
+						to="/listings"
+						search={DEFAULT_LISTING_SEARCH}
+						className="text-blue-600 underline"
+					>
 						Listings
 					</Link>
 					<Link to="/sources" className="text-blue-600 underline">

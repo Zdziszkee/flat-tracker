@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { DEFAULT_LISTING_SEARCH } from "#/lib/listing-features";
 
 export const Route = createFileRoute("/")({ component: Home });
 
@@ -15,12 +16,14 @@ function Home() {
 			<nav className="mt-8 flex gap-4">
 				<Link
 					to="/map"
+					search={DEFAULT_LISTING_SEARCH}
 					className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
 				>
 					Mapa ofert
 				</Link>
 				<Link
 					to="/listings"
+					search={DEFAULT_LISTING_SEARCH}
 					className="rounded-lg border px-4 py-2 font-medium hover:bg-gray-100"
 				>
 					Lista ogłoszeń

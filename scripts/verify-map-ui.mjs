@@ -42,6 +42,34 @@ await page.waitForFunction(
 	{ timeout: 45000 },
 );
 
+/** Filters are URL-backed; reload with a search string and wait for pins. */
+async function gotoMap(search = "") {
+	await page.goto(`http://localhost:3000/map${search}`, {
+		waitUntil: "domcontentloaded",
+		timeout: 120_000,
+	});
+	await page.waitForFunction(
+		() => {
+			const m = window.__map;
+			return (
+				m && m.getLayer("listings-circle") && m.isStyleLoaded() && m.getSource("listings")
+			);
+		},
+		null,
+		{ timeout: 45000 },
+	);
+	await page.waitForFunction(
+		() => {
+			const s = window.__map.getSource("listings");
+			const d = s && (typeof s.getData === "function" ? s.getData() : s._data);
+			return d && d.features && d.features.length > 0;
+		},
+		null,
+		{ timeout: 45000 },
+	);
+	await page.waitForTimeout(1200);
+}
+
 // Building shells are lazy (created at zoom >= 13): at the default
 // camera they must NOT exist yet.
 const shellsAbsentAtStart = await page.evaluate(
@@ -361,10 +389,7 @@ const before = await page.evaluate(() => {
 		bud: feats.filter((f) => f.properties.source === "budujesie").length,
 	};
 });
-await page.locator("select").nth(1).selectOption("sale");
-// select order: source(0), offerType(1), kind(2), days(3)
-await page.locator("select").nth(3).selectOption("7");
-await page.waitForTimeout(2000);
+await gotoMap("?offerType=sale&days=7");
 const after = await page.evaluate(() => {
 	const src = window.__map.getSource("listings");
 	const feats = (typeof src.getData === "function" ? src.getData() : src._data)
@@ -395,17 +420,14 @@ check(
 // 4b. property-kind filter (dom / mieszkanie / działka): choosing
 // "Działka" must leave only plot pins and cut the count. Start from a
 // clean filter state — the sale/7d window would hide older auction plots.
-await page.locator("select").nth(1).selectOption("all");
-await page.locator("select").nth(3).selectOption("0");
-await page.waitForTimeout(1500);
+await gotoMap("");
 const beforeKind = await page.evaluate(() => {
 	const src = window.__map.getSource("listings");
 	const feats = (typeof src.getData === "function" ? src.getData() : src._data)
 		.features;
 	return feats.length;
 });
-await page.locator("select").nth(2).selectOption("plot");
-await page.waitForTimeout(1500);
+await gotoMap("?kind=plot");
 const plotState = await page.evaluate(() => {
 	const src = window.__map.getSource("listings");
 	const feats = (typeof src.getData === "function" ? src.getData() : src._data)
@@ -422,7 +444,7 @@ check(
 		plotState.wrong === 0,
 	`all=${beforeKind} plots=${plotState.total} wrong=${plotState.wrong}`,
 );
-await page.locator("select").nth(2).selectOption("all");
+await gotoMap("");
 
 // 4c. "Kolej" overlay: railway lines + stations render and the toggle
 // hides them (queryRenderedFeatures sees only visible layers). Frame

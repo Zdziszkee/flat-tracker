@@ -230,7 +230,8 @@ export function listingFacets(
 const daysSchema = z.coerce
 	.number()
 	.pipe(z.union([z.literal(0), z.literal(1), z.literal(7), z.literal(30)]))
-	.catch(0);
+	.catch(0)
+	.optional();
 
 const kindSchema = z
 	.union([
@@ -239,15 +240,17 @@ const kindSchema = z
 		z.literal("house"),
 		z.literal("plot"),
 	])
-	.catch("all");
+	.catch("all")
+	.optional();
 
 const offerTypeSchema = z
 	.union([z.literal("all"), z.literal("sale"), z.literal("rental")])
-	.catch("all");
+	.catch("all")
+	.optional();
 
 /** URL search schema shared by `/map` and `/listings`. */
 export const listingSearchSchema = z.object({
-	source: z.string().catch("all"),
+	source: z.string().optional(),
 	days: daysSchema,
 	kind: kindSchema,
 	offerType: offerTypeSchema,
@@ -255,20 +258,22 @@ export const listingSearchSchema = z.object({
 
 export type ListingSearch = z.infer<typeof listingSearchSchema>;
 
+export const DEFAULT_LISTING_SEARCH: ListingSearch = {};
+
 export function filtersFromSearch(search: ListingSearch): ListingFilters {
 	return {
-		source: search.source,
-		days: search.days,
-		kind: search.kind,
-		offerType: search.offerType,
+		source: search.source ?? "all",
+		days: search.days ?? 0,
+		kind: search.kind ?? "all",
+		offerType: search.offerType ?? "all",
 	};
 }
 
 export function searchFromFilters(filters: ListingFilters): ListingSearch {
-	return {
-		source: filters.source,
-		days: filters.days,
-		kind: filters.kind,
-		offerType: filters.offerType,
-	};
+	const search: ListingSearch = {};
+	if (filters.source !== "all") search.source = filters.source;
+	if (filters.days !== 0) search.days = filters.days;
+	if (filters.kind !== "all") search.kind = filters.kind;
+	if (filters.offerType !== "all") search.offerType = filters.offerType;
+	return search;
 }

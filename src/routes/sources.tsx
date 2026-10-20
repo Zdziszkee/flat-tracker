@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { DEFAULT_LISTING_SEARCH } from "#/lib/listing-features";
 
 interface LastRun {
 	startedAt: string | null;
@@ -263,8 +264,12 @@ function SourcesPage() {
 			</div>
 
 			<nav className="mt-6 flex gap-4 text-sm text-blue-600 underline">
-				<Link to="/map">Map</Link>
-				<Link to="/listings">Listings</Link>
+				<Link to="/map" search={DEFAULT_LISTING_SEARCH}>
+					Map
+				</Link>
+				<Link to="/listings" search={DEFAULT_LISTING_SEARCH}>
+					Listings
+				</Link>
 				<Link to="/analytics">Analytics</Link>
 			</nav>
 		</div>

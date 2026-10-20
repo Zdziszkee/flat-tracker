@@ -1,18 +1,18 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
-import {
-	DAY_OPTIONS,
-	type DaysFilter,
-	type OfferTypeFilter,
-} from "#/lib/listing-features";
-import { PROPERTY_KIND_LABELS, type PropertyKind } from "#/lib/property-kind";
-import { sourceLabel } from "#/lib/sources";
+
+import { ListingFilters } from "#/components/listing-filters";
+import { useListingFilters } from "#/hooks/use-listing-filters";
+import { useListings } from "#/hooks/use-listings";
+import { useSources } from "#/hooks/use-sources";
+import { listingFacets, listingSearchSchema } from "#/lib/listing-features";
 
 // mapbox-gl touches `window` at module load, so it must never be imported
 // during SSR. The lazy import is only triggered after mount on the client.
 const MapView = lazy(() => import("../components/map-view"));
 
 export const Route = createFileRoute("/map")({
+	validateSearch: (search) => listingSearchSchema.parse(search),
 	component: MapPage,
 });
 
@@ -23,11 +23,12 @@ const RAILWAYS_STORAGE_KEY = "flat-tracker:show-railways";
 const OCCUPANCY_STORAGE_KEY = "flat-tracker:show-occupancy";
 
 function MapPage() {
-	const [source, setSource] = useState("all");
-	const [days, setDays] = useState<DaysFilter>(0);
-	const [offerType, setOfferType] = useState<OfferTypeFilter>("all");
-	const [kind, setKind] = useState<PropertyKind | "all">("all");
-	const [sources, setSources] = useState<string[]>([]);
+	const { filters, setFilters } = useListingFilters("/map");
+	const { data } = useListings();
+	const { data: sourcesData } = useSources();
+	const sources = sourcesData?.sources ?? [];
+	const facets = listingFacets(data?.listings ?? [], filters.days);
+
 	const [mounted, setMounted] = useState(false);
 	/**
 	 * Cadastral parcel grid. Off the bat it is part of the map look (on), the
@@ -60,151 +61,113 @@ function MapPage() {
 		} catch {
 			// Private mode / storage disabled: keep the default.
 		}
-		fetch("/api/sources")
-			.then((r) => r.json())
-			.then((d: { sources?: string[] }) => setSources(d.sources ?? []))
-			.catch(() => {
-				// Dropdown stays at "Wszystkie" if the fetch fails.
-			});
 	}, []);
 
 	return (
 		<div className="flex h-[calc(100vh-4rem)] flex-col">
-			<header className="flex items-center justify-between border-b px-4 py-2">
-				<h1 className="text-lg font-semibold">
-					Mapa ofert · Małopolska i Śląsk
-				</h1>
-				<select
-					value={source}
-					onChange={(e) => setSource(e.target.value)}
-					className="rounded border px-2 py-1 text-sm"
-				>
-					<option value="all">Wszystkie</option>
-					{sources.map((s) => (
-						<option key={s} value={s}>
-							{sourceLabel(s)}
-						</option>
-					))}
-				</select>
-				<select
-					value={offerType}
-					onChange={(e) =>
-						setOfferType(e.target.value as "all" | "sale" | "rental")
-					}
-					className="rounded border px-2 py-1 text-sm"
-				>
-					<option value="all">Wszystkie typy</option>
-					<option value="sale">Sprzedaż</option>
-					<option value="rental">Najem</option>
-				</select>
-				<select
-					value={kind}
-					onChange={(e) => setKind(e.target.value as PropertyKind | "all")}
-					className="rounded border px-2 py-1 text-sm"
-					title="Rodzaj nieruchomości"
-				>
-					{(
-						Object.keys(PROPERTY_KIND_LABELS) as Array<PropertyKind | "all">
-					).map((k) => (
-						<option key={k} value={k}>
-							{PROPERTY_KIND_LABELS[k]}
-						</option>
-					))}
-				</select>
-				<select
-					value={days}
-					onChange={(e) => setDays(Number(e.target.value) as DaysFilter)}
-					className="rounded border px-2 py-1 text-sm"
-				>
-					{DAY_OPTIONS.map((o) => (
-						<option key={o.value} value={o.value}>
-							{o.label}
-						</option>
-					))}
-				</select>
-				<label className="flex items-center gap-1.5 text-sm text-gray-700">
-					<input
-						type="checkbox"
-						checked={showParcels}
-						onChange={(e) => {
-							setShowParcels(e.target.checked);
-							try {
-								window.localStorage.setItem(
-									PARCELS_STORAGE_KEY,
-									e.target.checked ? "1" : "0",
-								);
-							} catch {
-								// Not fatal: the toggle just won't persist.
-							}
-						}}
-					/>
-					Granice działek
-				</label>
-				<label className="flex items-center gap-1.5 text-sm text-gray-700">
-					<input
-						type="checkbox"
-						checked={showRailways}
-						onChange={(e) => {
-							setShowRailways(e.target.checked);
-							try {
-								window.localStorage.setItem(
-									RAILWAYS_STORAGE_KEY,
-									e.target.checked ? "1" : "0",
-								);
-							} catch {
-								// Not fatal: the toggle just won't persist.
-							}
-						}}
-					/>
-					Kolej
-				</label>
-				<label className="flex items-center gap-1.5 text-sm text-gray-700">
-					<input
-						type="checkbox"
-						checked={showOccupancy}
-						onChange={(e) => {
-							setShowOccupancy(e.target.checked);
-							try {
-								window.localStorage.setItem(
-									OCCUPANCY_STORAGE_KEY,
-									e.target.checked ? "1" : "0",
-								);
-							} catch {
-								// Not fatal: the toggle just won't persist.
-							}
-						}}
-					/>
-					Obłożenie STR
-				</label>
-				{showOccupancy && (
-					<>
-						<select
-							value={occupancySource}
-							onChange={(e) =>
-								setOccupancySource(
-									e.target.value as "airbnb" | "booking" | "all",
-								)
-							}
-							className="rounded border px-2 py-1 text-sm"
-						>
-							<option value="all">Airbnb + Booking</option>
-							<option value="airbnb">Airbnb</option>
-							<option value="booking">Booking</option>
-						</select>
+			<header className="flex flex-wrap items-end justify-between gap-3 border-b px-4 py-2">
+				<div>
+					<h1 className="text-lg font-semibold">
+						Mapa ofert · Małopolska i Śląsk
+					</h1>
+					<p className="text-xs text-gray-500">
+						{facets.total.toLocaleString("pl-PL")} ofert w aktywnym oknie
+					</p>
+				</div>
+				<ListingFilters
+					value={filters}
+					sources={sources}
+					facets={facets}
+					showOfferType
+					onChange={setFilters}
+				/>
+				<div className="flex flex-wrap items-center gap-3 text-sm">
+					<label className="flex items-center gap-1.5 text-sm text-gray-700">
 						<input
-							type="month"
-							value={occupancyMonth}
-							onChange={(e) => setOccupancyMonth(e.target.value)}
-							className="rounded border px-2 py-1 text-sm"
+							type="checkbox"
+							checked={showParcels}
+							onChange={(e) => {
+								setShowParcels(e.target.checked);
+								try {
+									window.localStorage.setItem(
+										PARCELS_STORAGE_KEY,
+										e.target.checked ? "1" : "0",
+									);
+								} catch {
+									// Not fatal: the toggle just won't persist.
+								}
+							}}
 						/>
-					</>
-				)}
-				<Link to="/analytics" className="text-sm text-blue-600 underline">
-					Analityka inwestycyjna
-				</Link>
-				<Link to="/sources" className="text-sm text-blue-600 underline">
-					Data sources
-				</Link>
+						Granice działek
+					</label>
+					<label className="flex items-center gap-1.5 text-sm text-gray-700">
+						<input
+							type="checkbox"
+							checked={showRailways}
+							onChange={(e) => {
+								setShowRailways(e.target.checked);
+								try {
+									window.localStorage.setItem(
+										RAILWAYS_STORAGE_KEY,
+										e.target.checked ? "1" : "0",
+									);
+								} catch {
+									// Not fatal: the toggle just won't persist.
+								}
+							}}
+						/>
+						Kolej
+					</label>
+					<label className="flex items-center gap-1.5 text-sm text-gray-700">
+						<input
+							type="checkbox"
+							checked={showOccupancy}
+							onChange={(e) => {
+								setShowOccupancy(e.target.checked);
+								try {
+									window.localStorage.setItem(
+										OCCUPANCY_STORAGE_KEY,
+										e.target.checked ? "1" : "0",
+									);
+								} catch {
+									// Not fatal: the toggle just won't persist.
+								}
+							}}
+						/>
+						Obłożenie STR
+					</label>
+					{showOccupancy && (
+						<>
+							<select
+								value={occupancySource}
+								onChange={(e) =>
+									setOccupancySource(
+										e.target.value as "airbnb" | "booking" | "all",
+									)
+								}
+								className="rounded border px-2 py-1 text-sm"
+								aria-label="Źródło obłożenia"
+							>
+								<option value="all">Airbnb + Booking</option>
+								<option value="airbnb">Airbnb</option>
+								<option value="booking">Booking</option>
+							</select>
+							<input
+								type="month"
+								value={occupancyMonth}
+								onChange={(e) => setOccupancyMonth(e.target.value)}
+								className="rounded border px-2 py-1 text-sm"
+								aria-label="Miesiąc obłożenia"
+							/>
+						</>
+					)}
+					<Link to="/analytics" className="text-sm text-blue-600 underline">
+						Analityka inwestycyjna
+					</Link>
+					<Link to="/sources" className="text-sm text-blue-600 underline">
+						Data sources
+					</Link>
+				</div>
 			</header>
 
 			<div className="relative flex-1">
@@ -221,10 +184,10 @@ function MapPage() {
 						}
 					>
 						<MapView
-							source={source}
-							days={days}
-							offerType={offerType}
-							kind={kind}
+							source={filters.source}
+							days={filters.days}
+							offerType={filters.offerType}
+							kind={filters.kind}
 							showParcels={showParcels}
 							showRailways={showRailways}
 							showOccupancy={showOccupancy}

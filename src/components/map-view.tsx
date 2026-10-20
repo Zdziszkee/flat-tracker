@@ -1,552 +1,40 @@
-import { useQuery } from "@tanstack/react-query";
 import mapboxgl from "mapbox-gl";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import "mapbox-gl/dist/mapbox-gl.css";
 
-import { REGIONS } from "#/crawler/regions";
-import { env } from "#/env";
-import {
-	dateLabel,
-	formatPln,
-	formatUtilities,
-	realizationCaption,
-	yearOf,
-} from "#/lib/format";
+import { useListings } from "#/hooks/use-listings";
+import { useOccupancy } from "#/hooks/use-occupancy";
 import { escapeHtml } from "#/lib/html";
-import {
-	filterListings,
-	type ListingFilters,
-	parseListingFeatures,
-} from "#/lib/listing-features";
+import { filterListings, type ListingFilters } from "#/lib/listing-features";
 import type { PropertyKind } from "#/lib/property-kind";
-import { SOURCE_COLORS } from "#/lib/sources";
+import type { OfferValuation } from "#/types/listing";
+import type { OccupancyCell } from "#/types/occupancy";
+import {
+	BUILDING_LAYERS_MINZOOM,
+	DETAIL_3D_MINZOOM,
+	MAP_MAX_BOUNDS,
+	TOKEN,
+	TRACKED_REGION_BOUNDS,
+	TRACKED_REGION_CENTER,
+} from "./map/constants";
+import { occupancyToGeoJson, toGeoJson } from "./map/geojson";
+import {
+	makeBudujesieIcon,
+	makeKomornikIcon,
+	sourceColorExpr,
+} from "./map/icons";
+import {
+	buildingPopupHtml,
+	popupHtml,
+	renderValuationHtml,
+} from "./map/popups";
 import type {
-	ListingDto,
-	ListingsResponse,
-	OfferValuation,
-} from "#/types/listing";
-
-type ApiListing = ListingDto;
-
-/**
- * Bounding box of every tracked voivodeship (Małopolska + Śląsk), unioned so
- * one view can hold both. Derived from the crawler region config, the single
- * source of truth for region boxes.
- */
-const TRACKED_REGION_BOUNDS: [[number, number], [number, number]] = [
-	[
-		Math.min(...REGIONS.map((r) => r.bbox.minLng)) - 0.05,
-		Math.min(...REGIONS.map((r) => r.bbox.minLat)) - 0.05,
-	],
-	[
-		Math.max(...REGIONS.map((r) => r.bbox.maxLng)) + 0.05,
-		Math.max(...REGIONS.map((r) => r.bbox.maxLat)) + 0.05,
-	],
-];
-/**
- * Default camera: the middle of that union (Olkusz/Trzebinia area), fitted to
- * the viewport on mount so both voivodeships are framed on any screen. Not
- * Kraków any more: the data covers both regions, so a Kraków-only default
- * hid half of it.
- */
-const TRACKED_REGION_CENTER: [number, number] = [
-	(TRACKED_REGION_BOUNDS[0][0] + TRACKED_REGION_BOUNDS[1][0]) / 2,
-	(TRACKED_REGION_BOUNDS[0][1] + TRACKED_REGION_BOUNDS[1][1]) / 2,
-];
-
-/**
- * Hard camera limit: the region union plus slack. The slack is not cosmetic:
- * `fitBounds` must fit a wider-than-tall region into a landscape viewport, so
- * it needs to zoom out past the union's own width to also fit its latitude.
- * With `maxBounds` set to the union exactly, the camera cannot go that far and
- * the first frame silently crops the north and south (measured 49.56-50.63
- * instead of 49.10-51.07, losing Częstochowa and the Tatra powiaty). ~70 km
- * east-west and ~45 km north-south of slack still keeps panning regional.
- */
-const MAP_MAX_BOUNDS: [[number, number], [number, number]] = [
-	[TRACKED_REGION_BOUNDS[0][0] - 1.0, TRACKED_REGION_BOUNDS[0][1] - 0.4],
-	[TRACKED_REGION_BOUNDS[1][0] + 1.0, TRACKED_REGION_BOUNDS[1][1] + 0.4],
-];
-
-/** Building shells load lazily from this zoom (sub-pixel below it). */
-const BUILDING_LAYERS_MINZOOM = 13;
-/**
- * Zoom from which the basemap's 3D landmarks and trees come back on. Below
- * it (the two-voivodeship overview) they are hundreds of models per frame and
- * software-GL clients took minutes to paint the first frame; above it the
- * user is looking at one city, where they read as detail. 3D *buildings*
- * stay enabled at every zoom: our amber RCN extrusion reads their real
- * heights from the basemap `buildings` featureset (see the height sync), so
- * hiding them would silently degrade the building history layer.
- */
-const DETAIL_3D_MINZOOM = 12;
-
-const TOKEN = env.VITE_MAPBOX_TOKEN;
-
-/** Mapbox match expression coloring each point by its source. */
-function sourceColorExpr(): mapboxgl.ExpressionSpecification {
-	const pairs: string[] = [];
-	for (const [src, color] of Object.entries(SOURCE_COLORS)) {
-		pairs.push(src, color);
-	}
-	return [
-		"match",
-		["get", "source"],
-		...pairs,
-		"#94a3b8",
-	] as mapboxgl.ExpressionSpecification;
-}
-
-/** Draw the court-auction diamond marker as raw pixels (SVG loadImage is flaky). */
-function makeKomornikIcon(): ImageData {
-	const size = 28;
-	const canvas = document.createElement("canvas");
-	canvas.width = size;
-	canvas.height = size;
-	const ctx = canvas.getContext("2d");
-	if (ctx) {
-		ctx.fillStyle = "#7c3aed";
-		ctx.strokeStyle = "#ffffff";
-		ctx.lineWidth = 2;
-		ctx.beginPath();
-		ctx.moveTo(size / 2, 2);
-		ctx.lineTo(size - 2, size / 2);
-		ctx.lineTo(size / 2, size - 2);
-		ctx.lineTo(2, size / 2);
-		ctx.closePath();
-		ctx.fill();
-		ctx.stroke();
-		return ctx.getImageData(0, 0, size, size);
-	}
-	return new ImageData(size, size);
-}
-
-/** Construction hard-hat marker for budujesie.pl investments (amber). */
-function makeBudujesieIcon(): ImageData {
-	const size = 28;
-	const canvas = document.createElement("canvas");
-	canvas.width = size;
-	canvas.height = size;
-	const ctx = canvas.getContext("2d");
-	if (ctx) {
-		ctx.fillStyle = "#f59e0b";
-		ctx.strokeStyle = "#ffffff";
-		ctx.lineWidth = 2;
-		// Dome (upper half circle).
-		ctx.beginPath();
-		ctx.arc(size / 2, 16, 8, Math.PI, 2 * Math.PI);
-		ctx.closePath();
-		ctx.fill();
-		ctx.stroke();
-		// Brim (rounded bar).
-		const w = 22;
-		const h = 5;
-		const x = (size - w) / 2;
-		const y = 15;
-		const r = 2.5;
-		ctx.beginPath();
-		ctx.moveTo(x + r, y);
-		ctx.arcTo(x + w, y, x + w, y + h, r);
-		ctx.arcTo(x + w, y + h, x, y + h, r);
-		ctx.arcTo(x, y + h, x, y, r);
-		ctx.arcTo(x, y, x + w, y, r);
-		ctx.closePath();
-		ctx.fill();
-		ctx.stroke();
-		return ctx.getImageData(0, 0, size, size);
-	}
-	return new ImageData(size, size);
-}
-
-function popupHtml(l: ApiListing): string {
-	const stats = l.transactionStats;
-	const features = parseListingFeatures(l.features);
-	const minYear = yearOf(stats?.txMinDate);
-	const maxYear = yearOf(stats?.txMaxDate);
-	const range = minYear && maxYear ? ` (${minYear}-${maxYear})` : "";
-	const added = l.listedAt ?? l.firstSeenAt;
-	const addedLabel = added
-		? new Date(added).toLocaleDateString("pl-PL")
-		: "n/d";
-	const location = l.address ?? l.district ?? l.buildingAddress ?? "";
-
-	// Physical layout: portal columns first, then Airbnb PDP extraction.
-	// bedrooms wins over rooms so short-term rentals show sypialnie.
-	const layoutParts: string[] = [];
-	if (l.areaM2) layoutParts.push(`${l.areaM2} m²`);
-	if (l.rooms && l.bedrooms == null) layoutParts.push(`${l.rooms} pok.`);
-	if (l.bedrooms != null)
-		layoutParts.push(
-			l.bedrooms === 0
-				? "kawalerka"
-				: `${l.bedrooms} sypialn${l.bedrooms === 1 ? "ia" : "ie"}`,
-		);
-	if (l.beds != null)
-		layoutParts.push(`${l.beds} łóż${l.beds === 1 ? "ko" : "ka"}`);
-	if (l.bathrooms != null)
-		layoutParts.push(
-			`${String(l.bathrooms).replace(".", ",")} łazienk${l.bathrooms === 1 ? "a" : "i"}`,
-		);
-	if (l.maxGuests != null) layoutParts.push(`do ${l.maxGuests} gości`);
-	if (l.floor) layoutParts.push(`piętro ${l.floor}`);
-	if (l.propertyType) layoutParts.push(l.propertyType);
-	const details = layoutParts.join(" · ");
-
-	const heating = l.heatingType ? `Ogrzewanie: ${l.heatingType}` : "";
-	const utilities = formatUtilities(l.utilities);
-
-	// Forum-sourced investments are construction threads, not offers: no
-	// price row, show thread activity instead of a valuation. Investmap
-	// investment-level rows (`inv-`) are the same kind of inventory: the
-	// investment itself, no flat to price.
-	const isBudujesie = l.source === "budujesie";
-	const isInvestmentRow =
-		l.source === "investmap" && l.externalId.startsWith("inv-");
-	let threadStats = "";
-	// A forum topic is not proof the building is still under construction:
-	// the site carries no status field, so the label claims "w budowie" only
-	// while the thread is alive (posts within 18 months) and degrades to a
-	// factual last-activity stamp for archived topics.
-	let budLabel = "Inwestycja";
-	const budujesie = features.budujesie;
-	if (isBudujesie && budujesie) {
-		const parts: string[] = [];
-		if (typeof budujesie.replies === "number")
-			parts.push(`${budujesie.replies} odp.`);
-		if (typeof budujesie.views === "number")
-			parts.push(`${budujesie.views.toLocaleString("pl-PL")} wyśw.`);
-		threadStats = parts.join(" · ");
-		const last = budujesie.lastPostAt ? new Date(budujesie.lastPostAt) : null;
-		const fresh =
-			last != null &&
-			!Number.isNaN(last.getTime()) &&
-			Date.now() - last.getTime() < 548 * 24 * 3600e3;
-		budLabel = fresh
-			? "Inwestycja w budowie"
-			: `Inwestycja · ostatnia aktywność ${
-					last && !Number.isNaN(last.getTime())
-						? `${String(last.getMonth() + 1).padStart(2, "0")}.${last.getFullYear()}`
-						: "?"
-				}`;
-	}
-
-	// The investment description and the comments under it (scraped from
-	// the topic's first page, features.posts).
-	let threadHtml = "";
-	if (isBudujesie) {
-		const posts = features.budujesie?.posts ?? [];
-		const opText = posts[0]?.text ?? "";
-		if (opText) {
-			const excerpt = opText.slice(0, 220);
-			const comments = posts.slice(1, 4);
-			threadHtml = `
-	      <div class="border-t pt-1 text-xs">
-	        <div class="font-medium text-amber-700">Inwestycja</div>
-	        <div class="text-gray-600">${escapeHtml(excerpt)}${
-						opText.length > 220 ? "…" : ""
-					}</div>${
-						comments.length > 0
-							? `
-	        <div class="mt-1 font-medium text-amber-700">Komentarze</div>${comments
-						.map((c) => {
-							const text = c.text ?? "";
-							const date = dateLabel(c.at);
-							return `
-	        <div class="mt-1 text-gray-600"><span class="font-medium text-gray-700">${escapeHtml(
-						c.author ?? "anonim",
-					)}${
-						date ? ` · ${escapeHtml(date)}` : ""
-					}</span>: ${escapeHtml(text.slice(0, 160))}${
-						text.length > 160 ? "…" : ""
-					}</div>`;
-						})
-						.join("")}`
-							: ""
-					}
-	      </div>`;
-		}
-	}
-
-	// Investmap realizacja (planned completion quarter). Factual status
-	// only: the planned quarter having passed is not proof of delivery.
-	let realizationHtml = "";
-	if (l.constructionEndLabel) {
-		realizationHtml = `<div class="text-amber-700">${escapeHtml(
-			realizationCaption(l.constructionEndLabel, l.constructionEndDate),
-		)}</div>`;
-	}
-
-	// Short-term-rental context lines.
-	const stayLines: string[] = [];
-	if (l.minimumStayNights != null && l.minimumStayNights > 1)
-		stayLines.push(
-			`<div class="text-gray-500">Min. ${l.minimumStayNights} nocy</div>`,
-		);
-	if (l.availabilityCount != null && l.availabilityCount > 0)
-		stayLines.push(
-			`<div class="text-gray-500">Wolne ~${l.availabilityCount} nocy/rok</div>`,
-		);
-
-	// Amenities preview from the enriched features JSON.
-	let amenitiesHtml = "";
-	const amenities = features.airbnb?.amenities ?? [];
-	if (amenities.length > 0) {
-		const shown = amenities.slice(0, 6).map((a) => escapeHtml(a));
-		const rest = amenities.length - shown.length;
-		amenitiesHtml = `
-	      <div class="border-t pt-1 text-xs">
-	        <div class="font-medium text-emerald-700">Udogodnienia</div>
-	        <div class="text-gray-600">${shown.join(", ")}${
-						rest > 0
-							? ` <span class="text-gray-400">+${rest} więcej</span>`
-							: ""
-					}</div>
-	      </div>`;
-	}
-
-	return `
-    <div class="min-w-56 space-y-1 text-sm">
-      <div class="font-semibold leading-tight">${escapeHtml(l.title)}</div>
-      <div class="text-gray-500">${escapeHtml(location)}</div>
-      <div class="flex justify-between gap-4 pt-1">
-        <span class="font-medium${
-					isBudujesie || isInvestmentRow ? " text-amber-700" : ""
-				}">${
-					isBudujesie
-						? budLabel
-						: isInvestmentRow
-							? "Inwestycja"
-							: `${formatPln(l.price)}${
-									l.pricePeriod === "night"
-										? '<span class="text-xs font-normal text-gray-400"> /noc</span>'
-										: ""
-								}`
-				}</span>
-        <span>${
-					isBudujesie
-						? escapeHtml(threadStats)
-						: l.pricePerM2
-							? `${l.pricePerM2.toFixed(0)} zł/m²`
-							: ""
-				}</span>
-      </div>
-      <div class="text-gray-500">${escapeHtml(details)}</div>
-      ${realizationHtml}
-      ${
-				l.rating != null && l.rating > 0
-					? `<div><span class="font-medium">${l.rating.toFixed(2)}</span> <span class="text-amber-500">★</span>${
-							l.reviewsCount
-								? ` <span class="text-gray-400">(${l.reviewsCount} opinii)</span>`
-								: ""
-						}</div>`
-					: ""
-			}
-      ${heating ? `<div class="text-gray-500">${escapeHtml(heating)}</div>` : ""}
-      ${utilities ? `<div class="text-gray-500">${escapeHtml(utilities)}</div>` : ""}
-      ${stayLines.join("\n      ")}
-      <div class="text-gray-400">Dodano: ${addedLabel}</div>
-      ${threadHtml}
-      ${amenitiesHtml}
-      ${
-				stats?.txCount
-					? `<div class="border-t pt-1 text-xs">
-          <div class="font-medium text-amber-700">RCN history: ${stats.txCount} transakcji</div>
-          <div>Śr. ${formatPln(stats.txAvgPricePerM2)}/m²${range}</div>
-        </div>`
-					: ""
-			}
-      <a href="${l.url}" target="_blank" rel="noreferrer" class="mt-1 block text-blue-600 underline">${
-				isBudujesie ? "Otwórz wątek na BudujeSie.pl" : "Otwórz ogłoszenie"
-			}</a>
-    </div>`;
-}
-
-interface BuildingLookup {
-	building: {
-		id: number | null;
-		osmId: number;
-		address: string | null;
-		lat: number;
-		lng: number;
-		buildYear?: number | null;
-		stats: {
-			txCount: number;
-			avgPricePerM2: number | null;
-			minPricePerM2: number | null;
-			maxPricePerM2: number | null;
-			minPrice: number | null;
-			maxPrice: number | null;
-			minDate: string | null;
-			maxDate: string | null;
-			byYear: Array<{
-				year: string;
-				count: number;
-				avgPricePerM2: number | null;
-			}>;
-			recent: Array<{
-				date: string;
-				price: number;
-				pricePerM2: number | null;
-				areaM2: number | null;
-				rooms: number | null;
-				street: string | null;
-				streetNumber: string | null;
-				district: string | null;
-			}>;
-		} | null;
-	} | null;
-}
-
-/** "28 lat", "3 lata", "1 rok". */
-function ageLabel(year: number): string {
-	const age = new Date().getFullYear() - year;
-	const mod10 = age % 10;
-	const mod100 = age % 100;
-	const unit =
-		age === 1
-			? "rok"
-			: mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)
-				? "lata"
-				: "lat";
-	return `${age} ${unit}`;
-}
-
-function buildingPopupHtml(data: BuildingLookup): string {
-	if (!data?.building) {
-		return `<div class="min-w-48 p-1 text-sm text-gray-600">
-      <div class="font-medium">Budynek</div>
-      <div>Brak danych o tym budynku.</div>
-    </div>`;
-	}
-	const b = data.building;
-	const s = b.stats;
-	const yearLine = b.buildYear
-		? `<div class="flex justify-between gap-3"><span>Rok budowy</span><span class="font-medium">${b.buildYear} · ${ageLabel(b.buildYear)}</span></div>`
-		: "";
-	if (!s) {
-		// Building found but no RCN history (address fallback).
-		return `<div class="min-w-56 space-y-1 text-sm">
-      <div class="font-semibold">${escapeHtml(b.address ?? "Budynek (bez adresu)")}</div>
-      <div class="border-t pt-1">${yearLine || '<div class="text-xs text-gray-500">Brak danych o wieku budynku.</div>'}</div>
-      <div class="text-xs text-gray-500">Brak transakcji RCN dla tego budynku.</div>
-    </div>`;
-	}
-	const range =
-		s.minDate && s.maxDate
-			? ` (${s.minDate.slice(0, 4)}-${s.maxDate.slice(0, 4)})`
-			: "";
-	const byYear =
-		s.byYear.length > 0
-			? `<div class="mt-1 border-t pt-1">
-          ${s.byYear
-						.map(
-							(y) =>
-								`<div class="flex justify-between gap-3">
-                  <span>${y.year}: ${y.count} ${y.count === 1 ? "transakcja" : y.count < 5 ? "transakcje" : "transakcji"}</span>
-                  <span class="font-medium">${s.avgPricePerM2 ? `${Math.round(y.avgPricePerM2 ?? 0).toLocaleString("pl-PL")} zł/m²` : ""}</span>
-                </div>`,
-						)
-						.join("")}
-        </div>`
-			: "";
-	const recent =
-		s.recent.length > 0
-			? `<div class="mt-1 border-t pt-1 text-xs">
-          ${s.recent
-						.map((t) => {
-							const addr = t.street
-								? `${escapeHtml(t.street)}${t.streetNumber ? ` ${escapeHtml(t.streetNumber)}` : ""}`
-								: null;
-							return `<div class="flex justify-between gap-3">
-                  <span>${t.date.slice(0, 7)}${addr ? ` · ${addr}` : ""}</span>
-                  <span>${t.price.toLocaleString("pl-PL")} zł${t.areaM2 ? ` · ${Math.round(t.areaM2)} m²` : ""}${t.pricePerM2 ? ` · ${Math.round(t.pricePerM2).toLocaleString("pl-PL")} zł/m²` : ""}</span>
-                </div>`;
-						})
-						.join("")}
-        </div>`
-			: "";
-	return `<div class="min-w-60 space-y-1 text-sm">
-    <div class="font-semibold">${escapeHtml(b.address ?? "Budynek (bez adresu)")}</div>
-    <div class="text-xs text-gray-500">Historia transakcji RCN</div>
-    ${yearLine ? `<div class="border-t pt-1">${yearLine}</div>` : ""}
-    ${
-			s.txCount > 0
-				? `<div class="border-t pt-1">
-          <div class="flex justify-between gap-3"><span>Liczba transakcji</span><span class="font-medium">${s.txCount}${range}</span></div>
-          <div class="flex justify-between gap-3"><span>Średnia cena</span><span class="font-medium">${s.avgPricePerM2 ? `${Math.round(s.avgPricePerM2).toLocaleString("pl-PL")} zł/m²` : "n/d"}</span></div>
-          <div class="flex justify-between gap-3"><span>Zakres</span><span>${s.minPricePerM2 ? `${Math.round(s.minPricePerM2).toLocaleString("pl-PL")} – ${Math.round(s.maxPricePerM2 ?? 0).toLocaleString("pl-PL")} zł/m²` : "n/d"}</span></div>
-        </div>${byYear}${recent}`
-				: `<div class="text-xs text-gray-500">Brak transakcji w tym budynku.</div>`
-		}
-  </div>`;
-}
-
-/** Viewport-limited parcel grid from /api/parcels. */
-interface ParcelFeatureCollection {
-	type: "FeatureCollection";
-	features: Array<{
-		type: "Feature";
-		geometry: { type: "Polygon"; coordinates: number[][][] };
-		properties: {
-			parcelId: string;
-			hasRcn: boolean;
-			obreb?: string | null;
-			gmina?: string | null;
-		};
-	}>;
-}
-
-type GeoJsonFeatureCollection = {
-	type: "FeatureCollection";
-	features: Array<{
-		type: "Feature";
-		geometry: { type: "Point"; coordinates: number[] };
-		properties: ApiListing;
-	}>;
-};
-
-/**
- * Absolute URL for mapbox-managed GeoJSON sources. Mapbox hands the URL to
- * its web worker, which fetches + parses the payload off the UI thread —
- * relative paths are not resolvable from the worker context, so absolute.
- */
-function apiUrl(path: string): string {
-	return new URL(path, window.location.origin).href;
-}
-
-interface OccupancyCell {
-	lat: number;
-	lng: number;
-	listings: number;
-	sampleNights: number;
-	bookedNights: number;
-	occupancyRate: number | null;
-	avgPrice: number | null;
-}
-
-interface OccupancyHeatmap {
-	month: string;
-	source: string;
-	grid: number;
-	cells: OccupancyCell[];
-}
-
-function toGeoJson(listings: ApiListing[]): GeoJsonFeatureCollection {
-	return {
-		type: "FeatureCollection",
-		features: listings
-			.filter((l) => l.mapLat !== null && l.mapLng !== null)
-			.map((l) => ({
-				type: "Feature",
-				geometry: {
-					type: "Point",
-					coordinates: [l.mapLng as number, l.mapLat as number],
-				},
-				properties: l,
-			})),
-	};
-}
+	ApiListing,
+	BuildingLookup,
+	ParcelFeatureCollection,
+} from "./map/types";
+import { apiUrl } from "./map/url";
 
 export default function MapView({
 	source,
@@ -569,20 +57,12 @@ export default function MapView({
 	occupancySource: "airbnb" | "booking" | "all";
 	occupancyMonth: string;
 }) {
-	const { data, isLoading, error } = useQuery<ListingsResponse>({
-		queryKey: ["listings"],
-		queryFn: () => fetch("/api/listings").then((r) => r.json()),
-	});
-
-	const { data: occupancyData } = useQuery<OccupancyHeatmap>({
-		queryKey: ["occupancy-heatmap", occupancySource, occupancyMonth],
-		queryFn: () =>
-			fetch(
-				`/api/occupancy-heatmap?source=${occupancySource}&month=${occupancyMonth}`,
-			).then((r) => r.json()),
-		enabled: showOccupancy,
-		staleTime: 5 * 60 * 1000,
-	});
+	const { data, isLoading, error } = useListings();
+	const { data: occupancyData } = useOccupancy(
+		occupancySource,
+		occupancyMonth,
+		showOccupancy,
+	);
 
 	const filters: ListingFilters = useMemo(
 		() => ({ source, days, offerType, kind }),
@@ -706,19 +186,6 @@ export default function MapView({
 			</footer>
 		</div>
 	);
-}
-
-function occupancyToGeoJson(cells: OccupancyCell[]): GeoJsonFeatureCollection {
-	return {
-		type: "FeatureCollection",
-		features: cells
-			.filter((c) => c.occupancyRate != null && c.occupancyRate > 0)
-			.map((c) => ({
-				type: "Feature",
-				geometry: { type: "Point", coordinates: [c.lng, c.lat] },
-				properties: c as unknown as ApiListing,
-			})),
-	};
 }
 
 function MapCanvas({
@@ -1730,35 +1197,6 @@ function MapCanvas({
 			map.on("mouseleave", "parcel-fill", () => {
 				map.getCanvas().style.cursor = "";
 			});
-			const renderValuation = (v: OfferValuation): string => {
-				const pl = (n: number) => Math.round(n).toLocaleString("pl-PL");
-				const comp = (label: string, x: { avgM2: number; n: number } | null) =>
-					x
-						? `<div class="flex justify-between"><span class="text-gray-500">${label}</span><span>${pl(x.avgM2)} zł/m² <span class="text-gray-400">(${x.n})</span></span></div>`
-						: "";
-				const roi = (
-					label: string,
-					x: { n: number; netMonthly: number; netYieldPct: number | null },
-					color: string,
-				) =>
-					x.netYieldPct != null
-						? `<div class="mt-1 border-t pt-1">
-								<div class="font-medium ${color}">${label} (netto)</div>
-								<div class="text-gray-600">${pl(x.netMonthly)} zł/mies. netto → ROI <b>${x.netYieldPct.toFixed(1)}%</b>/rok</div>
-								<div class="text-gray-400 text-xs">${x.n} porównań w okolicy</div>
-							</div>`
-						: "";
-				return `<div class="mt-2 border-t pt-1 text-xs">
-					<div class="font-medium">Wycena vs rynek</div>
-					${v.comps.fairM2 != null ? `<div>godziwa: <b>${pl(v.comps.fairM2)} zł/m²</b>${v.overUnderPct != null ? ` · <span class="${v.rating?.tone ?? ""} font-medium">${v.rating?.label} ${v.overUnderPct > 0 ? "+" : ""}${v.overUnderPct}%</span>` : ""}</div>` : ""}
-					${comp("ten budynek", v.comps.building)}
-					${comp("okolica", v.comps.area)}
-					${comp("RCN 1 km / 24 mies.", v.comps.rcn)}
-					${v.lt ? roi("Najem długoterminowy", v.lt, "text-emerald-700") : ""}
-					${v.str ? roi("Najem krótkoterminowy (szac.)", v.str, "text-rose-700") : ""}
-				</div>`;
-			};
-
 			const showListingPopup = (e: mapboxgl.MapLayerMouseEvent) => {
 				const feature = e.features?.[0] as { properties?: unknown } | undefined;
 				const props = feature?.properties;
@@ -1805,7 +1243,7 @@ function MapCanvas({
 						.then((v: OfferValuation) => {
 							if (popupRef.current !== popup) return; // stale popup
 							const slot = document.getElementById("popup-valuation");
-							if (slot) slot.outerHTML = renderValuation(v);
+							if (slot) slot.outerHTML = renderValuationHtml(v);
 						})
 						.catch(() => {
 							const slot = document.getElementById("popup-valuation");
