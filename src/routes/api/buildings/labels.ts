@@ -8,7 +8,8 @@ import { buildings, transactions } from "#/db/schema";
  * GeoJSON point layer of building addresses (centroids) for buildings
  * with RCN history: shows street + housenumber labels on the amber 3D
  * footprints when zoomed in. The map asks for the current viewport at
- * zoom >= 16; the unbounded fallback stays for ad-hoc consumers.
+ * zoom >= 16. An unbounded dump is only available with `?all=1`, because
+ * the full payload is ~38 MB.
  */
 
 interface LabelFeature {
@@ -81,14 +82,19 @@ export const Route = createFileRoute("/api/buildings/labels")({
 	server: {
 		handlers: {
 			GET: async ({ request }) => {
-				const bbox = new URL(request.url).searchParams
-					.get("bbox")
-					?.split(",")
-					.map(Number);
+				const params = new URL(request.url).searchParams;
+				const bbox = params.get("bbox")?.split(",").map(Number);
+				const all = params.get("all") === "1";
+				if (!all && (bbox?.length !== 4 || !bbox.every(Number.isFinite))) {
+					return json(
+						{ error: "bbox=minLng,minLat,maxLng,maxLat required" },
+						{ status: 400 },
+					);
+				}
 				const labels =
-					bbox?.length === 4 && bbox.every(Number.isFinite)
-						? await getLabelsInBbox(bbox[0], bbox[1], bbox[2], bbox[3])
-						: await getLabels();
+					all || !bbox
+						? await getLabels()
+						: await getLabelsInBbox(bbox[0], bbox[1], bbox[2], bbox[3]);
 				return json({
 					type: "FeatureCollection",
 					features: labels.map((l) => ({

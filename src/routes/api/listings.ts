@@ -285,13 +285,15 @@ export const Route = createFileRoute("/api/listings")({
 							Number(url.searchParams.get("pageSize") ?? "100") || 100,
 						),
 					);
-					const page = search.page ?? 0;
 					const facets = listingFacets(rows, filters.days);
 					const filtered = filterListings(rows, filters);
+					const total = filtered.length;
+					const maxPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+					const page = Math.min(search.page ?? 0, maxPage);
 					const start = page * pageSize;
 					return json({
 						listings: filtered.slice(start, start + pageSize).map(tableRow),
-						total: filtered.length,
+						total,
 						page,
 						pageSize,
 						facets: {

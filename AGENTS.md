@@ -186,7 +186,9 @@ titles are legal notices ("... przy ul. Szkolnej dla której SR dla
 Krakowa-Krowodrzy w Krakowie ..."), so geocoding cuts the court
 boilerplate ("dla której", "Sąd/SR", "Wydział", "KW nr", "z siedzibą")
 before mining a street or city — the court's seat is not the property's
-location. For the same reason a city mined from a title only overrides a
+location. Bare notarial phrases ("prawo użytkowania wieczystego",
+"działka nr 41/6") are rejected as street candidates; explicitly prefixed
+streets ("ul. Prawa 5") still pass. For the same reason a city mined from a title only overrides a
 generic hint (Kraków/małopolskie/a district); a specific town from the
 structured address always wins. The offline town centroid is only used
 for unambiguous names: where one village name exists twice in the region
@@ -488,8 +490,8 @@ download the map feed. Both shapes share the same dedupe pipeline
 
 `/api/buildings/labels` accepts `?bbox=minLng,minLat,maxLng,maxLat` and is
 called by the map only above zoom 15.2 for the current viewport. The
-unbounded fallback still exists for ad-hoc consumers, but it is ~38 MB and
-must not be used by a page.
+request is rejected without a bbox; `?all=1` is the explicit ~38 MB dump
+and must not be used by a page.
 
 ### Adding a new site (e.g. Facebook Marketplace, Morizon)
 

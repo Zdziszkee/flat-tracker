@@ -67,6 +67,20 @@ for (const good of [
 	"1 Maja",
 ])
 	check(`shape: accepts ${JSON.stringify(good)}`, minedStreetLooksReal(good));
+for (const legal of [
+	"prawo użytkowania wieczystego działki nr 41/6",
+	"z własnością lokalu zwiazane jest prawo wieczystego uzytkowania gruntu",
+	"nieruchomość gruntowa położona w Parkoszowicach",
+])
+	check(
+		`parse: rejects legal boilerplate ${JSON.stringify(legal.slice(0, 36))}`,
+		parseAddressFromText(legal) === null,
+	);
+for (const street of ["Gruntowa", "Działkowa", "Prawa"])
+	check(
+		`parse: keeps real street ${JSON.stringify(street)}`,
+		parseAddressFromText(`ul. ${street} 5`)?.street === street,
+	);
 
 // ---------- corpus over the live DB ----------
 const db = new Database("dev.db", { readonly: true });
@@ -85,7 +99,7 @@ const rows = db
 }>;
 
 const courtWords =
-	/sąd|sr\b|wydział|ksi[ąa]g|wieczyst|siedzib|krakow|komornik|kw nr|dla któr/iu;
+	/sąd|\bsr\b|wydział|ksi[ąa]g|wieczyst|siedzib|komornik|kw nr|dla któr|\bkraków\b|\bkrakow(?:a|ie|u|em)?\b/iu;
 
 // ---------- (8) mining over all titles ----------
 let mined = 0;
@@ -137,7 +151,8 @@ function km(aLat: number, aLng: number, bLat: number, bLng: number): number {
 const allBuildings = db
 	.prepare(
 		`SELECT centroidLat lat, centroidLng lng, address,
-		        lower(coalesce(json_extract(tags,'$.addr:city'), json_extract(tags,'$.addr:place'))) town
+		        lower(coalesce(json_extract(tags,'$.addr:city'), json_extract(tags,'$.addr:place'))) town,
+		        json_extract(tags,'$.addr:postcode') postcode
 		 FROM osm_buildings WHERE tags IS NOT NULL`,
 	)
 	.all() as Array<{
@@ -145,17 +160,33 @@ const allBuildings = db
 	lng: number;
 	address: string | null;
 	town: string | null;
+	postcode: string | null;
 }>;
+const coveredPostcodes = new Set(
+	allBuildings
+		.map((building) => building.postcode)
+		.filter((postcode): postcode is string => Boolean(postcode)),
+);
+const buildingsByTown = new Map<string, typeof allBuildings>();
+for (const building of allBuildings) {
+	if (!building.town) continue;
+	const key = normStreet(building.town);
+	const list = buildingsByTown.get(key);
+	if (list) list.push(building);
+	else buildingsByTown.set(key, [building]);
+}
 
 let checked = 0;
 const far: string[] = [];
 for (const r of rows) {
 	if (r.lat == null || r.lng == null || !r.district) continue;
+	// A rural postal area with no buildings in the local index cannot be
+	// swept: the town centroid is the gmina seat, not the listed village.
+	const postal = r.address?.match(/\b\d{2}-\d{3}\b/)?.[0];
+	if (postal && !coveredPostcodes.has(postal)) continue;
 	const name = normStreet(r.district);
 	const t = townIdx.get(name);
-	const sameNamed = allBuildings.filter(
-		(b) => b.town && normStreet(b.town) === name,
-	);
+	const sameNamed = buildingsByTown.get(name) ?? [];
 	if (!t && sameNamed.length === 0) continue; // unverifiable town
 	checked++;
 	// Twin-town names make the town average meaningless; the pin must sit
@@ -181,8 +212,9 @@ for (const line of far.slice(0, 10)) console.log(line);
 
 const anchors = db
 	.prepare(
-		`SELECT l.id, l.district, json_extract(ob.tags,'$.addr:city') bcity,
-		 json_extract(ob.tags,'$.addr:street') bstreet
+		`SELECT l.id, l.district, l.address, json_extract(ob.tags,'$.addr:city') bcity,
+		 json_extract(ob.tags,'$.addr:street') bstreet,
+		 json_extract(ob.tags,'$.addr:postcode') bpostcode
 		 FROM listings l JOIN buildings b ON b.id = l.building_id
 		 LEFT JOIN osm_buildings ob ON ob.osmId = b.osmId
 		 WHERE l.source = 'licytacje-komornik' AND l.building_id IS NOT NULL`,
@@ -190,8 +222,10 @@ const anchors = db
 	.all() as Array<{
 	id: number;
 	district: string | null;
+	address: string | null;
 	bcity: string | null;
 	bstreet: string | null;
+	bpostcode: string | null;
 }>;
 // Same place despite naming form: exact fold ("Kraków"), a shared root
 // ("Rabce-Zdroju" is the locative of "Rabka-Zdrój"), or the street name
@@ -199,20 +233,25 @@ const anchors = db
 // (building "Kroczymiech 11" with addr:city=Chrzanów).
 const samePlace = (x: string, y: string): boolean => {
 	const a = normStreet(x);
-	const b = normStreet(y);
-	return (
-		a === b ||
-		(a.split(/[-\s]/u)[0] ?? "").slice(0, 3) ===
-			(b.split(/[-\s]/u)[0] ?? "").slice(0, 3)
-	);
+	const parts = y
+		.split(/[,;]/u)
+		.map((part) => normStreet(part))
+		.filter(Boolean);
+	return parts.some((b) => {
+		const root = (a.split(/[-\s]/u)[0] ?? "").slice(0, 3);
+		const other = (b.split(/[-\s]/u)[0] ?? "").slice(0, 3);
+		return a === b || (root.length >= 3 && root === other);
+	});
 };
-const anchorBad = anchors.filter(
-	(a) =>
-		a.bcity &&
-		a.district &&
-		!samePlace(a.bcity, a.district) &&
-		!samePlace(a.bstreet ?? "", a.district),
-);
+const anchorBad = anchors.filter((a) => {
+	if (!a.bcity || !a.district) return false;
+	if (samePlace(a.bcity, a.district)) return false;
+	if (samePlace(a.bstreet ?? "", a.district)) return false;
+	// OSM often puts the postal/gmina seat in addr:city ("Bochnia" for a
+	// building in Brzeźnica); an identical postal code is the same area.
+	const apostcode = a.address?.match(/\b\d{2}-\d{3}\b/)?.[0];
+	return !(a.bpostcode && apostcode && a.bpostcode === apostcode);
+});
 check(
 	"anchors: building city matches listing district",
 	anchorBad.length === 0,

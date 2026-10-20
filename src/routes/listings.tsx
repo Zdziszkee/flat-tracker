@@ -43,6 +43,9 @@ function ListingsPage() {
 		1,
 		Math.ceil((data?.total ?? 0) / (data?.pageSize ?? LISTINGS_PAGE_SIZE)),
 	);
+	// `page` is user-controlled (a hand-edited URL can say page=9999); the
+	// API clamps its slice, so the controls must show the same effective page.
+	const currentPage = Math.min(page, totalPages - 1);
 
 	return (
 		<div className="p-6">
@@ -173,20 +176,20 @@ function ListingsPage() {
 
 			<div className="mt-3 flex items-center justify-between text-sm">
 				<span className="text-gray-500">
-					Strona {page + 1} z {totalPages} · {data?.total ?? 0} ofert
+					Strona {currentPage + 1} z {totalPages} · {data?.total ?? 0} ofert
 				</span>
 				<div className="flex gap-2">
 					<Button
 						variant="outline"
-						disabled={page === 0}
-						onClick={() => setPage(page - 1)}
+						disabled={currentPage === 0}
+						onClick={() => setPage(currentPage - 1)}
 					>
 						Poprzednia
 					</Button>
 					<Button
 						variant="outline"
-						disabled={page + 1 >= totalPages}
-						onClick={() => setPage(page + 1)}
+						disabled={currentPage + 1 >= totalPages}
+						onClick={() => setPage(currentPage + 1)}
 					>
 						Następna
 					</Button>

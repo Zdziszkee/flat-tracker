@@ -351,6 +351,12 @@ export interface ParsedAddress {
 	rawStreet?: string;
 }
 
+/** Notarial/auction boilerplate that can look like a bare "Street Number"
+ * match ("prawo użytkowania wieczystego działki nr 41/6"). Whole-word
+ * variants only, so real streets such as "Gruntowa" or "Działkowa" survive. */
+const LEGAL_BOILERPLATE_RE =
+	/(?<![\p{L}\p{N}])(?:prawo|prawa|prawu|użytkowania|użytkowanie|wieczyst(?:y|a|e|ego|emu|ym|ej|ych)|gruntu|grunt|grunty|gruntów|udział|udziału|udziałem|udziały|udziałów|działka|działki|działkę|działce|działek|działkami|nieruchomość|nieruchomości|nieruchomością|nieruchomościami|księg[aę]|ksiąg|księgi|księdze)(?![\p{L}\p{N}])/iu;
+
 /** Extract "Street 12" from free text like "ul. Jakuba Bojki 12/5, Kraków".
  * With `surface: true` the returned street keeps the text's own wording
  * ("Sołtysowskiej", not the lexicon's "Sołtysowska"); the known-street
@@ -394,6 +400,10 @@ export function parseAddressFromText(
 	let fallback: ParsedAddress | null = null;
 	for (const c of candidates) {
 		const rawStreet = stripPrefix(c.street).replace(/\s+/g, " ").trim();
+		// Legal prose is never a street, even when a bare "Word Number"
+		// regex happily matches it ("działki nr 41/6"). An explicit prefix
+		// ("ul. Prawa 5") is a street claim, so it may keep such a root.
+		if (!c.prefixed && LEGAL_BOILERPLATE_RE.test(rawStreet)) continue;
 		const street = truncateStreet(rawStreet);
 		// The greedy name run can over-capture into prose the end markers
 		// missed ("ul. Dobrego Pasterza z widokiem na Wisłę"): try the run

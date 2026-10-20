@@ -561,6 +561,60 @@ check(
 	pageLabel,
 );
 
+// 8. Changing a filter drops `page` from the URL, so a filtered view always
+// starts on page 1 (and the next page ... button cannot request a stale one).
+await page.getByRole("combobox", { name: "Rodzaj nieruchomości" }).click();
+await page.getByRole("option", { name: /^Mieszkanie/ }).click();
+await page
+	.waitForFunction(() => /Strona 1 z/.test(document.body.innerText), null, {
+		timeout: 15000,
+	})
+	.catch(() => {});
+const afterFilter = await page.evaluate(() => {
+	const url = new URL(window.location.href);
+	return {
+		pageParam: url.searchParams.get("page"),
+		kind: url.searchParams.get("kind"),
+		label: document.body.innerText.match(/Strona \d+ z \d+/)?.[0] ?? "none",
+	};
+});
+check(
+	"/listings filter change resets page",
+	afterFilter.pageParam === null &&
+		afterFilter.kind === "apartment" &&
+		afterFilter.label.startsWith("Strona 1 z"),
+		JSON.stringify(afterFilter),
+);
+
+// 9. A hand-edited out-of-range page is clamped to the last page by both the
+// API and the footer, instead of rendering an empty table with "Strona 10000".
+await page.goto("http://localhost:3000/listings?source=investmap&page=9999", {
+	waitUntil: "domcontentloaded",
+});
+await page
+	.waitForFunction(
+		() => {
+			const m = document.body.innerText.match(
+				/Strona (\d+) z (\d+) · (\d+) ofert/,
+			);
+			return m && Number(m[3]) > 0 && Number(m[1]) === Number(m[2]);
+		},
+		null,
+		{ timeout: 45000 },
+	)
+	.catch(() => {});
+const clampedPage = await page.evaluate(() => {
+	const m = document.body.innerText.match(/Strona (\d+) z (\d+)/);
+	return m ? { page: Number(m[1]), total: Number(m[2]) } : null;
+});
+check(
+	"/listings out-of-range page clamps to last page",
+	clampedPage !== null &&
+		clampedPage.page === clampedPage.total &&
+		clampedPage.page < 1000,
+	JSON.stringify(clampedPage),
+);
+
 await browser.close();
 const failed = results.filter((r) => !r).length;
 console.log(failed === 0 ? "ALL PASS" : `${failed} FAILURES`);
