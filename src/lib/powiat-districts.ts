@@ -1,6 +1,6 @@
 /**
- * District-string → powiat-name mapping for the choropleth
- * (`/api/powiat-map`).
+ * District-string → powiat-name mapping retained for the powiat dataset
+ * validator. The choropleth endpoint was removed.
  *
  * Coordinates are the primary assignment path, but ~3% of active listings
  * carry no lat/lng and only a `district` string. Portals put a city, a

@@ -1,16 +1,16 @@
-import { createReadStream, createWriteStream } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { eq, gt, sql } from "drizzle-orm";
 
-import osmPbf, { type OsmItem } from "osm-pbf-parser";
 import RBush from "rbush";
 
 import { db } from "#/db/index";
 import { TRACKED_REGIONS, type TrackedRegion } from "#/db/region";
 import { osmBuildings } from "#/db/schema";
 import { invalidateAddressIndex } from "./address-index.ts";
+import { forEachPbfItem } from "./osm/pbf.ts";
 
 /**
  * Local OSM building index for every tracked region (małopolskie + śląskie).
@@ -159,21 +159,13 @@ async function extractBuildingsFromPbf(
 		{ refs: number[]; tags: Record<string, string> }
 	>();
 
-	await new Promise<void>((resolve, reject) => {
-		const osm = osmPbf();
-		osm.on("data", (items: OsmItem[]) => {
-			for (const item of items) {
-				if (item.type !== "way") continue;
-				const tags = (item.tags ?? {}) as Record<string, string>;
-				if (!tags.building) continue;
-				const refs = (item.refs ?? []) as number[];
-				if (refs.length < 3) continue;
-				ways.set(item.id as number, { refs, tags });
-			}
-		});
-		osm.on("end", resolve);
-		osm.on("error", reject);
-		createReadStream(pbfPath).pipe(osm);
+	await forEachPbfItem(pbfPath, (item) => {
+		if (item.type !== "way") return;
+		const tags = (item.tags ?? {}) as Record<string, string>;
+		if (!tags.building) return;
+		const refs = (item.refs ?? []) as number[];
+		if (refs.length < 3) return;
+		ways.set(item.id as number, { refs, tags });
 	});
 
 	console.log(
@@ -193,27 +185,19 @@ async function extractBuildingsFromPbf(
 	let coords = new Float64Array(1 << 21); // grows by doubling (~2M nodes)
 	let nodeCount = 0;
 
-	await new Promise<void>((resolve, reject) => {
-		const osm = osmPbf();
-		osm.on("data", (items: OsmItem[]) => {
-			for (const item of items) {
-				if (item.type !== "node") continue;
-				const id = item.id as number;
-				if (slots.get(id) !== -1) continue;
-				if (nodeCount * 2 + 2 > coords.length) {
-					const grown = new Float64Array(coords.length * 2);
-					grown.set(coords);
-					coords = grown;
-				}
-				coords[nodeCount * 2] = item.lat as number;
-				coords[nodeCount * 2 + 1] = item.lon as number;
-				slots.set(id, nodeCount);
-				nodeCount++;
-			}
-		});
-		osm.on("end", resolve);
-		osm.on("error", reject);
-		createReadStream(pbfPath).pipe(osm);
+	await forEachPbfItem(pbfPath, (item) => {
+		if (item.type !== "node") return;
+		const id = item.id as number;
+		if (slots.get(id) !== -1) return;
+		if (nodeCount * 2 + 2 > coords.length) {
+			const grown = new Float64Array(coords.length * 2);
+			grown.set(coords);
+			coords = grown;
+		}
+		coords[nodeCount * 2] = item.lat as number;
+		coords[nodeCount * 2 + 1] = item.lon as number;
+		slots.set(id, nodeCount);
+		nodeCount++;
 	});
 
 	console.log(

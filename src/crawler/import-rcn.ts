@@ -1,19 +1,13 @@
 import "dotenv/config";
-import {
-	createReadStream,
-	createWriteStream,
-	readFileSync,
-	writeFileSync,
-} from "node:fs";
-import { mkdir, rm, stat } from "node:fs/promises";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
+import { createReadStream } from "node:fs";
+import { rm, stat } from "node:fs/promises";
 import { inArray, sql } from "drizzle-orm";
 import proj4 from "proj4";
 import { SaxesParser } from "saxes";
-import { Extract } from "unzipper";
 import { db } from "#/db/index";
 import { parcels as parcelsTable, transactions } from "#/db/schema";
+import { readJsonFile, writeJsonFile } from "#/lib/json-state";
+import { downloadToFile, extractZip } from "./rcn/common.ts";
 
 /**
  * Imports the Krakow Rejestr Cen Nieruchomości (RCN) GML export.
@@ -82,16 +76,12 @@ async function headRemote(): Promise<RcnVersion | null> {
 	}
 }
 
-function readMarker(): RcnVersion | null {
-	try {
-		return JSON.parse(readFileSync(VERSION_PATH, "utf8")) as RcnVersion;
-	} catch {
-		return null;
-	}
+async function readMarker(): Promise<RcnVersion | null> {
+	return readJsonFile<RcnVersion>(VERSION_PATH);
 }
 
-function writeMarker(v: RcnVersion): void {
-	writeFileSync(VERSION_PATH, JSON.stringify(v, null, 2));
+async function writeMarker(v: RcnVersion): Promise<void> {
+	await writeJsonFile(VERSION_PATH, v);
 }
 
 /** ETag equality, falling back to Last-Modified + Content-Length. */
@@ -438,7 +428,6 @@ async function downloadIfMissing(
 	marker: RcnVersion | null,
 ): Promise<void> {
 	if (process.env.RCN_GML_PATH) return; // test override: file already present
-	await mkdir(DATA_DIR, { recursive: true });
 	const cached = await fileExists(GML_PATH);
 	if (cached && !force) {
 		if (!remote || (marker && sameVersion(remote, marker))) {
@@ -467,20 +456,10 @@ async function downloadIfMissing(
 	}
 
 	console.log(`Downloading ${RCN_ZIP_URL} ...`);
-	const res = await fetch(RCN_ZIP_URL);
-	if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
-	await pipeline(
-		Readable.fromWeb(res.body as never),
-		createWriteStream(ZIP_PATH),
-	);
+	await downloadToFile(RCN_ZIP_URL, ZIP_PATH);
 	console.log("Extracting GML...");
 	// The download is a ZIP archive containing a single .gml file.
-	await new Promise((resolve, reject) => {
-		createReadStream(ZIP_PATH)
-			.pipe(Extract({ path: DATA_DIR }))
-			.on("close", resolve)
-			.on("error", reject);
-	});
+	await extractZip(ZIP_PATH, DATA_DIR);
 	await rm(ZIP_PATH);
 	console.log(`Ready: ${GML_PATH}`);
 }
@@ -493,7 +472,7 @@ async function downloadIfMissing(
  */
 export async function importRcn(force = false): Promise<number> {
 	const remote = await headRemote();
-	const marker = readMarker();
+	const marker = await readMarker();
 
 	// The diff check: when the remote identity matches the marker of the
 	// last successful import, nothing was added on the registry — skip
@@ -645,7 +624,7 @@ export async function importRcn(force = false): Promise<number> {
 	// Record the remote identity we just imported, so the next run can
 	// skip straight to the diff check.
 	if (remote) {
-		writeMarker(remote);
+		await writeMarker(remote);
 		console.log(`Version marker written (etag ${remote.etag})`);
 	}
 

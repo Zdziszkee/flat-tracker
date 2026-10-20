@@ -1,10 +1,9 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { max, sql } from "drizzle-orm";
 import { Effect } from "effect";
 
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
+import { readJsonFile, writeJsonFile } from "#/lib/json-state";
 import { enrichAirbnbDetails } from "./airbnb-enrich.ts";
 import { warnIfNoBrowser } from "./browser.ts";
 import { blockStatus } from "./crawler.ts";
@@ -106,16 +105,11 @@ function causeLine(err: unknown): string {
 type CrawlState = Record<string, string>;
 
 async function readState(): Promise<CrawlState> {
-	try {
-		return JSON.parse(await readFile(STATE_PATH, "utf8")) as CrawlState;
-	} catch {
-		return {};
-	}
+	return (await readJsonFile<CrawlState>(STATE_PATH)) ?? {};
 }
 
 async function writeState(state: CrawlState): Promise<void> {
-	await mkdir(dirname(STATE_PATH), { recursive: true });
-	await writeFile(STATE_PATH, JSON.stringify(state, null, 2));
+	await writeJsonFile(STATE_PATH, state);
 }
 
 export async function refreshAll(

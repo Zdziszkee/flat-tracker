@@ -112,7 +112,7 @@ migration step to boot.
 **`.gitignore` trap:** the crawl-data rules are `/data/` and `/storage/`
 (root-anchored). A bare `data/` also matches `src/data/**`, which silently
 kept `src/data/region-powiats.ts` out of every clone while
-`src/routes/api/powiat-map.ts` imported it — the route tree then failed to
+an API route imported it — the route tree then failed to
 load and *every* page 500'd. Never un-anchor those rules, and keep route-level
 imports of optional datasets lazy (`await import()`) so a missing data file
 degrades one endpoint instead of the whole app.
@@ -298,21 +298,12 @@ Two consequences worth knowing:
   each voivodeship's full extent, so no in-region point is left unlabelled
   (`validate:regions` asserts exactly that over the whole table).
 
-`/api/powiat-map` is the slow one (measured ~18 s cold on dev.db: 58
-powiaty over ~2.8M in-region RCN rows, of which 2.74M land in a powiat). The
-transaction side is now cheap — `inTrackedRegions` (`region is not null`)
-drives `transactions_region_price_idx`, so it is an index search, not a
-24M-row scan (33 s -> 18 s) — and what is left is the JS point-in-polygon
-loop, still O(points × candidate powiats) with the bbox prefilter keeping the
-candidates at one or two. The lever left is a grid/rollup table (cell →
-powiat, precomputed sums/counts, refreshed after imports), which would make
-the endpoint O(cells) and cacheable; it is not implemented because it trades
-exact on-demand aggregation for import-time staleness, a product decision
-rather than a faster loop. Note also that `rcnAvgM2` mixes land parcels with
-flats for GUGiK-sourced powiaty (61-80% of their priced rows are plots,
-44-67 zł/m², against ~12.4k zł/m² for flats in Kraków), so it reads far below
-the listing averages there; the listings path filters plots, the RCN path
-does not.
+The per-powiat choropleth (`/api/powiat-map`) was removed in the analytics
+cleanup. The region-scope machinery it used is still the contract for every
+analytics query: `transactions.region` plus the two partial indexes. The
+`region` column also lets the per-powiat series use the date-first index
+(`transactions_region_date_idx`) instead of scanning the national
+`parcel_id` index; `validate:regions` asserts that plan.
 
 **Server refreshes fetch only the first, newest-sorted page per site**
 (`firstPageOnly: true`, the default in `refreshAll`): each hourly run
@@ -579,14 +570,13 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   `src/data/region-railways.ts`; `src/styles.css` excludes the generated data
   modules with `@source not`. Both have the same symptom: the first
   `styles.css` request hangs and every other request queues behind it.
-- **Heavy read endpoints are cached and yield**: `/api/market-charts` and
-  `/api/powiat-map` are multi-second synchronous better-sqlite3
-  aggregations (the choropleth also does a JS point-in-polygon pass over
-  millions of rows). `src/lib/server-cache.ts` holds their result for five
-  minutes with single-flight, and the handlers yield between queries /
-  every 30k rows so the event loop keeps serving other requests while a
-  cold computation runs. The first view after a server restart still pays
-  the computation; repeat views are milliseconds.
+- **Heavy read endpoints are cached and yield**: `/api/market-charts` is a
+  sequence of multi-second synchronous better-sqlite3 aggregations.
+  `src/lib/server-cache.ts` holds its result for five minutes with
+  single-flight, and the shared `all` helper yields between queries so the
+  event loop keeps serving other requests while a cold computation runs.
+  The first view after a server restart still pays the computation; repeat
+  views are milliseconds.
 - **Map is client-only**: `mapbox-gl` touches `window` at import time and
   crashes SSR. `src/routes/map.tsx` gates the lazy `import()` behind a
   `useEffect` mount flag — never import mapbox-gl in a route module
@@ -612,12 +602,10 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   cached Overpass responses in `data/powiats/`): powiat boundaries for every
   tracked voivodeship (22 małopolskie + 36 śląskie), one closed ring per
   entry, outer boundaries first then holes, matched with an **even-odd** rule
-  so Tarnów/Nowy Sącz are not double-counted into the powiat around them
-  (the śląskie city powiaty are separate polygons, not holes, and do not
-  overlap their land powiat either; `bun run validate:powiats` checks every
-  city centre). Rings are simplified to ~90 m — enough for point-in-polygon
-  bucketing. The choropleth lazy-imports this file, so a missing dataset
-  degrades `/api/powiat-map` alone.
+  so Tarnów/Nowy Sącz are not double-counted into the powiat around them.
+  `bun run validate:powiats` checks every city centre. The dataset is now a
+  reference source for the TERYT-name validation (`validate:market-charts`)
+  rather than a map layer.
 - DB access goes through `#/db/index` only. It migrates on import, so a new
   script never needs a manual `db:migrate`; don't open `better-sqlite3`
   directly (except throwaway tools in `scripts/`).

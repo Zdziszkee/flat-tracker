@@ -1,8 +1,8 @@
 /**
  * Powiat (admin_level=6) boundary rings for every voivodeship the tracker
  * covers (małopolskie, śląskie), keyed by plain powiat name
- * ("krakowski", "Kraków", "Katowice", ...). Used by `/api/powiat-map` for
- * point-in-polygon powiat assignment.
+ * ("krakowski", "Kraków", "Katowice", ...). Reference dataset for TERYT-name
+ * and boundary validation (the choropleth endpoint was removed).
  *
  * `coordinates` holds one closed ring per array: outer boundaries first,
  * then holes (city powiaty enclosed by a land powiat, e.g. Tarnów inside

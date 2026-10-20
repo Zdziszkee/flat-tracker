@@ -1,49 +1,30 @@
 import { REGIONS } from "../regions.ts";
-import type { CheerioAdapter, Listing } from "../types.ts";
+import type { Listing } from "../types.ts";
 import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
-import { findLdNodes, parseLdJson } from "./ldjson.ts";
+import { findLdNodes, hasLdType, makeLdGraphAdapter } from "./ldgraph.ts";
 import { num, str } from "./ldoffer.ts";
 
 /**
  * Domiporta embeds its results as an ItemList inside an @graph LD+JSON
  * block; each item is a Product/RealEstateListing with an Offer.
  */
-export const domiportaAdapter: CheerioAdapter = {
+export const domiportaAdapter = makeLdGraphAdapter({
 	id: "domiporta",
 	name: "Domiporta - Małopolska + Śląsk flats for sale",
-	kind: "cheerio",
 	startUrls: REGIONS.map(
 		(r) => `https://www.domiporta.pl/mieszkanie/sprzedam/${r.name}`,
 	),
 	maxRequestsPerCrawl: 40,
-	// One newest page per region must fit the first-page-only budget.
-	firstPageOnlyRequests: REGIONS.length,
-
-	async extractHtml(html, url, enqueue) {
-		const nodes = parseLdJson(html);
-		const items = findLdNodes(nodes, (n) => {
-			const types = Array.isArray(n["@type"]) ? n["@type"] : [n["@type"]];
-			return types.includes("RealEstateListing") && typeof n.name === "string";
-		});
-
-		const listings: Listing[] = [];
-		for (const item of items) {
-			const listing = itemToListing(item);
-			if (listing) listings.push(listing);
-		}
-
-		// Pagination: ?PageNumber=N (1-based).
-		const current = Number.parseInt(
-			new URL(url).searchParams.get("PageNumber") ?? "1",
-			10,
-		);
-		const next = new URL(url);
-		next.searchParams.set("PageNumber", String(current + 1));
-		await enqueue([next.toString()]);
-
-		return listings;
-	},
-};
+	// Pagination: ?PageNumber=N (1-based).
+	pageParam: "PageNumber",
+	findNodes: (nodes) =>
+		findLdNodes(
+			nodes,
+			(node) =>
+				hasLdType(node, "RealEstateListing") && typeof node.name === "string",
+		),
+	toListing: itemToListing,
+});
 
 function itemToListing(item: Record<string, unknown>): Listing | null {
 	const title = str(item.name);
@@ -54,8 +35,9 @@ function itemToListing(item: Record<string, unknown>): Listing | null {
 
 	// No structured address; parse street (+ number) from the title/description.
 	const district = extractDistrict(title);
-	const desc = str(item.description);
-	const parsed = parseAddressFromText(desc) ?? parseAddressFromText(title);
+	const description = str(item.description);
+	const parsed =
+		parseAddressFromText(description) ?? parseAddressFromText(title);
 	const address = parsed
 		? formatAddressForGeocode(parsed.street, parsed.number, district)
 		: null;
@@ -72,7 +54,7 @@ function itemToListing(item: Record<string, unknown>): Listing | null {
 		floor: null,
 		district,
 		address,
-		description: desc,
+		description,
 		heatingType: null,
 		propertyType: null,
 		features: null,
@@ -85,6 +67,6 @@ function itemToListing(item: Record<string, unknown>): Listing | null {
 
 /** Titles look like "... Kraków Prądnik Biały, Prądnik Biały: Mackiewicza". */
 function extractDistrict(title: string): string | null {
-	const m = title.match(/Krak[oó]w\s+([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż-]+)/);
-	return m ? m[1] : null;
+	const match = title.match(/Krak[oó]w\s+([A-ZĄĆĘŁŃÓŚŹŻ][a-ząćęłńóśźż-]+)/);
+	return match ? match[1] : null;
 }

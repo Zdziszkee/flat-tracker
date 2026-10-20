@@ -41,14 +41,7 @@
 
 import "dotenv/config";
 
-import { execSync } from "node:child_process";
-import {
-	existsSync,
-	mkdirSync,
-	readFileSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import path from "node:path";
 
 import { sql } from "drizzle-orm";
@@ -56,6 +49,8 @@ import { sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import type { TrackedRegion } from "#/db/region";
 import { parcelMeta, transactions } from "#/db/schema";
+import { readJsonFile, writeJsonFile } from "#/lib/json-state";
+import { downloadToFile, extractZip } from "./rcn/common.ts";
 import {
 	loadPowiatPackages,
 	type PowiatPackage,
@@ -176,12 +171,8 @@ interface State {
 	checkedAt?: Record<string, string>;
 }
 
-function readState(): State {
-	try {
-		return JSON.parse(readFileSync(STATE_PATH, "utf8")) as State;
-	} catch {
-		return {};
-	}
+async function readState(): Promise<State> {
+	return (await readJsonFile<State>(STATE_PATH)) ?? {};
 }
 
 // ---------------------------------------------------------------------------
@@ -376,15 +367,10 @@ function insertRows(rows: RowInsert[]): number {
 async function downloadPowiat(teryt: string): Promise<string> {
 	const url = powiatZipUrl(teryt);
 	const zipPath = path.join(DATA_DIR, `${teryt}.gpkg.zip`);
-	const res = await fetch(url, {
-		signal: AbortSignal.timeout(600_000),
-	});
-	if (!res.ok) throw new Error(`HTTP ${res.status}`);
-	const buf = Buffer.from(await res.arrayBuffer());
-	writeFileSync(zipPath, buf);
+	await downloadToFile(url, zipPath, 600_000);
 	const gpkgPath = path.join(DATA_DIR, `${teryt}_transakcje_ceny.gpkg`);
 	if (existsSync(gpkgPath)) unlinkSync(gpkgPath);
-	execSync(`unzip -o -q "${zipPath}" -d "${DATA_DIR}"`, { stdio: "pipe" });
+	await extractZip(zipPath, DATA_DIR);
 	return gpkgPath;
 }
 
@@ -611,7 +597,7 @@ export async function importRcnGugik(
 	mkdirSync(DATA_DIR, { recursive: true });
 	const scope = opts.scope ?? resolveScope(process.env.RCN_GUGIK_SCOPE);
 	const force = opts.force ?? false;
-	const state = readState();
+	const state = await readState();
 	state.checkedAt ??= {};
 	const checkedAt = state.checkedAt;
 
@@ -655,7 +641,7 @@ export async function importRcnGugik(
 		try {
 			totalNew += await importPowiat(pkg.teryt);
 			checkedAt[pkg.teryt] = new Date().toISOString();
-			writeFileSync(STATE_PATH, JSON.stringify(state));
+			await writeJsonFile(STATE_PATH, state);
 			return true;
 		} catch (err) {
 			const detail =

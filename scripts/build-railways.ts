@@ -21,9 +21,9 @@
  * Data: © OpenStreetMap contributors, ODbL.
  */
 
-import { createReadStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import osmPbf, { type OsmItem } from "osm-pbf-parser";
+import { forEachPbfItem } from "../src/crawler/osm/pbf.ts";
 
 const OUT_PATH = "src/data/region-railways.ts";
 const PBF_PATHS = ["data/osm/malopolskie.osm.pbf", "data/osm/slaskie.osm.pbf"];
@@ -63,23 +63,6 @@ function decimate(pts: Array<[number, number]>): Array<[number, number]> {
 	return out;
 }
 
-function forEachItem(
-	pbfPath: string,
-	visit: (item: OsmItem) => void,
-): Promise<void> {
-	// osm-pbf-parser is an evented stream emitting batches of items (the
-	// shape osm-index.ts consumes); it is not async-iterable.
-	return new Promise((resolve, reject) => {
-		const osm = osmPbf();
-		osm.on("data", (items: OsmItem[]) => {
-			for (const item of items) visit(item);
-		});
-		osm.on("end", resolve);
-		osm.on("error", reject);
-		createReadStream(pbfPath).pipe(osm);
-	});
-}
-
 /** Pass 1: matching ways + station points; collect which node ids we need. */
 async function collectWays(): Promise<{
 	ways: Way[];
@@ -97,7 +80,7 @@ async function collectWays(): Promise<{
 				`${pbfPath} missing — run "bun run assign-buildings" once (it downloads the extracts) or fetch it from Geofabrik`,
 			);
 		}
-		await forEachItem(pbfPath, (item) => {
+		await forEachPbfItem(pbfPath, (item) => {
 			if (item.type === "way") {
 				const tags = (item.tags ?? {}) as Record<string, string>;
 				const refs = (item.refs ?? []) as number[];
@@ -140,7 +123,7 @@ async function collectWays(): Promise<{
 async function collectCoords(needed: Set<number>): Promise<Map<number, [number, number]>> {
 	const coords = new Map<number, [number, number]>();
 	for (const pbfPath of PBF_PATHS) {
-		await forEachItem(pbfPath, (item) => {
+		await forEachPbfItem(pbfPath, (item) => {
 			if (item.type === "node" && needed.has(item.id) && item.lat != null && item.lon != null) {
 				coords.set(item.id, [item.lon, item.lat]);
 			}

@@ -1,11 +1,11 @@
 /**
  * Generate `src/data/region-powiats.ts` — the powiat (admin_level=6)
  * boundary rings for every voivodeship the tracker covers (Małopolska and
- * Śląsk), used by `/api/powiat-map` for point-in-polygon assignment.
+ * Śląsk), used as the reference set for TERYT-name and boundary validation.
  *
  * The previous copy of the małopolska module was lost because `.gitignore`'s
  * `data/` rule also matched `src/data/` (fixed: the rule is now `/data/`), and
- * `src/routes/api/powiat-map.ts` imported a file that no clone had. This
+ * an API route imported a file that no clone had. This
  * script makes the dataset reproducible for both regions in one file, so the
  * choropleth never mixes two generations of boundaries.
  *
@@ -348,8 +348,8 @@ async function main(): Promise<void> {
 	const out = `/**
  * Powiat (admin_level=6) boundary rings for every voivodeship the tracker
  * covers (${VOIVODESHIPS.map((v) => v.name).join(", ")}), keyed by plain powiat name
- * ("krakowski", "Kraków", "Katowice", ...). Used by \`/api/powiat-map\` for
- * point-in-polygon powiat assignment.
+ * ("krakowski", "Kraków", "Katowice", ...). Reference dataset for TERYT-name
+ * and boundary validation (the choropleth endpoint was removed).
  *
  * \`coordinates\` holds one closed ring per array: outer boundaries first,
  * then holes (city powiaty enclosed by a land powiat, e.g. Tarnów inside

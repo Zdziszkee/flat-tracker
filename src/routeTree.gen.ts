@@ -15,25 +15,17 @@ import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as MapRouteImport } from './routes/map'
 import { Route as SourcesRouteImport } from './routes/sources'
 import { Route as ApiCrawlStatusRouteImport } from './routes/api/crawl-status'
-import { Route as ApiInvestmentAnalyticsRouteImport } from './routes/api/investment-analytics'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiMarketChartsRouteImport } from './routes/api/market-charts'
-import { Route as ApiMarketInsightsRouteImport } from './routes/api/market-insights'
 import { Route as ApiOccupancyHeatmapRouteImport } from './routes/api/occupancy-heatmap'
 import { Route as ApiParcelsRouteImport } from './routes/api/parcels'
-import { Route as ApiPowiatMapRouteImport } from './routes/api/powiat-map'
 import { Route as ApiRailwaysRouteImport } from './routes/api/railways'
 import { Route as ApiRefreshRouteImport } from './routes/api/refresh'
-import { Route as ApiRentalAnalyticsRouteImport } from './routes/api/rental-analytics'
-import { Route as ApiRentalGuestPricesRouteImport } from './routes/api/rental-guest-prices'
-import { Route as ApiRentalStatsRouteImport } from './routes/api/rental-stats'
-import { Route as ApiSalesAnalyticsRouteImport } from './routes/api/sales-analytics'
 import { Route as ApiSourcesRouteImport } from './routes/api/sources'
 import { Route as ApiTopOccupancyAreasRouteImport } from './routes/api/top-occupancy-areas'
 import { Route as ApiValuationRouteImport } from './routes/api/valuation'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as ApiBuildingsGeojsonRouteImport } from './routes/api/buildings/geojson'
-import { Route as ApiBuildingsHistoryIdsRouteImport } from './routes/api/buildings/history-ids'
 import { Route as ApiBuildingsLabelsRouteImport } from './routes/api/buildings/labels'
 import { Route as ApiBuildingsLookupRouteImport } from './routes/api/buildings/lookup'
 import { Route as ApiParcelsLookupRouteImport } from './routes/api/parcels/lookup'
@@ -69,11 +61,6 @@ const ApiCrawlStatusRoute = ApiCrawlStatusRouteImport.update({
   path: '/api/crawl-status',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiInvestmentAnalyticsRoute = ApiInvestmentAnalyticsRouteImport.update({
-  id: '/api/investment-analytics',
-  path: '/api/investment-analytics',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiListingsRoute = ApiListingsRouteImport.update({
   id: '/api/listings',
   path: '/api/listings',
@@ -82,11 +69,6 @@ const ApiListingsRoute = ApiListingsRouteImport.update({
 const ApiMarketChartsRoute = ApiMarketChartsRouteImport.update({
   id: '/api/market-charts',
   path: '/api/market-charts',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiMarketInsightsRoute = ApiMarketInsightsRouteImport.update({
-  id: '/api/market-insights',
-  path: '/api/market-insights',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiOccupancyHeatmapRoute = ApiOccupancyHeatmapRouteImport.update({
@@ -99,11 +81,6 @@ const ApiParcelsRoute = ApiParcelsRouteImport.update({
   path: '/api/parcels',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPowiatMapRoute = ApiPowiatMapRouteImport.update({
-  id: '/api/powiat-map',
-  path: '/api/powiat-map',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const ApiRailwaysRoute = ApiRailwaysRouteImport.update({
   id: '/api/railways',
   path: '/api/railways',
@@ -112,26 +89,6 @@ const ApiRailwaysRoute = ApiRailwaysRouteImport.update({
 const ApiRefreshRoute = ApiRefreshRouteImport.update({
   id: '/api/refresh',
   path: '/api/refresh',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiRentalAnalyticsRoute = ApiRentalAnalyticsRouteImport.update({
-  id: '/api/rental-analytics',
-  path: '/api/rental-analytics',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiRentalGuestPricesRoute = ApiRentalGuestPricesRouteImport.update({
-  id: '/api/rental-guest-prices',
-  path: '/api/rental-guest-prices',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiRentalStatsRoute = ApiRentalStatsRouteImport.update({
-  id: '/api/rental-stats',
-  path: '/api/rental-stats',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiSalesAnalyticsRoute = ApiSalesAnalyticsRouteImport.update({
-  id: '/api/sales-analytics',
-  path: '/api/sales-analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiSourcesRoute = ApiSourcesRouteImport.update({
@@ -157,11 +114,6 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 const ApiBuildingsGeojsonRoute = ApiBuildingsGeojsonRouteImport.update({
   id: '/api/buildings/geojson',
   path: '/api/buildings/geojson',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiBuildingsHistoryIdsRoute = ApiBuildingsHistoryIdsRouteImport.update({
-  id: '/api/buildings/history-ids',
-  path: '/api/buildings/history-ids',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiBuildingsLabelsRoute = ApiBuildingsLabelsRouteImport.update({
@@ -192,25 +144,17 @@ export interface FileRoutesByFullPath {
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
-  '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-charts': typeof ApiMarketChartsRoute
-  '/api/market-insights': typeof ApiMarketInsightsRoute
   '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
-  '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/railways': typeof ApiRailwaysRoute
   '/api/refresh': typeof ApiRefreshRoute
-  '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
-  '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
-  '/api/rental-stats': typeof ApiRentalStatsRoute
-  '/api/sales-analytics': typeof ApiSalesAnalyticsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/top-occupancy-areas': typeof ApiTopOccupancyAreasRoute
   '/api/valuation': typeof ApiValuationRouteWithChildren
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
-  '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
   '/api/buildings/labels': typeof ApiBuildingsLabelsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
   '/api/parcels/lookup': typeof ApiParcelsLookupRoute
@@ -223,25 +167,17 @@ export interface FileRoutesByTo {
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
-  '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-charts': typeof ApiMarketChartsRoute
-  '/api/market-insights': typeof ApiMarketInsightsRoute
   '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
-  '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/railways': typeof ApiRailwaysRoute
   '/api/refresh': typeof ApiRefreshRoute
-  '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
-  '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
-  '/api/rental-stats': typeof ApiRentalStatsRoute
-  '/api/sales-analytics': typeof ApiSalesAnalyticsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/top-occupancy-areas': typeof ApiTopOccupancyAreasRoute
   '/api/valuation': typeof ApiValuationRouteWithChildren
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
-  '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
   '/api/buildings/labels': typeof ApiBuildingsLabelsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
   '/api/parcels/lookup': typeof ApiParcelsLookupRoute
@@ -255,25 +191,17 @@ export interface FileRoutesById {
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
-  '/api/investment-analytics': typeof ApiInvestmentAnalyticsRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-charts': typeof ApiMarketChartsRoute
-  '/api/market-insights': typeof ApiMarketInsightsRoute
   '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
-  '/api/powiat-map': typeof ApiPowiatMapRoute
   '/api/railways': typeof ApiRailwaysRoute
   '/api/refresh': typeof ApiRefreshRoute
-  '/api/rental-analytics': typeof ApiRentalAnalyticsRoute
-  '/api/rental-guest-prices': typeof ApiRentalGuestPricesRoute
-  '/api/rental-stats': typeof ApiRentalStatsRoute
-  '/api/sales-analytics': typeof ApiSalesAnalyticsRoute
   '/api/sources': typeof ApiSourcesRoute
   '/api/top-occupancy-areas': typeof ApiTopOccupancyAreasRoute
   '/api/valuation': typeof ApiValuationRouteWithChildren
   '/api/auth/$': typeof ApiAuthSplatRoute
   '/api/buildings/geojson': typeof ApiBuildingsGeojsonRoute
-  '/api/buildings/history-ids': typeof ApiBuildingsHistoryIdsRoute
   '/api/buildings/labels': typeof ApiBuildingsLabelsRoute
   '/api/buildings/lookup': typeof ApiBuildingsLookupRoute
   '/api/parcels/lookup': typeof ApiParcelsLookupRoute
@@ -288,25 +216,17 @@ export interface FileRouteTypes {
     | '/map'
     | '/sources'
     | '/api/crawl-status'
-    | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-charts'
-    | '/api/market-insights'
     | '/api/occupancy-heatmap'
     | '/api/parcels'
-    | '/api/powiat-map'
     | '/api/railways'
     | '/api/refresh'
-    | '/api/rental-analytics'
-    | '/api/rental-guest-prices'
-    | '/api/rental-stats'
-    | '/api/sales-analytics'
     | '/api/sources'
     | '/api/top-occupancy-areas'
     | '/api/valuation'
     | '/api/auth/$'
     | '/api/buildings/geojson'
-    | '/api/buildings/history-ids'
     | '/api/buildings/labels'
     | '/api/buildings/lookup'
     | '/api/parcels/lookup'
@@ -319,25 +239,17 @@ export interface FileRouteTypes {
     | '/map'
     | '/sources'
     | '/api/crawl-status'
-    | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-charts'
-    | '/api/market-insights'
     | '/api/occupancy-heatmap'
     | '/api/parcels'
-    | '/api/powiat-map'
     | '/api/railways'
     | '/api/refresh'
-    | '/api/rental-analytics'
-    | '/api/rental-guest-prices'
-    | '/api/rental-stats'
-    | '/api/sales-analytics'
     | '/api/sources'
     | '/api/top-occupancy-areas'
     | '/api/valuation'
     | '/api/auth/$'
     | '/api/buildings/geojson'
-    | '/api/buildings/history-ids'
     | '/api/buildings/labels'
     | '/api/buildings/lookup'
     | '/api/parcels/lookup'
@@ -350,25 +262,17 @@ export interface FileRouteTypes {
     | '/map'
     | '/sources'
     | '/api/crawl-status'
-    | '/api/investment-analytics'
     | '/api/listings'
     | '/api/market-charts'
-    | '/api/market-insights'
     | '/api/occupancy-heatmap'
     | '/api/parcels'
-    | '/api/powiat-map'
     | '/api/railways'
     | '/api/refresh'
-    | '/api/rental-analytics'
-    | '/api/rental-guest-prices'
-    | '/api/rental-stats'
-    | '/api/sales-analytics'
     | '/api/sources'
     | '/api/top-occupancy-areas'
     | '/api/valuation'
     | '/api/auth/$'
     | '/api/buildings/geojson'
-    | '/api/buildings/history-ids'
     | '/api/buildings/labels'
     | '/api/buildings/lookup'
     | '/api/parcels/lookup'
@@ -382,25 +286,17 @@ export interface RootRouteChildren {
   MapRoute: typeof MapRoute
   SourcesRoute: typeof SourcesRoute
   ApiCrawlStatusRoute: typeof ApiCrawlStatusRoute
-  ApiInvestmentAnalyticsRoute: typeof ApiInvestmentAnalyticsRoute
   ApiListingsRoute: typeof ApiListingsRoute
   ApiMarketChartsRoute: typeof ApiMarketChartsRoute
-  ApiMarketInsightsRoute: typeof ApiMarketInsightsRoute
   ApiOccupancyHeatmapRoute: typeof ApiOccupancyHeatmapRoute
   ApiParcelsRoute: typeof ApiParcelsRouteWithChildren
-  ApiPowiatMapRoute: typeof ApiPowiatMapRoute
   ApiRailwaysRoute: typeof ApiRailwaysRoute
   ApiRefreshRoute: typeof ApiRefreshRoute
-  ApiRentalAnalyticsRoute: typeof ApiRentalAnalyticsRoute
-  ApiRentalGuestPricesRoute: typeof ApiRentalGuestPricesRoute
-  ApiRentalStatsRoute: typeof ApiRentalStatsRoute
-  ApiSalesAnalyticsRoute: typeof ApiSalesAnalyticsRoute
   ApiSourcesRoute: typeof ApiSourcesRoute
   ApiTopOccupancyAreasRoute: typeof ApiTopOccupancyAreasRoute
   ApiValuationRoute: typeof ApiValuationRouteWithChildren
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
   ApiBuildingsGeojsonRoute: typeof ApiBuildingsGeojsonRoute
-  ApiBuildingsHistoryIdsRoute: typeof ApiBuildingsHistoryIdsRoute
   ApiBuildingsLabelsRoute: typeof ApiBuildingsLabelsRoute
   ApiBuildingsLookupRoute: typeof ApiBuildingsLookupRoute
 }
@@ -449,13 +345,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCrawlStatusRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/investment-analytics': {
-      id: '/api/investment-analytics'
-      path: '/api/investment-analytics'
-      fullPath: '/api/investment-analytics'
-      preLoaderRoute: typeof ApiInvestmentAnalyticsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/listings': {
       id: '/api/listings'
       path: '/api/listings'
@@ -468,13 +357,6 @@ declare module '@tanstack/react-router' {
       path: '/api/market-charts'
       fullPath: '/api/market-charts'
       preLoaderRoute: typeof ApiMarketChartsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/market-insights': {
-      id: '/api/market-insights'
-      path: '/api/market-insights'
-      fullPath: '/api/market-insights'
-      preLoaderRoute: typeof ApiMarketInsightsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/occupancy-heatmap': {
@@ -491,13 +373,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiParcelsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/powiat-map': {
-      id: '/api/powiat-map'
-      path: '/api/powiat-map'
-      fullPath: '/api/powiat-map'
-      preLoaderRoute: typeof ApiPowiatMapRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/api/railways': {
       id: '/api/railways'
       path: '/api/railways'
@@ -510,34 +385,6 @@ declare module '@tanstack/react-router' {
       path: '/api/refresh'
       fullPath: '/api/refresh'
       preLoaderRoute: typeof ApiRefreshRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/rental-analytics': {
-      id: '/api/rental-analytics'
-      path: '/api/rental-analytics'
-      fullPath: '/api/rental-analytics'
-      preLoaderRoute: typeof ApiRentalAnalyticsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/rental-guest-prices': {
-      id: '/api/rental-guest-prices'
-      path: '/api/rental-guest-prices'
-      fullPath: '/api/rental-guest-prices'
-      preLoaderRoute: typeof ApiRentalGuestPricesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/rental-stats': {
-      id: '/api/rental-stats'
-      path: '/api/rental-stats'
-      fullPath: '/api/rental-stats'
-      preLoaderRoute: typeof ApiRentalStatsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/sales-analytics': {
-      id: '/api/sales-analytics'
-      path: '/api/sales-analytics'
-      fullPath: '/api/sales-analytics'
-      preLoaderRoute: typeof ApiSalesAnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/sources': {
@@ -573,13 +420,6 @@ declare module '@tanstack/react-router' {
       path: '/api/buildings/geojson'
       fullPath: '/api/buildings/geojson'
       preLoaderRoute: typeof ApiBuildingsGeojsonRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/buildings/history-ids': {
-      id: '/api/buildings/history-ids'
-      path: '/api/buildings/history-ids'
-      fullPath: '/api/buildings/history-ids'
-      preLoaderRoute: typeof ApiBuildingsHistoryIdsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/buildings/labels': {
@@ -644,25 +484,17 @@ const rootRouteChildren: RootRouteChildren = {
   MapRoute: MapRoute,
   SourcesRoute: SourcesRoute,
   ApiCrawlStatusRoute: ApiCrawlStatusRoute,
-  ApiInvestmentAnalyticsRoute: ApiInvestmentAnalyticsRoute,
   ApiListingsRoute: ApiListingsRoute,
   ApiMarketChartsRoute: ApiMarketChartsRoute,
-  ApiMarketInsightsRoute: ApiMarketInsightsRoute,
   ApiOccupancyHeatmapRoute: ApiOccupancyHeatmapRoute,
   ApiParcelsRoute: ApiParcelsRouteWithChildren,
-  ApiPowiatMapRoute: ApiPowiatMapRoute,
   ApiRailwaysRoute: ApiRailwaysRoute,
   ApiRefreshRoute: ApiRefreshRoute,
-  ApiRentalAnalyticsRoute: ApiRentalAnalyticsRoute,
-  ApiRentalGuestPricesRoute: ApiRentalGuestPricesRoute,
-  ApiRentalStatsRoute: ApiRentalStatsRoute,
-  ApiSalesAnalyticsRoute: ApiSalesAnalyticsRoute,
   ApiSourcesRoute: ApiSourcesRoute,
   ApiTopOccupancyAreasRoute: ApiTopOccupancyAreasRoute,
   ApiValuationRoute: ApiValuationRouteWithChildren,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
   ApiBuildingsGeojsonRoute: ApiBuildingsGeojsonRoute,
-  ApiBuildingsHistoryIdsRoute: ApiBuildingsHistoryIdsRoute,
   ApiBuildingsLabelsRoute: ApiBuildingsLabelsRoute,
   ApiBuildingsLookupRoute: ApiBuildingsLookupRoute,
 }
