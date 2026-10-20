@@ -1,9 +1,40 @@
+<!-- intent-skills:start -->
+## Skill Loading
+
+Use the repository’s installed Intent. If it is unavailable, run `bun install` instead of downloading a replacement.
+Before editing files for a substantial task:
+- Run `bun run intent list` from the workspace root to see available local skills.
+- If a listed skill matches the task, run `bun run intent load <package>#<skill>` before changing files.
+- Use the loaded `SKILL.md` guidance while making the change.
+- Monorepos: when working across packages, run the skill check from the workspace root and prefer the local skill for the package being changed.
+- Multiple matches: prefer the most specific local skill for the package or concern you are changing; load additional skills only when the task spans multiple packages or concerns.
+<!-- intent-skills:end -->
+
 # Flat Tracker — Agent & Contributor Guide
 
 Krakow flat-price tracker: scrapes sale listings from otodom.pl and olx.pl,
 joins them with historical transaction prices from Poland's Rejestr Cen
 Nieruchomości (RCN), and shows every offer on a map anchored to its
 OpenStreetMap building.
+
+## Agent skills
+
+Project skills live in `.agents/skills/` and are symlinked into
+`.claude/skills/`; `skills-lock.json` pins their sources and hashes.
+
+- `typescript-style-guide`: TypeScript and React conventions. Biome and this
+  file's conventions take precedence.
+- `vercel-react-best-practices`: React performance. Ignore its Next.js-only
+  rules; this app is TanStack Start.
+- `web-design-guidelines`: UI and accessibility audit rules.
+- `frontend-design`: visual direction for bespoke UI.
+- `shadcn`: component-system usage; `components.json` is the source of truth.
+- TanStack framework skills: versioned inside `node_modules`, listed and
+  loaded through `bun run intent list` and `bun run intent load`.
+
+Precedence: this file and existing code patterns > `components.json` >
+`typescript-style-guide` > design and performance skills. A skill must not
+override a documented project convention.
 
 ## Stack
 
