@@ -487,6 +487,9 @@ returns only the columns the table renders, plus `total` and the
 source/kind facets; `/listings` uses it so opening the table does not
 download the map feed. Both shapes share the same dedupe pipeline
 (`loadVisibleRows`) and the same `filterListings` classifier.
+The map shape is ~35 MB raw (29k rows today), so `src/lib/server-response.ts`
+gzips it to ~3.9 MB (`Vary: Accept-Encoding`) and `withCache` holds the
+serialized/gzipped body for 60 s; non-gzip clients still get the raw body.
 
 `/api/buildings/labels` accepts `?bbox=minLng,minLat,maxLng,maxLat` and is
 called by the map only above zoom 15.2 for the current viewport. The

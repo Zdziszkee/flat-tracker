@@ -14,6 +14,8 @@ import {
 	parseListingFeatures,
 } from "#/lib/listing-features";
 import { propertyKindOf } from "#/lib/property-kind";
+import { withCache } from "#/lib/server-cache";
+import { gzipJson, jsonResponse } from "#/lib/server-response";
 
 /** Normalize a string for cross-source matching: lowercase, no
  * diacritics, alphanumerics only, single spaces. */
@@ -275,9 +277,9 @@ export const Route = createFileRoute("/api/listings")({
 				);
 				const filters = filtersFromSearch(search);
 				const view = url.searchParams.get("view") === "table" ? "table" : "map";
-				const rows = (await loadVisibleRows()).map(kindOf);
 
 				if (view === "table") {
+					const rows = (await loadVisibleRows()).map(kindOf);
 					const pageSize = Math.min(
 						500,
 						Math.max(
@@ -305,34 +307,40 @@ export const Route = createFileRoute("/api/listings")({
 					});
 				}
 
-				// Map feed: it needs every point plus the per-building RCN
-				// summary and the map anchor.
-				const buildingIds = [
-					...new Set(
-						rows
-							.map((row) => row.buildingId)
-							.filter((value): value is number => value != null),
-					),
-				];
-				const summaryByBuilding = new Map(
-					(await transactionSummaryByBuilding(buildingIds)).map((summary) => [
-						String(summary.buildingId),
-						summary,
-					]),
-				);
-
-				return json({
-					listings: rows.map((row) => ({
-						...row,
-						features: clientFeatures(row),
-						mapLat: row.buildingLat ?? row.lat,
-						mapLng: row.buildingLng ?? row.lng,
-						transactionStats: row.buildingId
-							? (summaryByBuilding.get(String(row.buildingId)) ?? null)
-							: null,
-					})),
-					generatedAt: new Date().toISOString(),
+				// Map feed: every point, the per-building RCN summary and the
+				// map anchor. It is the one multi-megabyte response (35 MB raw,
+				// ~3.9 MB gzipped), so cache the serialized/gzipped body for a
+				// minute instead of rebuilding and recompressing on every load.
+				const feed = await withCache("listings-map", 60_000, async () => {
+					const rows = (await loadVisibleRows()).map(kindOf);
+					const buildingIds = [
+						...new Set(
+							rows
+								.map((row) => row.buildingId)
+								.filter((value): value is number => value != null),
+						),
+					];
+					const summaryByBuilding = new Map(
+						(await transactionSummaryByBuilding(buildingIds)).map((summary) => [
+							String(summary.buildingId),
+							summary,
+						]),
+					);
+					const body = JSON.stringify({
+						listings: rows.map((row) => ({
+							...row,
+							features: clientFeatures(row),
+							mapLat: row.buildingLat ?? row.lat,
+							mapLng: row.buildingLng ?? row.lng,
+							transactionStats: row.buildingId
+								? (summaryByBuilding.get(String(row.buildingId)) ?? null)
+								: null,
+						})),
+						generatedAt: new Date().toISOString(),
+					});
+					return { body, gzip: await gzipJson(body) };
 				});
+				return jsonResponse(feed.body, request, feed.gzip);
 			},
 		},
 	},
