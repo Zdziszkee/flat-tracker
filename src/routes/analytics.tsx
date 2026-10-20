@@ -5,7 +5,9 @@ import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
+import { buildChartCards } from "#/components/analytics/chart-cards";
 import { DEFAULT_LISTING_SEARCH } from "#/lib/listing-features";
+import type { MarketCharts, ValuationRow } from "#/types/market-charts";
 
 /**
  * Analityka rynku — 19 wykresów: najem (histogramy czynszu, opłat i
@@ -13,95 +15,6 @@ import { DEFAULT_LISTING_SEARCH } from "#/lib/listing-features";
  * pierwotny vs wtórny), podaż ofert, rentowność LT i najem
  * krótkoterminowy (ceny, obłożenie, sezonowość, dzień tygodnia).
  */
-
-interface HistogramBucket {
-	label: string;
-	n: number;
-}
-
-interface MarketCharts {
-	priceTrend: Array<{ month: string; avgM2: number; tx: number }>;
-	yoyByPowiat: Array<{
-		powiat: string;
-		growthPct: number;
-		recent: number | null;
-		prior: number | null;
-		tx: number;
-	}>;
-	txVolume: Array<{ month: string; tx: number }>;
-	primaryVsSecondary: Array<{
-		powiat: string;
-		wtorny: number;
-		pierwotny: number;
-	}>;
-	offerVsTxGap: Array<{
-		month: string;
-		askM2: number;
-		txM2: number;
-		gapPct: number;
-	}>;
-	grossYieldByCity: Array<{
-		city: string;
-		saleM2: number;
-		rentM2: number;
-		yieldPct: number;
-		saleCount: number;
-		rentCount: number;
-	}>;
-	strOccupancyByCity: Array<{
-		city: string;
-		occupancy: number;
-		n: number;
-	}>;
-	strPriceByMonth: Array<{
-		month: string;
-		source: string;
-		avgPrice: number;
-	}>;
-	occupancyByMonth: Array<{ month: string; occupancy: number }>;
-	weekdayPremium: Array<{
-		weekday: number;
-		avgPrice: number;
-		bookedShare: number;
-	}>;
-	occupancyVsYield: Array<{
-		city: string;
-		yieldPct: number;
-		occupancy: number;
-	}>;
-	areaSegments: Array<{ label: string; avgM2: number; n: number }>;
-	newSupply: Array<{ month: string; segment: string; n: number }>;
-	nightlyByCity: Array<{
-		city: string;
-		source: string;
-		avgNightly: number;
-		n: number;
-	}>;
-	priceDropsByCity: Array<{
-		city: string;
-		dropped: number;
-		total: number;
-		dropPct: number;
-	}>;
-	rentHistogram: HistogramBucket[];
-	rentMeta: { avg: number; median: number };
-	oplatyHistogram: HistogramBucket[];
-	oplatyMeta: { avg: number; median: number };
-	totalHistogram: HistogramBucket[];
-	totalMeta: { avg: number; median: number };
-	txByRooms: Array<{ label: string; avgM2: number; n: number }>;
-}
-
-interface ValuationRow {
-	district: string;
-	saleAvgM2: number;
-	rentAvgM2: number;
-	grossYieldPct: number;
-	fairPriceM2: number;
-	overUnderPct: number;
-	paybackYears: number;
-	valueScore: number;
-}
 
 const DOW = ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"];
 
@@ -504,113 +417,6 @@ function AnalyticsPage() {
 		return c;
 	}, [data]);
 
-	const chartDefs: Array<{
-		title: string;
-		subtitle?: string;
-		key: string;
-		height?: number;
-	}> = [
-		{
-			title: "1 · Liczba ofert wg przedziału czynszu",
-			subtitle: `histogram najmu LT — mediana ${data?.rentMeta.median ?? 0} zł, średnia ${data?.rentMeta.avg ?? 0} zł`,
-			key: "rentHistogram",
-		},
-		{
-			title: "2 · Liczba ofert wg przedziału opłat (czynsz adm.)",
-			subtitle: `histogram opłat — mediana ${data?.oplatyMeta.median ?? 0} zł, średnia ${data?.oplatyMeta.avg ?? 0} zł`,
-			key: "oplatyHistogram",
-		},
-		{
-			title: "3 · Liczba ofert wg kosztu łącznego (czynsz + opłaty)",
-			subtitle: `histogram kosztu całkowitego — mediana ${data?.totalMeta.median ?? 0} zł, średnia ${data?.totalMeta.avg ?? 0} zł`,
-			key: "totalHistogram",
-		},
-		{
-			title: "4 · Trend cen transakcyjnych (RCN + GUGiK, 36 mies.)",
-			subtitle: "avg zł/m² — gdzie rynek zmierza",
-			key: "priceTrend",
-		},
-		{
-			title: "5 · Wolumen transakcji miesięcznie",
-			subtitle: "popyt — wolumen zwykle wyprzedza ceny",
-			key: "txVolume",
-		},
-		{
-			title: "6 · Nowe oferty miesięcznie",
-			subtitle: "niebieska = sprzedaż, zielona = najem LT, czerwona = STR",
-			key: "newSupply",
-		},
-		{
-			title: "7 · Wzrost cen transakcyjnych r/r wg powiatu",
-			subtitle:
-				"średnia 12 mies. vs poprzednie 12 (min. 10 transakcji na okno)",
-			key: "yoyByPowiat",
-		},
-		{
-			title: "8 · Rentowność najmu długoterminowego wg miasta",
-			subtitle: "czynsz roczny / cena sprzedaży",
-			key: "grossYield",
-		},
-		{
-			title: "9 · Cena ofertowa vs transakcyjna",
-			subtitle:
-				"niebieska = oferty, fioletowa = transakcje — luka = margines negocjacji",
-			key: "offerVsTxGap",
-		},
-		{
-			title: "10 · Pierwotny vs wtórny wg powiatu",
-			subtitle: "pomarańczowy = pierwotny — premium nowej podaży",
-			key: "primaryVsSecondary",
-		},
-		{
-			title: "11 · Cena transakcyjna wg liczby pokoi",
-			subtitle: "zł/m² — które typy mieszkań są cenione najwyżej",
-			key: "txByRooms",
-		},
-		{
-			title: "12 · Cena ofertowa zł/m² wg metrażu",
-			subtitle: "kawalerki zwykle najdroższe za m²",
-			key: "areaSegments",
-		},
-		{
-			title: "13 · STR — cena nocna wg miesiąca",
-			subtitle: "czerwona = Airbnb, granatowa = Booking — sezonowość",
-			key: "strPriceByMonth",
-		},
-		{
-			title: "14 · STR — obłożenie wg miesiąca",
-			subtitle: "rezerwacje (bez blokad właścicieli) — szczyty popytu",
-			key: "occupancyByMonth",
-		},
-		{
-			title: "15 · STR — cena nocna wg dnia tygodnia",
-			subtitle: "premia Pt/So = rynek weekendowy; płasko = najem pracowniczy",
-			key: "weekdayPremium",
-		},
-		{
-			title: "16 · STR — obłożenie wg miasta",
-			subtitle: "gdzie kalendarze są najpełniej zajęte",
-			key: "strOccupancy",
-		},
-		{
-			title: "17 · Obłożenie STR vs rentowność LT",
-			subtitle: "prawy górny róg = najlepsze miejsca pod najem inwestycyjny",
-			key: "occupancyVsYield",
-			height: 300,
-		},
-		{
-			title: "18 · Cena nocna wg miasta (Airbnb vs Booking)",
-			subtitle: "czerwona = Airbnb, granatowa = Booking",
-			key: "nightlyByCity",
-		},
-		{
-			title: "19 · % ofert z obniżką ceny (30 dni) wg miasta",
-			subtitle:
-				"udział ogłoszeń, których cena spadła w ciągu ostatnich 30 dni — rośnie z historią snapshots",
-			key: "priceDrops",
-		},
-	];
-
 	if (isLoading) {
 		return <div className="p-6 text-sm text-gray-500">Ładowanie...</div>;
 	}
@@ -621,6 +427,8 @@ function AnalyticsPage() {
 			</div>
 		);
 	}
+
+	const chartDefs = buildChartCards(data);
 
 	return (
 		<div className="min-h-screen bg-gray-50 p-4">

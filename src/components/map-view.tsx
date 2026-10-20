@@ -498,11 +498,12 @@ function MapCanvas({
 				amberSyncQueued = true;
 
 				// Address labels on 3D footprints (street + housenumber),
-				// visible when zoomed in close. URL-based for the same
-				// reason as above; a failed load just means no labels.
+				// visible when zoomed in close. The source starts empty and
+				// is refilled from the current viewport at zoom >= 16: the
+				// unbounded payload was 38 MB, and only a screenful renders.
 				map.addSource("building-labels", {
 					type: "geojson",
-					data: apiUrl("/api/buildings/labels"),
+					data: { type: "FeatureCollection", features: [] },
 				});
 				map.addLayer({
 					id: "building-address-labels",
@@ -522,6 +523,32 @@ function MapCanvas({
 						"text-halo-width": 1.5,
 					},
 				});
+				let labelsKey = "";
+				const syncLabels = () => {
+					const source = map.getSource("building-labels") as
+						| mapboxgl.GeoJSONSource
+						| undefined;
+					if (!source || !("setData" in source)) return;
+					if (map.getZoom() < 15.2) {
+						source.setData({ type: "FeatureCollection", features: [] });
+						labelsKey = "";
+						return;
+					}
+					const bounds = map.getBounds();
+					if (!bounds) return;
+					const round = (value: number) => Math.round(value * 1e5) / 1e5;
+					const key = [
+						round(bounds.getWest()),
+						round(bounds.getSouth()),
+						round(bounds.getEast()),
+						round(bounds.getNorth()),
+					].join(",");
+					if (key === labelsKey) return;
+					labelsKey = key;
+					source.setData(apiUrl(`/api/buildings/labels?bbox=${key}`));
+				};
+				map.on("moveend", syncLabels);
+				syncLabels();
 				map.on("mouseenter", "3d-building", () => {
 					map.getCanvas().style.cursor = "pointer";
 				});

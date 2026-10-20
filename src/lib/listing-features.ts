@@ -254,6 +254,7 @@ export const listingSearchSchema = z.object({
 	days: daysSchema,
 	kind: kindSchema,
 	offerType: offerTypeSchema,
+	page: z.coerce.number().int().min(0).catch(0).optional(),
 });
 
 export type ListingSearch = z.infer<typeof listingSearchSchema>;

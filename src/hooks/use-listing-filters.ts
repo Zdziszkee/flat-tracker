@@ -23,6 +23,16 @@ export function useListingFilters(from: "/map" | "/listings") {
 			replace: true,
 		});
 	};
+	const page = search.page ?? 0;
+	const setPage = (next: number) => {
+		void navigate({
+			search: {
+				...searchFromFilters(filters),
+				...(next > 0 ? { page: next } : {}),
+			},
+			replace: true,
+		});
+	};
 
-	return { filters, setFilters };
+	return { filters, setFilters, page, setPage };
 }

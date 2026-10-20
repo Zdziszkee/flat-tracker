@@ -1,14 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-import { eq } from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 import { db } from "#/db/index";
 import { buildings, transactions } from "#/db/schema";
 
 /**
  * GeoJSON point layer of building addresses (centroids) for buildings
  * with RCN history: shows street + housenumber labels on the amber 3D
- * footprints when zoomed in. Only history buildings are sent (~10k), so
- * the payload stays small.
+ * footprints when zoomed in. The map asks for the current viewport at
+ * zoom >= 16; the unbounded fallback stays for ad-hoc consumers.
  */
 
 interface LabelFeature {
@@ -44,11 +44,51 @@ async function getLabels(): Promise<LabelFeature[]> {
 	return cache;
 }
 
+async function getLabelsInBbox(
+	minLng: number,
+	minLat: number,
+	maxLng: number,
+	maxLat: number,
+): Promise<LabelFeature[]> {
+	const rows = await db
+		.selectDistinct({
+			osmId: buildings.osmId,
+			address: buildings.address,
+			lat: buildings.lat,
+			lng: buildings.lng,
+		})
+		.from(buildings)
+		.innerJoin(transactions, eq(transactions.buildingId, buildings.id))
+		.where(
+			and(
+				gte(buildings.lat, minLat),
+				lte(buildings.lat, maxLat),
+				gte(buildings.lng, minLng),
+				lte(buildings.lng, maxLng),
+			),
+		);
+	return rows
+		.filter((row) => row.address && row.address.trim().length > 0)
+		.map((row) => ({
+			osmId: row.osmId,
+			address: row.address as string,
+			lat: row.lat,
+			lng: row.lng,
+		}));
+}
+
 export const Route = createFileRoute("/api/buildings/labels")({
 	server: {
 		handlers: {
-			GET: async () => {
-				const labels = await getLabels();
+			GET: async ({ request }) => {
+				const bbox = new URL(request.url).searchParams
+					.get("bbox")
+					?.split(",")
+					.map(Number);
+				const labels =
+					bbox?.length === 4 && bbox.every(Number.isFinite)
+						? await getLabelsInBbox(bbox[0], bbox[1], bbox[2], bbox[3])
+						: await getLabels();
 				return json({
 					type: "FeatureCollection",
 					features: labels.map((l) => ({

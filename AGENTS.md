@@ -476,6 +476,21 @@ Rows with no evidence stay untyped and show only under "Wszystkie" — a
 guess would misfile them; when adding a source, feed the classifier real
 signals (or leave it untyped) rather than defaulting.
 
+### Listing feeds: map vs table
+
+`/api/listings` has two shapes. The default `view=map` returns every
+surviving row with the map anchor, per-building `transactionStats`, and the
+compact feature payload the popups read. `view=table&page=N&pageSize=100`
+returns only the columns the table renders, plus `total` and the
+source/kind facets; `/listings` uses it so opening the table does not
+download the map feed. Both shapes share the same dedupe pipeline
+(`loadVisibleRows`) and the same `filterListings` classifier.
+
+`/api/buildings/labels` accepts `?bbox=minLng,minLat,maxLng,maxLat` and is
+called by the map only above zoom 15.2 for the current viewport. The
+unbounded fallback still exists for ad-hoc consumers, but it is ~38 MB and
+must not be used by a page.
+
 ### Adding a new site (e.g. Facebook Marketplace, Morizon)
 
 1. Create `src/crawler/sites/<site>.ts` exporting a `CheerioAdapter` (or

@@ -4,16 +4,17 @@ import { Fragment, useState } from "react";
 import { ListingFilters } from "#/components/listing-filters";
 import { BudujesieThreadPanel } from "#/components/listings/budujesie-thread-panel";
 import { ValuationPanel } from "#/components/listings/valuation-panel";
+import { Button } from "#/components/ui/button";
 import { useListingFilters } from "#/hooks/use-listing-filters";
-import { useListings } from "#/hooks/use-listings";
+import { LISTINGS_PAGE_SIZE, useListingTable } from "#/hooks/use-listing-table";
 import { useSources } from "#/hooks/use-sources";
 import { formatDate, formatNumber, realizationCaption } from "#/lib/format";
 import {
-	filterListings,
-	listingFacets,
+	type ListingFacets,
 	listingSearchSchema,
 	searchFromFilters,
 } from "#/lib/listing-features";
+import type { PropertyKind } from "#/lib/property-kind";
 import { sourceLabel } from "#/lib/sources";
 
 export const Route = createFileRoute("/listings")({
@@ -22,15 +23,26 @@ export const Route = createFileRoute("/listings")({
 });
 
 function ListingsPage() {
-	const { filters, setFilters } = useListingFilters("/listings");
+	const { filters, setFilters, page, setPage } = useListingFilters("/listings");
 	const [expanded, setExpanded] = useState<number | null>(null);
-	const { data, isLoading } = useListings();
+	const { data, isLoading } = useListingTable(filters, page);
 	const { data: sources } = useSources();
 	const sourceOptions = sources?.sources ?? ["otodom", "olx"];
 
-	const allRows = data?.listings ?? [];
-	const facets = listingFacets(allRows, filters.days);
-	const rows = filterListings(allRows, filters);
+	const rows = data?.listings ?? [];
+	const facets: ListingFacets = {
+		total: data?.facets.total ?? 0,
+		bySource: new Map(Object.entries(data?.facets.bySource ?? {})),
+		byKind: new Map(
+			Object.entries(data?.facets.byKind ?? {}).map(
+				([kind, count]) => [kind as PropertyKind, count] as const,
+			),
+		),
+	};
+	const totalPages = Math.max(
+		1,
+		Math.ceil((data?.total ?? 0) / (data?.pageSize ?? LISTINGS_PAGE_SIZE)),
+	);
 
 	return (
 		<div className="p-6">
@@ -157,6 +169,28 @@ function ListingsPage() {
 							})}
 					</tbody>
 				</table>
+			</div>
+
+			<div className="mt-3 flex items-center justify-between text-sm">
+				<span className="text-gray-500">
+					Strona {page + 1} z {totalPages} · {data?.total ?? 0} ofert
+				</span>
+				<div className="flex gap-2">
+					<Button
+						variant="outline"
+						disabled={page === 0}
+						onClick={() => setPage(page - 1)}
+					>
+						Poprzednia
+					</Button>
+					<Button
+						variant="outline"
+						disabled={page + 1 >= totalPages}
+						onClick={() => setPage(page + 1)}
+					>
+						Następna
+					</Button>
+				</div>
 			</div>
 		</div>
 	);

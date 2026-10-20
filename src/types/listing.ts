@@ -63,6 +63,45 @@ export interface ListingsResponse {
 	generatedAt: string;
 }
 
+/** Columns the listings table actually renders. */
+export interface ListingTableRow {
+	id: number;
+	source: string;
+	externalId: string;
+	url: string;
+	title: string;
+	price: number | null;
+	pricePerM2: number | null;
+	areaM2: number | null;
+	rooms: number | null;
+	floor: string | null;
+	district: string | null;
+	listedAt: string | null;
+	firstSeenAt: string | null;
+	heatingType: string | null;
+	propertyType: string | null;
+	propertyKind?: PropertyKind | null;
+	features: string | null;
+	constructionEndLabel?: string | null;
+	constructionEndDate?: string | null;
+	offerType?: string;
+}
+
+export interface ListingFacetsDto {
+	total: number;
+	bySource: Record<string, number>;
+	byKind: Record<string, number>;
+}
+
+export interface ListingsTableResponse {
+	listings: ListingTableRow[];
+	total: number;
+	page: number;
+	pageSize: number;
+	facets: ListingFacetsDto;
+	generatedAt: string;
+}
+
 export interface ValuationComp {
 	avgM2: number;
 	n: number;

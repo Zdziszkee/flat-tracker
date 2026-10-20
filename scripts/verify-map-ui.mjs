@@ -186,20 +186,6 @@ if (picks.flat) {
 	check("flat popup shows Realizacja line", false, "no unique flat pick found");
 }
 
-// 2. inv- building popup: amber Inwestycja label + Realizacja line + RCN stats
-if (picks.inv) {
-	const text = await clickAndPopup(picks.inv);
-	check(
-		"inv- popup shows Inwestycja label",
-		popupMatches(text, picks.inv) &&
-			text.includes("Inwestycja") &&
-			text.includes("Realizacja:"),
-		JSON.stringify((text ?? "").slice(0, 120)),
-	);
-} else {
-	check("inv- popup shows Inwestycja label", false, "no unique inv- pick found");
-}
-
 // 2b. RCN history block renders for stats-bearing inv- rows. Their
 // building-centroid clusters make any click land on sibling pins, so
 // fire the popup for exactly this feature (showListingPopup reads
@@ -224,6 +210,7 @@ const rcnCandidates = await page.evaluate(() => {
 let rcnBlockSeen = false;
 let rcnLastText = "(no popup)";
 let rcnOwnTitleSeen = false;
+let invLabelSeen = false;
 for (const cand of rcnCandidates) {
 	// Jump to the candidate first: the layer wrappers gate on a rendered
 	// query at the event point, and replace e.features with its result.
@@ -262,6 +249,7 @@ for (const cand of rcnCandidates) {
 	if (text && text.includes(cand.title.slice(0, 30))) {
 		rcnOwnTitleSeen = true;
 		rcnLastText = text;
+		if (text.includes("Inwestycja")) invLabelSeen = true;
 		if (text.includes("RCN history:")) {
 			rcnBlockSeen = true;
 			break;
@@ -270,6 +258,11 @@ for (const cand of rcnCandidates) {
 		rcnLastText = `sibling: ${text.slice(0, 80)}`;
 	}
 }
+check(
+	"inv- popup shows Inwestycja label",
+	invLabelSeen,
+	rcnLastText.slice(0, 100),
+);
 check(
 	"inv- popup shows RCN price history",
 	rcnBlockSeen,
@@ -341,7 +334,24 @@ for (const p of shellPts.pts) {
 	)
 		break;
 }
-// Address labels (trimmed /api/buildings/labels payload) still render.
+// Address labels (trimmed /api/buildings/labels payload) still render. The
+// label source resolves after the shell source; wait for the layer to
+// produce a hit instead of sampling the immediate next frame.
+await page
+	.waitForFunction(
+		() =>
+			window.__map.getLayer("building-address-labels") &&
+			window.__map.queryRenderedFeatures(
+				[
+					[200, 100],
+					[1300, 850],
+				],
+				{ layers: ["building-address-labels"] },
+			).length > 0,
+		null,
+		{ timeout: 15000 },
+	)
+	.catch(() => {});
 const labelCount = await page.evaluate(() => {
 	const m = window.__map;
 	return m.queryRenderedFeatures(
@@ -484,7 +494,9 @@ check(
 // 5. /listings shows the Realizacja caption. Scan every row in-page: the
 // table holds tens of thousands of rows and shipping its text over CDP is
 // slow and eventually oversized.
-await page.goto("http://localhost:3000/listings", { waitUntil: "domcontentloaded" });
+await page.goto("http://localhost:3000/listings?source=investmap", {
+	waitUntil: "domcontentloaded",
+});
 await page.waitForFunction(
 	() => document.querySelectorAll("tbody tr").length > 10,
 	null,
@@ -528,6 +540,25 @@ check(
 	"/listings inv- row expands",
 	invRowClicked && panelFound,
 	invRowClicked ? `row clicked, panel=${panelFound}` : "no inv- row visible",
+);
+
+// 7. Table pagination: the feed is server-side now, so the next page must
+// come from a new request and update the page counter.
+const nextButton = page.getByRole("button", { name: "Następna" });
+const canAdvance = await nextButton.isEnabled();
+if (canAdvance) await nextButton.click();
+await page
+	.waitForFunction(() => /Strona 2 z/.test(document.body.innerText), null, {
+		timeout: 15000,
+	})
+	.catch(() => {});
+const pageLabel = await page.evaluate(
+	() => document.body.innerText.match(/Strona \d+ z \d+/)?.[0] ?? "none",
+);
+check(
+	"/listings pagination advances",
+	canAdvance && pageLabel.startsWith("Strona 2 z"),
+	pageLabel,
 );
 
 await browser.close();

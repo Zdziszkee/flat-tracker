@@ -6,7 +6,11 @@ import type { ListingDto } from "#/types/listing";
  * Forum investment detail: the topic description with the comments under it
  * (scraped from the thread's first page into features.posts).
  */
-export function BudujesieThreadPanel({ row }: { row: ListingDto }) {
+export function BudujesieThreadPanel({
+	row,
+}: {
+	row: Pick<ListingDto, "features">;
+}) {
 	const features = parseListingFeatures(row.features);
 	const posts = features.budujesie?.posts ?? [];
 	const opText = posts[0]?.text ?? "";
