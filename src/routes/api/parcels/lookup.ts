@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-import { desc, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "#/db/index";
-import { parcels, transactions } from "#/db/schema";
+import { transactionHistoryByParcel } from "#/db/queries/transaction-history";
+import { parcels } from "#/db/schema";
 
 /**
  * Click-to-inspect for the cadastral-parcel layer: given a clicked point
@@ -29,50 +30,14 @@ interface ParcelStats {
 }
 
 async function parcelStats(parcelId: string): Promise<ParcelStats> {
-	const [agg] = await db
-		.select({
-			txCount: sql<number>`count(*)`,
-			avgPricePerM2: sql<number | null>`avg(${transactions.pricePerM2})`,
-			minPricePerM2: sql<number | null>`min(${transactions.pricePerM2})`,
-			maxPricePerM2: sql<number | null>`max(${transactions.pricePerM2})`,
-		})
-		.from(transactions)
-		.where(eq(transactions.parcelId, parcelId));
-
-	const byYear = await db
-		.select({
-			year: sql<string>`strftime('%Y', ${transactions.date}, 'unixepoch')`,
-			count: sql<number>`count(*)`,
-			avgPricePerM2: sql<number | null>`avg(${transactions.pricePerM2})`,
-		})
-		.from(transactions)
-		.where(eq(transactions.parcelId, parcelId))
-		.groupBy(sql`strftime('%Y', ${transactions.date}, 'unixepoch')`)
-		.orderBy(sql`1`);
-
-	const recent = await db
-		.select({
-			date: sql<string>`strftime('%Y-%m-%d', ${transactions.date}, 'unixepoch')`,
-			price: transactions.price,
-			pricePerM2: transactions.pricePerM2,
-			areaM2: transactions.areaM2,
-			rooms: transactions.rooms,
-			street: transactions.street,
-			streetNumber: transactions.streetNumber,
-			district: transactions.district,
-		})
-		.from(transactions)
-		.where(eq(transactions.parcelId, parcelId))
-		.orderBy(desc(transactions.date))
-		.limit(5);
-
+	const history = await transactionHistoryByParcel(parcelId);
 	return {
-		txCount: agg?.txCount ?? 0,
-		avgPricePerM2: agg?.avgPricePerM2 ?? null,
-		minPricePerM2: agg?.minPricePerM2 ?? null,
-		maxPricePerM2: agg?.maxPricePerM2 ?? null,
-		byYear,
-		recent,
+		txCount: history.txCount,
+		avgPricePerM2: history.avgPricePerM2,
+		minPricePerM2: history.minPricePerM2,
+		maxPricePerM2: history.maxPricePerM2,
+		byYear: history.byYear,
+		recent: history.recent,
 	};
 }
 

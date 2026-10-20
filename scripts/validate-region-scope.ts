@@ -99,6 +99,13 @@ check(
 	indexSql("transactions_region_price_idx"),
 );
 check(
+	norm(indexSql("transactions_region_date_idx")).endsWith(
+		norm(`where ${REGION_PREDICATE_SQL}`),
+	),
+	"region date index carries REGION_PREDICATE_SQL",
+	indexSql("transactions_region_date_idx"),
+);
+check(
 	indexSql("transactions_malopolska_price_idx") === "",
 	"the retired małopolskie-only index is gone (one region index serves all)",
 	indexSql("transactions_malopolska_price_idx"),
@@ -124,6 +131,23 @@ check(
 		!regionPlan.includes("SCAN transactions"),
 	"region-wide aggregation is index-driven",
 	regionPlan,
+);
+const countPlan = sqlite
+	.prepare(
+		`explain query plan
+		 select substr(parcel_id, 1, 4) as teryt, count(*) as tx
+		 from transactions
+		 where ${REGION_PREDICATE_SQL} and parcel_id is not null and date >= 0
+		 group by teryt`,
+	)
+	.all()
+	.map((r) => String((r as { detail: string }).detail))
+	.join(" | ");
+check(
+	countPlan.includes("transactions_region_date_idx") &&
+		!countPlan.includes("SCAN transactions"),
+	"per-powiat last-year count rides the region date index",
+	countPlan,
 );
 for (const id of TRACKED_REGION_IDS) {
 	const plan = planFor(regionPredicate(id));

@@ -1,21 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
 
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { HIDDEN_SOURCES } from "#/crawler/hidden-sources";
 import { db } from "#/db/index";
-import { buildings, listings, transactions } from "#/db/schema";
+import { transactionSummaryByBuilding } from "#/db/queries/transaction-history";
+import { buildings, listings } from "#/db/schema";
 import { parseListingFeatures } from "#/lib/listing-features";
 import { propertyKindOf } from "#/lib/property-kind";
-
-interface BuildingSummary {
-	buildingId: number | null;
-	address: string | null;
-	txCount: number;
-	txAvgPricePerM2: number | null;
-	txMinDate: string | null;
-	txMaxDate: string | null;
-}
 
 /** Normalize a string for cross-source matching: lowercase, no
  * diacritics, alphanumerics only, single spaces. */
@@ -51,34 +43,6 @@ function parseStreetNumber(address: string | null): {
 		? numMatch[0].replace(/[\s/,]/g, "").toLowerCase()
 		: null;
 	return { street, number };
-}
-
-function transactionSummary(buildingIds: number[]): Promise<BuildingSummary[]> {
-	if (buildingIds.length === 0) return Promise.resolve([]);
-	return db
-		.select({
-			buildingId: transactions.buildingId,
-			address: buildings.address,
-			txCount: sql<number>`count(${transactions.id})`,
-			txAvgPricePerM2: sql<number | null>`avg(${transactions.pricePerM2})`,
-			// `date` is a unix timestamp; render as YYYY-MM-DD strings so the
-			// client can slice years without type gymnastics.
-			txMinDate: sql<
-				string | null
-			>`strftime('%Y-%m-%d', min(${transactions.date}), 'unixepoch')`,
-			txMaxDate: sql<
-				string | null
-			>`strftime('%Y-%m-%d', max(${transactions.date}), 'unixepoch')`,
-		})
-		.from(transactions)
-		.innerJoin(buildings, eq(transactions.buildingId, buildings.id))
-		.where(
-			and(
-				inArray(transactions.buildingId, buildingIds),
-				isNotNull(transactions.lat),
-			),
-		)
-		.groupBy(transactions.buildingId);
 }
 
 export const Route = createFileRoute("/api/listings")({
@@ -232,7 +196,7 @@ export const Route = createFileRoute("/api/listings")({
 					),
 				];
 				const summaryByBuilding = new Map(
-					(await transactionSummary(buildingIds)).map((s) => [
+					(await transactionSummaryByBuilding(buildingIds)).map((s) => [
 						String(s.buildingId),
 						s,
 					]),

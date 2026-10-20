@@ -134,6 +134,13 @@
       "when": 1792267731597,
       "tag": "0018_flat_lady_deathstrike",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1792525299518,
+      "tag": "0019_mean_stepford_cuckoos",
+      "breakpoints": true
     }
   ]
 }

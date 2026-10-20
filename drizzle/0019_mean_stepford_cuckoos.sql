@@ -1,0 +1,1 @@
+CREATE INDEX `transactions_region_date_idx` ON `transactions` (`date`,`parcel_id`) WHERE region is not null;

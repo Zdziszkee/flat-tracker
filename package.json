@@ -33,7 +33,8 @@
     "build:railways": "tsx scripts/build-railways.ts",
     "validate:powiats": "tsx scripts/validate-region-powiats.ts",
     "validate:regions": "tsx scripts/validate-region-scope.ts",
-    "validate:listing-view": "tsx scripts/validate-listing-view.ts"
+    "validate:listing-view": "tsx scripts/validate-listing-view.ts",
+    "validate:market-charts": "tsx scripts/validate-market-charts.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",

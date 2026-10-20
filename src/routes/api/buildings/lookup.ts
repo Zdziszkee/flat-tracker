@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 import { db } from "#/db/index";
-import { buildings, osmBuildings, transactions } from "#/db/schema";
+import { transactionHistoryByBuilding } from "#/db/queries/transaction-history";
+import { buildings, osmBuildings } from "#/db/schema";
 
 /**
  * Click-to-inspect for the 3D buildings layer: given a clicked point,
@@ -231,62 +232,18 @@ interface BuildingStats {
 }
 
 async function buildingStats(buildingId: number): Promise<BuildingStats> {
-	const [agg] = await db
-		.select({
-			txCount: sql<number>`count(*)`,
-			avgPricePerM2: sql<number | null>`avg(${transactions.pricePerM2})`,
-			minPricePerM2: sql<number | null>`min(${transactions.pricePerM2})`,
-			maxPricePerM2: sql<number | null>`max(${transactions.pricePerM2})`,
-			minPrice: sql<number | null>`min(${transactions.price})`,
-			maxPrice: sql<number | null>`max(${transactions.price})`,
-			minDate: sql<
-				string | null
-			>`strftime('%Y-%m-%d', min(${transactions.date}), 'unixepoch')`,
-			maxDate: sql<
-				string | null
-			>`strftime('%Y-%m-%d', max(${transactions.date}), 'unixepoch')`,
-		})
-		.from(transactions)
-		.where(eq(transactions.buildingId, buildingId));
-
-	const byYear = await db
-		.select({
-			year: sql<string>`strftime('%Y', ${transactions.date}, 'unixepoch')`,
-			count: sql<number>`count(*)`,
-			avgPricePerM2: sql<number | null>`avg(${transactions.pricePerM2})`,
-		})
-		.from(transactions)
-		.where(eq(transactions.buildingId, buildingId))
-		.groupBy(sql`strftime('%Y', ${transactions.date}, 'unixepoch')`)
-		.orderBy(sql`1`);
-
-	const recent = await db
-		.select({
-			date: sql<string>`strftime('%Y-%m-%d', ${transactions.date}, 'unixepoch')`,
-			price: transactions.price,
-			pricePerM2: transactions.pricePerM2,
-			areaM2: transactions.areaM2,
-			rooms: transactions.rooms,
-			street: transactions.street,
-			streetNumber: transactions.streetNumber,
-			district: transactions.district,
-		})
-		.from(transactions)
-		.where(eq(transactions.buildingId, buildingId))
-		.orderBy(desc(transactions.date))
-		.limit(5);
-
+	const history = await transactionHistoryByBuilding(buildingId);
 	return {
-		txCount: agg?.txCount ?? 0,
-		avgPricePerM2: agg?.avgPricePerM2 ?? null,
-		minPricePerM2: agg?.minPricePerM2 ?? null,
-		maxPricePerM2: agg?.maxPricePerM2 ?? null,
-		minPrice: agg?.minPrice ?? null,
-		maxPrice: agg?.maxPrice ?? null,
-		minDate: agg?.minDate ?? null,
-		maxDate: agg?.maxDate ?? null,
-		byYear,
-		recent,
+		txCount: history.txCount,
+		avgPricePerM2: history.avgPricePerM2,
+		minPricePerM2: history.minPricePerM2,
+		maxPricePerM2: history.maxPricePerM2,
+		minPrice: history.minPrice,
+		maxPrice: history.maxPrice,
+		minDate: history.minDate,
+		maxDate: history.maxDate,
+		byYear: history.byYear,
+		recent: history.recent,
 	};
 }
 
