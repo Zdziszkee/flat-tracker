@@ -15,7 +15,7 @@ export interface CheerioSelection {
 	each(fn: (index: number, element: unknown) => void): CheerioSelection;
 }
 
-/** A normalized flat listing produced by any site adapter. */
+/** A normalized property listing produced by any site adapter. */
 export interface Listing {
 	source: string;
 	/** Portal-specific stable ad id (otodom id, olx id). */
@@ -36,7 +36,8 @@ export interface Listing {
 	description: string | null;
 	/** Heating type (ogrzewanie), e.g. "miejskie", "gazowe". */
 	heatingType: string | null;
-	/** Property type (typ), e.g. "mieszkanie", "kawalerka". */
+	/** Property type: canonical "apartment"/"house"/"plot" when the feed
+	 * states one, otherwise the portal's own label (e.g. "kawalerka"). */
 	propertyType: string | null;
 	/** Extra portal attributes as a JSON object string. */
 	features: string | null;
