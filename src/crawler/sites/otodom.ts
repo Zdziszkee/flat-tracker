@@ -105,6 +105,7 @@ interface OtodomDetail {
 	price?: {
 		salePrice?: { value?: number };
 		rentPrice?: { value?: number };
+		rentalPrice?: { value?: number };
 	};
 	attributes?: Record<string, string | number | string[] | undefined>;
 	description?: string;
@@ -204,14 +205,17 @@ interface OtodomAdapterOptions {
 	listBases: string[];
 	offerType: "sale" | "long_term_rental";
 	pricePeriod: "monthly" | null;
-	/** Detail-page price field: otodom uses `salePrice` or `rentPrice`. */
-	priceKey: "salePrice" | "rentPrice";
+	/** Detail-page price field: `salePrice` for sale, `rentalPrice` for rent. */
+	priceKey: "salePrice" | "rentPrice" | "rentalPrice";
 }
 
 const OTODOM_CATEGORY_TYPES: Record<number, "apartment" | "house" | "plot"> = {
 	101: "apartment",
 	201: "house",
 	401: "plot",
+	102: "apartment",
+	202: "house",
+	402: "plot",
 };
 
 /** The estate segment of a search URL ("/sprzedaz/dom/..."). */
@@ -450,15 +454,20 @@ function saleListBase(
 	return `https://www.otodom.pl/pl/wyniki/sprzedaz/${estate}/${slug}?limit=36&by=DEFAULT&direction=DESC`;
 }
 
-function rentListBase(slug: string): string {
-	return `https://www.otodom.pl/pl/wyniki/wynajem/mieszkanie/${slug}?limit=36&by=DEFAULT&direction=DESC`;
+function rentListBase(
+	slug: string,
+	estate: "mieszkanie" | "dom" | "dzialka",
+): string {
+	return `https://www.otodom.pl/pl/wyniki/wynajem/${estate}/${slug}?limit=36&by=DEFAULT&direction=DESC`;
 }
 
 const SALE_ESTATES = ["mieszkanie", "dom", "dzialka"] as const;
 const SALE_LIST_BASES = REGIONS.flatMap((r) =>
 	SALE_ESTATES.map((estate) => saleListBase(r.name, estate)),
 );
-const RENT_LIST_BASES = REGIONS.map((r) => rentListBase(r.name));
+const RENT_LIST_BASES = REGIONS.flatMap((r) =>
+	SALE_ESTATES.map((estate) => rentListBase(r.name, estate)),
+);
 
 /** Sale flats, houses and plots across both covered voivodeships. */
 export const otodomAdapter: CheerioAdapter = makeOtodomAdapter({
@@ -470,7 +479,7 @@ export const otodomAdapter: CheerioAdapter = makeOtodomAdapter({
 	priceKey: "salePrice",
 });
 
-/** Long-term rental flats across every covered voivodeship. */
+/** Long-term rental flats, houses and plots across both voivodeships. */
 export const otodomRentAdapter: CheerioAdapter = makeOtodomAdapter({
 	id: "otodom-rent",
 	sourceId: "otodom",
@@ -478,5 +487,7 @@ export const otodomRentAdapter: CheerioAdapter = makeOtodomAdapter({
 	listBases: RENT_LIST_BASES,
 	offerType: "long_term_rental",
 	pricePeriod: "monthly",
-	priceKey: "rentPrice",
+	// Rental detail pages publish `price.rentalPrice`; `rentPrice` is the
+	// list-page field name and is kept for older cached payloads.
+	priceKey: "rentalPrice",
 });

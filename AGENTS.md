@@ -397,7 +397,7 @@ with the build's peak at ~2 GB. If you touch the loader, watch
 | Source | What | Access |
 |---|---|---|
 | otodom.pl | Active sale listings — flats, houses and plots — Małopolska + Śląsk | HTML `__NEXT_DATA__` JSON; list pages have no coords, detail pages (`/pl/oferta/`) add lat/lng, `build_year`, building material/floors, condition, market (`attributes`, promoted by db-sink). The sale adapter walks `/sprzedaz/{mieszkanie,dom,dzialka}/{region}`; `estate`/`category.id` set the row's property kind |
-| otodom.pl (wynajem) | Long-term rental listings, Małopolska + Śląsk | Same `__NEXT_DATA__` path, one per voivodeship (`/wynajem/mieszkanie/{malopolskie,slaskie}`); detail price read from `rentPrice` |
+| otodom.pl (wynajem) | Long-term rental listings — flats, houses and plots — Małopolska + Śląsk | Same `__NEXT_DATA__` path, `/wynajem/{mieszkanie,dom,dzialka}/{malopolskie,slaskie}`; detail price read from `rentalPrice` |
 | olx.pl | Active sale listings — flats, houses and plots — Małopolska + Śląsk | HTML `window.__PRERENDERED_STATE__` JSON incl. coordinates; the regional landing page carries all three categories and the adapter keeps category ids 14/15/16 (flats), 18/20/22 (houses) and 24/25/1311 (plots) |
 | morizon.pl / gratka.pl | Same feed (one company), agency-heavy; flats, houses and plots | schema.org LD+JSON (`Offer` nodes); pagination `?page=N`. The result cards carry "Dodane: YYYY.MM.DD", parsed into `listedAt`; `itemOffered.@type` (`Accommodation`/`House`/`Place`) sets the property kind |
 | domiporta.pl | Agency listings: flats, houses and plots | LD+JSON `@graph` `ItemList` of `RealEstateListing`; pagination `?PageNumber=N`; `datePosted` is the posting date and the URL slug supplies the kind |
