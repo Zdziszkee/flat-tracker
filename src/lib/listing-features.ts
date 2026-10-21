@@ -155,10 +155,7 @@ export const DAY_OPTIONS: ReadonlyArray<{
  * neither date cannot be placed in a window.
  */
 export function matchesTimeWindow(
-	row: Pick<
-		FilterableListing,
-		"source" | "externalId" | "listedAt" | "firstSeenAt"
-	>,
+	row: Pick<FilterableListing, "listedAt" | "firstSeenAt">,
 	days: DaysFilter,
 ): boolean {
 	if (days === 0) return true;
