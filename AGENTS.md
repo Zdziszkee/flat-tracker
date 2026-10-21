@@ -536,8 +536,13 @@ and must not be used by a page.
      call `enqueue(urls)` for detail pages / pagination (see `otodom.ts`)
    - **LD+JSON**: many Polish portals (morizon, gratka, domiporta,
      nieruchomosci-online) embed their feed as schema.org JSON. Use
-     `parseLdJson`/`findLdNodes` from `ldjson.ts`, or the
-     `makeLdOfferAdapter` factory for the shared Morizon/Gratka shape.
+     `parseLdJson`/`findLdNodes` from `ldjson.ts`, the
+     `makeLdOfferAdapter` factory for the shared Morizon/Gratka shape, or
+     `makeLdGraphAdapter` for `@graph`/`CollectionPage` feeds (domiporta,
+     nieruchomosci-online). Set `propertyType` from the feed's own type
+     evidence and `listedAt` from the portal's posting date when it has one;
+     add a cached detail pass only when the list omits the date (see
+     `nieruchomosci-online.ts` / `rynekpierwotny.ts`).
 3. Register it in `src/crawler/sites/index.ts`, and add a descriptor to
    `src/crawler/source-status.ts`. The **/sources** page and
    `/api/crawl-status` read that STATIC literal (it must not import
