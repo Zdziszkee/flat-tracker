@@ -120,13 +120,16 @@ degrades one endpoint instead of the whole app.
 ### Incremental detail enrichment (otodom)
 
 A `firstPageOnly` run gets one request per source unless the adapter asks for
-more (`AdapterBase.firstPageOnlyRequests`). otodom spends 9: the newest list
-page plus up to 8 detail pages, and only for offers whose detail was never
-parsed (`listings.features` is the marker). Detail pages are the only source
-of a flat's coordinates, `build_year`, building material/floors, condition and
+more (`AdapterBase.firstPageOnlyRequests`). otodom spends 14: one newest list
+page per estate kind and region (3 kinds x 2 regions = 6) plus up to 8 detail
+pages, and only for offers whose detail was never parsed
+(`listings.features` is the marker). Detail pages are the only source of a
+listing's coordinates, `build_year`, building material/floors, condition and
 market — `db-sink` promotes those out of the `features` JSON into columns — and
 otodom's CDN rate-limits bulk detail crawls, hence the small budget. A full
 crawl (no `firstPageOnly`) still follows every recent detail page.
+nieruchomosci-online and rynekpierwotny use the same first-page detail-budget
+pattern for their detail-only posting dates (see the data-sources table).
 
 ### Building age
 
