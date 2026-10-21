@@ -469,9 +469,11 @@ scraping needed.
 
 Map and listings filter by property kind via `propertyKind` on each
 `/api/listings` row, derived once in `src/lib/property-kind.ts` and shared
-by both screens. Every sale adapter now crawls all three kinds and writes
-the kind it actually saw into `listings.propertyType`: otodom's `estate`
-(`FLAT`/`HOUSE`/`TERRAIN`) and detail `category.id` (101/201/401), OLX's
+by both screens. Every listing adapter now crawls all three kinds where the
+portal has them and writes the kind it actually saw into
+`listings.propertyType`: otodom's `estate`
+(`FLAT`/`HOUSE`/`TERRAIN`) and detail `category.id` (101/201/401 sale,
+102/202/402 rent), OLX's
 category id, morizon/gratka's `itemOffered.@type`, the category segment of
 a domiporta/nieruchomosci-online URL, rynekpierwotny's `type` (1/2) and
 investmap's `es[].label`/category. The classifier trusts that value first,
