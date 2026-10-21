@@ -71,13 +71,13 @@ export function ListingFilters({
 					</SelectTrigger>
 					<SelectContent>
 						<SelectItem value="all">Wszystkie ({facets.total})</SelectItem>
-						{(Object.keys(PROPERTY_KIND_LABELS) as Array<PropertyKind>).map(
-							(kind) => (
+						{(Object.keys(PROPERTY_KIND_LABELS) as Array<PropertyKind | "all">)
+							.filter((kind): kind is PropertyKind => kind !== "all")
+							.map((kind) => (
 								<SelectItem key={kind} value={kind}>
 									{PROPERTY_KIND_LABELS[kind]} ({facets.byKind.get(kind) ?? 0})
 								</SelectItem>
-							),
-						)}
+							))}
 					</SelectContent>
 				</Select>
 			</div>
