@@ -16,8 +16,24 @@ export interface LdGraphConfig {
 	/** First page index appended after the param (default 1). */
 	firstPage?: number;
 	maxRequestsPerCrawl?: number;
+	/** Requests a first-page-only run may spend (list pages + details). */
+	firstPageOnlyRequests?: number;
 	findNodes(nodes: unknown[]): Array<Record<string, unknown>>;
-	toListing(node: Record<string, unknown>): Listing | null;
+	/** `pageUrl` is the crawled category page, used as a type hint when the
+	 * schema.org node labels every property the same way. */
+	toListing(node: Record<string, unknown>, pageUrl: string): Listing | null;
+	/**
+	 * Optional detail-page pass for feeds whose list rows omit the posting
+	 * date. `enqueueFrom` returns a small number of uncached detail URLs per
+	 * list page; a crawled detail page is parsed by `toListing` instead of
+	 * the list predicate.
+	 */
+	detail?: {
+		isDetailUrl(url: string): boolean;
+		findNode(nodes: unknown[]): Record<string, unknown> | null;
+		toListing(node: Record<string, unknown>, url: string): Listing | null;
+		enqueueFrom(listings: Listing[], pageUrl: string): string[];
+	};
 }
 
 export function makeLdGraphAdapter(cfg: LdGraphConfig): CheerioAdapter {
@@ -28,26 +44,42 @@ export function makeLdGraphAdapter(cfg: LdGraphConfig): CheerioAdapter {
 		kind: "cheerio",
 		startUrls: cfg.startUrls,
 		maxRequestsPerCrawl: cfg.maxRequestsPerCrawl ?? 30,
+		firstPageOnlyRequests: cfg.firstPageOnlyRequests ?? cfg.startUrls.length,
 		// One newest page per region must fit the first-page-only budget.
-		firstPageOnlyRequests: cfg.startUrls.length,
 
 		async extractHtml(html, url, enqueue) {
 			const nodes = parseLdJson(html);
+
+			if (cfg.detail?.isDetailUrl(url)) {
+				const node = cfg.detail.findNode(nodes);
+				const listing = node ? cfg.detail.toListing(node, url) : null;
+				return listing ? [listing] : [];
+			}
+
 			const listings: Listing[] = [];
 			for (const node of cfg.findNodes(nodes)) {
-				const listing = cfg.toListing(node);
+				const listing = cfg.toListing(node, url);
 				if (listing) listings.push(listing);
+			}
+			if (cfg.detail) {
+				const detailUrls = cfg.detail.enqueueFrom(listings, url);
+				if (detailUrls.length > 0) await enqueue(detailUrls);
 			}
 
 			// The crawled URL is the base, so each region continues its own
-			// pagination instead of jumping back to the first region.
-			const current = Number.parseInt(
-				new URL(url).searchParams.get(cfg.pageParam) ?? String(firstPage),
-				10,
-			);
-			const next = new URL(url);
-			next.searchParams.set(cfg.pageParam, String(current + 1));
-			await enqueue([next.toString()]);
+			// pagination instead of jumping back to the first region. A
+			// first-page-only run must not enqueue page 2: the request cap is
+			// also the detail/date budget.
+			const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
+			if (!pageOnly) {
+				const current = Number.parseInt(
+					new URL(url).searchParams.get(cfg.pageParam) ?? String(firstPage),
+					10,
+				);
+				const next = new URL(url);
+				next.searchParams.set(cfg.pageParam, String(current + 1));
+				await enqueue([next.toString()]);
+			}
 
 			return listings;
 		},

@@ -1,5 +1,7 @@
+import type { PropertyKind } from "#/lib/property-kind";
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { findLdNodes } from "./ldjson.ts";
+import { propertyTypeFromValue } from "./property-type.ts";
 
 /**
  * Factory for portals that embed their offer feed as schema.org LD+JSON
@@ -21,6 +23,12 @@ export interface LdOfferConfig {
 	maxRequestsPerCrawl?: number;
 	/** Turn one Offer node into a normalized Listing, or null to skip. */
 	offerToListing(offer: Record<string, unknown>): Listing | null;
+	/**
+	 * Card-level posting dates keyed by canonical offer path. Morizon and
+	 * Gratka publish "Dodane: YYYY.MM.DD" in the result card, not in the
+	 * schema.org Offer node, so the factory merges these in after mapping.
+	 */
+	dateFromHtml?: (html: string) => Map<string, string>;
 }
 
 /** Structured street info commonly found on Offer.itemOffered.address. */
@@ -38,6 +46,49 @@ export function ldOfferAddress(offer: Record<string, unknown>): OfferAddress {
 	};
 }
 
+/** Schema.org `itemOffered.@type` -> the three UI kinds. */
+export function ldOfferPropertyType(
+	offer: Record<string, unknown>,
+): PropertyKind | null {
+	const item = (offer.itemOffered ?? {}) as Record<string, unknown>;
+	return propertyTypeFromValue(item["@type"]);
+}
+
+/**
+ * "Dodane: 2026.08.26" cards, keyed by the offer URL path they belong to.
+ * The date lives at the bottom of each result card; the card's offer anchor
+ * is the nearest preceding offer-like href.
+ */
+export function extractDodaneDates(html: string): Map<string, string> {
+	const dates = new Map<string, string>();
+	const re = /Dodane:\s*(\d{4})\.(\d{2})\.(\d{2})/g;
+	for (const match of html.matchAll(re)) {
+		const before = html.slice(
+			Math.max(0, (match.index ?? 0) - 12_000),
+			match.index,
+		);
+		const hrefs = [...before.matchAll(/href="([^"]+)"/g)];
+		for (let i = hrefs.length - 1; i >= 0; i--) {
+			const href = hrefs[i][1];
+			if (!href || !/(?:\/oferta\/|\/nieruchomosci\/)/.test(href)) continue;
+			const path = canonicalPath(href);
+			if (path) {
+				dates.set(path, `${match[1]}-${match[2]}-${match[3]}T00:00:00`);
+			}
+			break;
+		}
+	}
+	return dates;
+}
+
+function canonicalPath(url: string): string | null {
+	try {
+		return new URL(url, "https://placeholder.invalid").pathname;
+	} catch {
+		return null;
+	}
+}
+
 export function makeLdOfferAdapter(cfg: LdOfferConfig): CheerioAdapter {
 	const firstPage = cfg.firstPage ?? 1;
 	return {
@@ -51,18 +102,30 @@ export function makeLdOfferAdapter(cfg: LdOfferConfig): CheerioAdapter {
 
 		async extractHtml(html, url, enqueue) {
 			const offers = extractOfferNodes(html);
+			const postedDates = cfg.dateFromHtml?.(html);
 			const listings: Listing[] = [];
 			for (const offer of offers) {
 				const listing = cfg.offerToListing(offer);
-				if (listing) listings.push(listing);
+				if (!listing) continue;
+				if (!listing.listedAt && postedDates) {
+					const path = canonicalPath(listing.url);
+					const postedAt = path ? postedDates.get(path) : undefined;
+					if (postedAt) listing.listedAt = postedAt;
+				}
+				listings.push(listing);
 			}
 
 			// Pagination: ?pageParam=N, starting at `firstPage`. The base is the
-			// crawled URL, so each region continues its own list.
-			const current = matchPage(url, cfg.pageParam) ?? firstPage;
-			const next = new URL(url);
-			next.searchParams.set(cfg.pageParam, String(current + 1));
-			await enqueue([next.toString()]);
+			// crawled URL, so each region continues its own list. A
+			// first-page-only run must not enqueue page 2: the request cap is
+			// also the detail/date budget.
+			const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
+			if (!pageOnly) {
+				const current = matchPage(url, cfg.pageParam) ?? firstPage;
+				const next = new URL(url);
+				next.searchParams.set(cfg.pageParam, String(current + 1));
+				await enqueue([next.toString()]);
+			}
 
 			return listings;
 		},

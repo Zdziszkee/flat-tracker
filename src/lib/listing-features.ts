@@ -148,21 +148,12 @@ export const DAY_OPTIONS: ReadonlyArray<{
 ];
 
 /**
- * Long-lived inventory, not a fresh offer. Budujesie threads and investmap
- * investment-level stand-ins carry an old/absent listedAt; hiding them when
- * the "last N days" window is active loses the whole construction layer.
- * The map applied this rule and the listings table did not; it lives here
- * once so both screens agree.
+ * Freshness is always the date the row was added to the market: the portal's
+ * own posting date when it exposes one (`listedAt`), otherwise the first time
+ * this tracker saw the row (`firstSeenAt`). Every source obeys the same rule —
+ * a budujesie thread or an investmap investment row is not exempt. A row with
+ * neither date cannot be placed in a window.
  */
-export function isEvergreenListing(
-	row: Pick<FilterableListing, "source" | "externalId">,
-): boolean {
-	return (
-		row.source === "budujesie" ||
-		(row.source === "investmap" && row.externalId.startsWith("inv-"))
-	);
-}
-
 export function matchesTimeWindow(
 	row: Pick<
 		FilterableListing,
@@ -171,7 +162,6 @@ export function matchesTimeWindow(
 	days: DaysFilter,
 ): boolean {
 	if (days === 0) return true;
-	if (isEvergreenListing(row)) return true;
 	const added = row.listedAt ?? row.firstSeenAt;
 	if (!added) return false;
 	return Date.now() - new Date(added).getTime() <= days * 86_400_000;

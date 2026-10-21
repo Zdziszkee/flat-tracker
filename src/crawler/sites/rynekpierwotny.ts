@@ -1,6 +1,55 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { REGIONS, regionForPoint } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { num, str } from "./ldoffer.ts";
+
+/**
+ * The list state omits the posting date; the detail page's
+ * `offerDetail.offer.configuration.publish_date` (falling back to its
+ * `create_date`) is the authoritative "data dodania". A small persistent
+ * detail pass fills the backlog without crowding out list pagination.
+ */
+const DETAIL_BUDGET_PER_PAGE = 3;
+
+interface CachedOffer {
+	listedAt: string | null;
+	fetchedAt: string;
+}
+
+let offerCacheState: Record<string, CachedOffer> | null = null;
+
+function offerCachePath(): string {
+	return (
+		process.env.RYNEKPIERWOTNY_OFFER_CACHE ??
+		"data/crawler/rynekpierwotny-offers.json"
+	);
+}
+
+function loadOfferCache(): Record<string, CachedOffer> {
+	if (offerCacheState) return offerCacheState;
+	let parsed: Record<string, Partial<CachedOffer>> = {};
+	try {
+		parsed = JSON.parse(readFileSync(offerCachePath(), "utf8"));
+	} catch {
+		// Missing or corrupt cache: start empty, details simply re-fetch.
+	}
+	const cache: Record<string, CachedOffer> = {};
+	for (const [id, entry] of Object.entries(parsed)) {
+		cache[id] = {
+			listedAt: entry.listedAt ?? null,
+			fetchedAt: entry.fetchedAt ?? "",
+		};
+	}
+	offerCacheState = cache;
+	return cache;
+}
+
+function saveOfferCache(cache: Record<string, CachedOffer>): void {
+	const path = offerCachePath();
+	mkdirSync(dirname(path), { recursive: true });
+	writeFileSync(path, JSON.stringify(cache));
+}
 
 /**
  * Rynekpierwotny lists new-development projects (osiedla), not individual
@@ -14,17 +63,33 @@ export const rynekpierwotnyAdapter: CheerioAdapter = {
 	name: "Rynekpierwotny - Małopolska + Śląsk new developments",
 	kind: "cheerio",
 	// sort=2 orders the list newest-first, so a bounded crawl always
-	// starts with the freshest investments. One list per covered voivodeship;
-	// each paginates through its own state `next` link.
-	startUrls: REGIONS.map(
-		(r) => `https://rynekpierwotny.pl/s/nowe-mieszkania-${r.name}/?sort=2`,
-	),
-	maxRequestsPerCrawl: 20,
-	// One newest page per region must fit the first-page-only budget.
-	firstPageOnlyRequests: REGIONS.length,
+	// starts with the freshest investments. One list per property kind per
+	// covered voivodeship; each paginates through its own state `next` link.
+	startUrls: REGIONS.flatMap((r) => [
+		`https://rynekpierwotny.pl/s/nowe-mieszkania-${r.name}/?sort=2`,
+		`https://rynekpierwotny.pl/s/nowe-domy-${r.name}/?sort=2`,
+	]),
+	maxRequestsPerCrawl: 80,
+	// One newest page per kind and region plus a few detail pages.
+	firstPageOnlyRequests: REGIONS.length * 2 * (1 + DETAIL_BUDGET_PER_PAGE),
 
-	async extractHtml(html, _url, enqueue) {
+	async extractHtml(html, url, enqueue) {
 		const state = parseInitialState(html);
+		const detailOffer = state?.offerDetail?.offer;
+		if (/\/oferty\//u.test(url) && detailOffer) {
+			const listing = offerToListing(detailOffer, url);
+			if (!listing) return [];
+			const listedAt = detailListedAt(detailOffer);
+			listing.listedAt = listedAt;
+			const cache = loadOfferCache();
+			cache[listing.externalId] = {
+				listedAt,
+				fetchedAt: new Date().toISOString(),
+			};
+			saveOfferCache(cache);
+			return [listing];
+		}
+
 		const offers = state?.offerList?.list?.offers ?? [];
 
 		const listings: Listing[] = [];
@@ -32,16 +97,33 @@ export const rynekpierwotnyAdapter: CheerioAdapter = {
 			const listing = offerToListing(offer);
 			if (listing) listings.push(listing);
 		}
+		const cache = loadOfferCache();
+		const detailUrls: string[] = [];
+		for (const listing of listings) {
+			const cached = cache[listing.externalId];
+			if (cached) {
+				if (!listing.listedAt) listing.listedAt = cached.listedAt;
+				continue;
+			}
+			if (detailUrls.length < DETAIL_BUDGET_PER_PAGE && listing.url) {
+				detailUrls.push(listing.url);
+			}
+		}
+		if (detailUrls.length > 0) await enqueue(detailUrls);
 
 		// Follow the canonical "next" link until the list is exhausted
 		// (count/page_size bounds it; the page state is authoritative).
-		const list = state?.offerList?.list;
-		const page = list?.page ?? 1;
-		const pageSize = list?.page_size ?? offers.length;
-		const count = list?.count ?? 0;
-		const next = state?.metaData?.standardMetaData?.next;
-		if (typeof next === "string" && next && page * pageSize < count) {
-			await enqueue([next.replaceAll("&amp;", "&")]);
+		// First-page-only runs stop here; their request cap is the detail budget.
+		const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
+		if (!pageOnly) {
+			const list = state?.offerList?.list;
+			const page = list?.page ?? 1;
+			const pageSize = list?.page_size ?? offers.length;
+			const count = list?.count ?? 0;
+			const next = state?.metaData?.standardMetaData?.next;
+			if (typeof next === "string" && next && page * pageSize < count) {
+				await enqueue([next.replaceAll("&amp;", "&")]);
+			}
 		}
 
 		return listings;
@@ -61,6 +143,9 @@ interface RpState {
 		standardMetaData?: {
 			next?: string;
 		};
+	};
+	offerDetail?: {
+		offer?: RpOffer;
 	};
 }
 
@@ -83,6 +168,14 @@ interface RpOffer {
 			offer?: { vendor?: { slug?: string } };
 		}>;
 	};
+	/** 1 = flat, 2 = house. */
+	type?: number;
+	/** Detail endpoint: publish date (null when the vendor hides it). */
+	configuration?: {
+		publish_date?: string;
+		hide_publish_date?: boolean;
+	};
+	create_date?: string;
 }
 
 function parseInitialState(html: string): RpState | null {
@@ -129,7 +222,21 @@ function extractBalancedObject(raw: string): string | null {
 	return null;
 }
 
-function offerToListing(offer: RpOffer): Listing | null {
+/** Published date, or the record creation date when the vendor hides it. */
+function detailListedAt(offer: RpOffer): string | null {
+	const published = offer.configuration?.hide_publish_date
+		? undefined
+		: offer.configuration?.publish_date;
+	return parseRpDate(published) ?? parseRpDate(offer.create_date);
+}
+
+function parseRpDate(value: string | undefined | null): string | null {
+	if (!value) return null;
+	const date = new Date(value);
+	return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function offerToListing(offer: RpOffer, urlOverride?: string): Listing | null {
 	const id = offer.id;
 	const name = str(offer.name);
 	const slug = str(offer.slug);
@@ -145,7 +252,9 @@ function offerToListing(offer: RpOffer): Listing | null {
 	const vendorSlug =
 		stages.find((s) => s.offer?.vendor?.slug)?.offer?.vendor?.slug ??
 		"deweloper";
-	const url = `https://rynekpierwotny.pl/oferty/${vendorSlug}/${slug}-${id}/`;
+	const url =
+		urlOverride ??
+		`https://rynekpierwotny.pl/oferty/${vendorSlug}/${slug}-${id}/`;
 
 	const coords = offer.geo_point?.coordinates ?? [];
 	const lat = coords.length >= 2 ? (coords[1] ?? null) : null;
@@ -178,7 +287,8 @@ function offerToListing(offer: RpOffer): Listing | null {
 		address,
 		description: null,
 		heatingType: null,
-		propertyType: null,
+		propertyType:
+			offer.type === 2 ? "house" : offer.type === 1 ? "apartment" : null,
 		features: null,
 		// GeoJSON Point coordinates are [lng, lat].
 		lat,

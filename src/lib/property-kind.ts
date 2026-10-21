@@ -1,13 +1,12 @@
 /**
  * The three property kinds the UI filters by: dom / mieszkanie / działka.
  *
- * Most feeds never state a type — the sale portals are /mieszkania/ feeds by
- * construction and komornik sells everything from flats to bare plots — so
- * the kind is derived here, once, from the evidence a row actually carries:
- * the portal's own `propertyType` (airbnb fills it), the source's feed
- * semantics, and honest title hints ("działka", "nieruchomość gruntowa",
- * "budynek mieszkalny"). Rows with no evidence stay `null` and appear only
- * under "Wszystkie" — a guess would misfile them.
+ * Each sale adapter now crawls flats, houses and plots, so the row's own
+ * `propertyType` is the primary evidence. Where a feed still cannot state a
+ * type, the classifier falls back to the source's historical feed semantics
+ * and honest title hints ("działka", "nieruchomość gruntowa", "budynek
+ * mieszkalny"). Rows with no evidence stay `null` and appear only under
+ * "Wszystkie" — a guess would misfile them.
  */
 
 export type PropertyKind = "apartment" | "house" | "plot";
@@ -15,15 +14,21 @@ export type PropertyKind = "apartment" | "house" | "plot";
 /** Airbnb room types that are flats/living units. */
 const APARTMENT_TYPES = new Set([
 	"apartment",
+	"flat",
 	"serviced_apartment",
 	"aparthotel",
 	"condominium",
 	"loft",
+	"mieszkanie",
+	"kawalerka",
+	"apartament",
 ]);
 
 /** Airbnb room types that are houses/homes (incl. cottage-industry variants). */
 const HOUSE_TYPES = new Set([
 	"house",
+	"dom",
+	"domy",
 	"cabin",
 	"cottage",
 	"chalet",
@@ -52,10 +57,24 @@ const HOUSE_TYPES = new Set([
 	"shepherds hut",
 ]);
 
+/** Bare land / building plots, as schema.org and the portals spell them. */
+const PLOT_TYPES = new Set([
+	"plot",
+	"land",
+	"place",
+	"terrain",
+	"działka",
+	"dzialka",
+	"dzialki",
+	"grunt",
+	"grunty",
+]);
+
 /**
- * Sources whose feeds are apartments-only (`/mieszkania/` URLs): their rows
- * are flats unless the title proves otherwise (komornik-style re-listings do
- * not occur here).
+ * Legacy fallback for sources that used to crawl `/mieszkania/` only. New
+ * multi-kind rows carry an explicit `propertyType` (checked above); this
+ * default only keeps rows stored before the source widened its feed
+ * classified as flats.
  */
 const APARTMENT_FEED_SOURCES = new Set([
 	"otodom",
@@ -97,8 +116,7 @@ export function propertyKindOf(row: KindEvidence): PropertyKind | null {
 	if (t === "inwestycja") return null;
 	if (APARTMENT_TYPES.has(t)) return "apartment";
 	if (HOUSE_TYPES.has(t)) return "house";
-	if (t === "działka" || t === "dzialka" || t === "plot" || t === "land")
-		return "plot";
+	if (PLOT_TYPES.has(t)) return "plot";
 
 	// 2. Built-up land counts as a house; bare land as a plot.
 	if (PLOT_RE.test(title)) {

@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { REGIONS, regionForPoint } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
+import { propertyTypeFromValue } from "./property-type.ts";
 
 /**
  * Investmap.pl — the aggregator that maps (nearly) every Polish
@@ -56,17 +57,23 @@ const MAX_PAGES = 100;
 // Search pages per city + one detail request per investment (all of them on
 // the first run, a handful per month afterwards thanks to the timeline
 // cache; the request cap drains the rest over the next runs).
-const MAX_REQUESTS = 900;
+const MAX_REQUESTS = 1100;
 /** Timeline detail TTL: quarter-precision data, refreshed monthly. */
 const DETAIL_REFRESH_DAYS = 30;
 
 /** City shards from the region config, in region order (Kraków, Katowice). */
 const CITY_SLUGS = REGIONS.flatMap((r) => r.cities);
+/** Investmap publishes investments for these categories (no land category). */
+const CATEGORY_SLUGS = ["mieszkania", "domy"] as const;
 
-function searchUrl(citySlug: string, offset: number): string {
+function searchUrl(
+	citySlug: string,
+	offset: number,
+	categorySlug: (typeof CATEGORY_SLUGS)[number],
+): string {
 	return (
 		"https://investmap.pl/api/investment/search?withEstates=1" +
-		`&categorySlug=mieszkania&citySlug=${citySlug}&offset=${offset}&limit=${PAGE_SIZE}`
+		`&categorySlug=${categorySlug}&citySlug=${citySlug}&offset=${offset}&limit=${PAGE_SIZE}`
 	);
 }
 
@@ -114,6 +121,8 @@ interface ImInvestment {
 	city?: { name?: string };
 	district?: { name?: string };
 	es?: ImEstateGroup[];
+	/** Investment category ("mieszkania" / "domy"). */
+	category?: { slug?: string };
 	/** Investment record last edit ("2026-01-27 14:03:47"). */
 	updated_at?: string;
 	/** "Realizacja" quarter: { title: "I kw. 2026", date: "2026-01-01" }. */
@@ -218,6 +227,11 @@ function investmentToListings(
 		? [inv.street, city].filter(Boolean).join(", ")
 		: null;
 	const listings: Listing[] = [];
+	// The first estate group is the property kind this row belongs to:
+	// "dom" in the domy list, "mieszkanie" in the mieszkania list.
+	const propertyType =
+		propertyTypeFromValue(groups?.[0]?.label) ??
+		(inv.category?.slug === "domy" ? "house" : null);
 	for (const estate of groups?.[0]?.list ?? []) {
 		const area = estate.area && estate.area > 0 ? estate.area : null;
 		const features: Record<string, unknown> = { investment_id: inv.id };
@@ -245,7 +259,7 @@ function investmentToListings(
 			address,
 			description: null,
 			heatingType: null,
-			propertyType: null,
+			propertyType,
 			features: JSON.stringify(features),
 			lat: lat && lng ? lat : null,
 			lng: lat && lng ? lng : null,
@@ -262,9 +276,9 @@ function investmentToListings(
  * without this they would be invisible on the map entirely. The externalId
  * prefix `inv-` is the contract that marks an investment-level row: the
  * listings API hides it again once flat rows for the same investment_id
- * appear, and the map treats it as long-lived inventory (never hidden by
- * the "listed within N days" window). The status wording is derived, never
- * stored: the source publishes no construction status or start date.
+ * appear, and the time filter treats it like every other row.
+ * The status wording is derived, never stored: the source publishes no
+ * construction status or start date.
  */
 export function investmentRow(
 	inv: ImInvestment,
@@ -297,7 +311,12 @@ export function investmentRow(
 		address: inv.street ? [inv.street, city].filter(Boolean).join(", ") : null,
 		description: null,
 		heatingType: null,
-		propertyType: null,
+		propertyType:
+			inv.category?.slug === "domy"
+				? "house"
+				: inv.category?.slug === "mieszkania"
+					? "apartment"
+					: null,
 		features: JSON.stringify(features),
 		lat,
 		lng,
@@ -311,7 +330,9 @@ export const investmapAdapter: CheerioAdapter = {
 	name: "Investmap - Kraków + Katowice investments with flats",
 	kind: "cheerio",
 	// One search list per covered city; each walks its own offset pagination.
-	startUrls: CITY_SLUGS.map((c) => searchUrl(c.slug, 0)),
+	startUrls: CITY_SLUGS.flatMap((c) =>
+		CATEGORY_SLUGS.map((category) => searchUrl(c.slug, 0, category)),
+	),
 	maxRequestsPerCrawl: MAX_REQUESTS,
 	// Small private investments sit past pages that have no flats; a
 	// newest-first first-page skip would hide them forever. Always walk.

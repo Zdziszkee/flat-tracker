@@ -3,6 +3,7 @@ import type { Listing } from "../types.ts";
 import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
 import { findLdNodes, hasLdType, makeLdGraphAdapter } from "./ldgraph.ts";
 import { num, str } from "./ldoffer.ts";
+import { propertyTypeFromListingUrl } from "./property-type.ts";
 
 /**
  * Domiporta embeds its results as an ItemList inside an @graph LD+JSON
@@ -10,11 +11,13 @@ import { num, str } from "./ldoffer.ts";
  */
 export const domiportaAdapter = makeLdGraphAdapter({
 	id: "domiporta",
-	name: "Domiporta - Małopolska + Śląsk flats for sale",
-	startUrls: REGIONS.map(
-		(r) => `https://www.domiporta.pl/mieszkanie/sprzedam/${r.name}`,
-	),
-	maxRequestsPerCrawl: 40,
+	name: "Domiporta - Małopolska + Śląsk real estate for sale",
+	startUrls: REGIONS.flatMap((r) => [
+		`https://www.domiporta.pl/mieszkanie/sprzedam/${r.name}`,
+		`https://www.domiporta.pl/dom/sprzedam/${r.name}`,
+		`https://www.domiporta.pl/dzialka/sprzedam/${r.name}`,
+	]),
+	maxRequestsPerCrawl: 60,
 	// Pagination: ?PageNumber=N (1-based).
 	pageParam: "PageNumber",
 	findNodes: (nodes) =>
@@ -23,10 +26,13 @@ export const domiportaAdapter = makeLdGraphAdapter({
 			(node) =>
 				hasLdType(node, "RealEstateListing") && typeof node.name === "string",
 		),
-	toListing: itemToListing,
+	toListing: (item, pageUrl) => itemToListing(item, pageUrl),
 });
 
-function itemToListing(item: Record<string, unknown>): Listing | null {
+function itemToListing(
+	item: Record<string, unknown>,
+	pageUrl: string,
+): Listing | null {
 	const title = str(item.name);
 	const url = str(item.url);
 	const offer = (item.offers ?? {}) as Record<string, unknown>;
@@ -56,7 +62,8 @@ function itemToListing(item: Record<string, unknown>): Listing | null {
 		address,
 		description,
 		heatingType: null,
-		propertyType: null,
+		propertyType:
+			propertyTypeFromListingUrl(url) ?? propertyTypeFromListingUrl(pageUrl),
 		features: null,
 		lat: null,
 		lng: null,

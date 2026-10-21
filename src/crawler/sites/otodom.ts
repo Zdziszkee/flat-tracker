@@ -4,6 +4,10 @@ import { db } from "#/db/index";
 import { listings as listingsTable } from "#/db/schema";
 import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
+import {
+	propertyTypeFromListingUrl,
+	propertyTypeFromValue,
+} from "./property-type.ts";
 
 /**
  * Detail pages an incremental run may follow. A detail page is the only
@@ -84,6 +88,8 @@ interface OtodomListItem {
 	roomsNumber?: string;
 	floorNumber?: string;
 	dateCreated?: string;
+	/** Portal taxonomy: FLAT, HOUSE, TERRAIN. */
+	estate?: string;
 	location?: {
 		reverseGeocoding?: {
 			locations?: Array<{ name?: string; locationLevel?: string }>;
@@ -94,6 +100,8 @@ interface OtodomListItem {
 interface OtodomDetail {
 	id?: string;
 	title?: string;
+	/** Portal taxonomy id: 101 flat, 201 house, 401 plot. */
+	category?: { id?: number };
 	price?: {
 		salePrice?: { value?: number };
 		rentPrice?: { value?: number };
@@ -200,17 +208,36 @@ interface OtodomAdapterOptions {
 	priceKey: "salePrice" | "rentPrice";
 }
 
+const OTODOM_CATEGORY_TYPES: Record<number, "apartment" | "house" | "plot"> = {
+	101: "apartment",
+	201: "house",
+	401: "plot",
+};
+
+/** The estate segment of a search URL ("/sprzedaz/dom/..."). */
+function estateKindFromListUrl(
+	url: string,
+): "apartment" | "house" | "plot" | null {
+	const path = new URL(url).pathname;
+	if (path.includes("/dom/")) return "house";
+	if (path.includes("/dzialka/")) return "plot";
+	if (path.includes("/mieszkanie/")) return "apartment";
+	return null;
+}
+
 /** The list base whose voivodeship path matches the crawled URL. */
 function baseForListUrl(listBases: string[], url: string): string {
-	const slug = url.match(/\/mieszkanie\/([a-z]+)/)?.[1];
+	const path = new URL(url).pathname;
 	return (
-		listBases.find((b) => slug && b.includes(`/mieszkanie/${slug}/`)) ??
-		listBases[0]
+		listBases.find((base) => new URL(base).pathname === path) ?? listBases[0]
 	);
 }
 
 function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
-	function listItemToListing(item: OtodomListItem): Listing {
+	function listItemToListing(
+		item: OtodomListItem,
+		kindHint: "apartment" | "house" | "plot" | null,
+	): Listing {
 		return {
 			source: opts.sourceId ?? opts.id,
 			externalId: String(item.id),
@@ -225,7 +252,7 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 			address: null,
 			description: null,
 			heatingType: null,
-			propertyType: null,
+			propertyType: propertyTypeFromValue(item.estate) ?? kindHint,
 			features: null,
 			lat: null,
 			lng: null,
@@ -256,7 +283,12 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 			address: null,
 			description: detail.description ?? null,
 			heatingType: attrStr(attrs, ["heating", "heating_type", "ogrzewanie"]),
-			propertyType: attrStr(attrs, ["type", "property_type", "building_type"]),
+			propertyType:
+				(detail.category?.id != null
+					? OTODOM_CATEGORY_TYPES[detail.category.id]
+					: null) ??
+				propertyTypeFromListingUrl(url) ??
+				attrStr(attrs, ["type", "property_type", "building_type"]),
 			features: Object.keys(attrs).length ? JSON.stringify(attrs) : null,
 			lat: detail.location?.coordinates?.latitude ?? null,
 			lng: detail.location?.coordinates?.longitude ?? null,
@@ -346,8 +378,11 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 			// for offers from the last 7 days. Older offers were already refined on
 			// the run that first saw them, and re-crawling every detail every hour
 			// is what trips otodom's CloudFront rate limit.
+			const kindHint = estateKindFromListUrl(url);
 			const recentItems = items.filter(isRecent);
-			const listings = recentItems.map(listItemToListing);
+			const listings = recentItems.map((item) =>
+				listItemToListing(item, kindHint),
+			);
 			const detailSinceMs = Math.max(
 				since?.getTime() ?? 0,
 				Date.now() - 7 * 24 * 60 * 60 * 1000,
@@ -393,7 +428,7 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 					`${opts.id} list: items=${items.length} recent=${recentItems.length} page=${current}/${totalPages} newest=${newest?.toISOString().slice(0, 10) ?? "?"}`,
 				);
 			}
-			if (current < totalPages && items.length > 0) {
+			if (!pageOnly && current < totalPages && items.length > 0) {
 				await enqueue([
 					listPageUrl(
 						baseForListUrl(opts.listBases, url),
@@ -408,21 +443,27 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 	};
 }
 
-function saleListBase(slug: string): string {
-	return `https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/${slug}?limit=36&by=DEFAULT&direction=DESC`;
+function saleListBase(
+	slug: string,
+	estate: "mieszkanie" | "dom" | "dzialka",
+): string {
+	return `https://www.otodom.pl/pl/wyniki/sprzedaz/${estate}/${slug}?limit=36&by=DEFAULT&direction=DESC`;
 }
 
 function rentListBase(slug: string): string {
 	return `https://www.otodom.pl/pl/wyniki/wynajem/mieszkanie/${slug}?limit=36&by=DEFAULT&direction=DESC`;
 }
 
-const SALE_LIST_BASES = REGIONS.map((r) => saleListBase(r.name));
+const SALE_ESTATES = ["mieszkanie", "dom", "dzialka"] as const;
+const SALE_LIST_BASES = REGIONS.flatMap((r) =>
+	SALE_ESTATES.map((estate) => saleListBase(r.name, estate)),
+);
 const RENT_LIST_BASES = REGIONS.map((r) => rentListBase(r.name));
 
-/** Sale flats across every covered voivodeship (Małopolska + Śląsk). */
+/** Sale flats, houses and plots across both covered voivodeships. */
 export const otodomAdapter: CheerioAdapter = makeOtodomAdapter({
 	id: "otodom",
-	name: "Otodom - Małopolska + Śląsk flats for sale",
+	name: "Otodom - Małopolska + Śląsk real estate for sale",
 	listBases: SALE_LIST_BASES,
 	offerType: "sale",
 	pricePeriod: null,

@@ -1,7 +1,14 @@
 import { REGIONS } from "../regions.ts";
 import type { Listing } from "../types.ts";
 import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
-import { ldOfferAddress, makeLdOfferAdapter, num, str } from "./ldoffer.ts";
+import {
+	extractDodaneDates,
+	ldOfferAddress,
+	ldOfferPropertyType,
+	makeLdOfferAdapter,
+	num,
+	str,
+} from "./ldoffer.ts";
 
 function offerToListing(offer: Record<string, unknown>): Listing | null {
 	const url = str(offer.url);
@@ -45,7 +52,7 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 		address: geocodeAddress,
 		description: desc,
 		heatingType: null,
-		propertyType: null,
+		propertyType: ldOfferPropertyType(offer),
 		features: null,
 		lat: null,
 		lng: null,
@@ -56,9 +63,14 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 
 export const morizonAdapter = makeLdOfferAdapter({
 	id: "morizon",
-	name: "Morizon - Małopolska + Śląsk flats for sale",
-	startUrls: REGIONS.map((r) => `https://www.morizon.pl/mieszkania/${r.name}/`),
+	name: "Morizon - Małopolska + Śląsk real estate for sale",
+	startUrls: REGIONS.flatMap((r) => [
+		`https://www.morizon.pl/mieszkania/${r.name}/`,
+		`https://www.morizon.pl/domy/${r.name}/`,
+		`https://www.morizon.pl/dzialki/${r.name}/`,
+	]),
 	pageParam: "page",
-	maxRequestsPerCrawl: 30,
+	maxRequestsPerCrawl: 60,
+	dateFromHtml: extractDodaneDates,
 	offerToListing,
 });

@@ -100,6 +100,19 @@ function categoryIds(
 	return ids.size > 0 ? ids : null;
 }
 
+/** OLX real-estate category ids: flats 14-16, houses 18-22, plots 24/25/1311. */
+const OLX_CATEGORY_KINDS: Record<number, "apartment" | "house" | "plot"> = {
+	14: "apartment",
+	15: "apartment",
+	16: "apartment",
+	18: "house",
+	20: "house",
+	22: "house",
+	24: "plot",
+	25: "plot",
+	1311: "plot",
+};
+
 function paramValue(ad: OlxAd, key: string): string | undefined {
 	return ad.params?.find((p) => p.key === key)?.normalizedValue;
 }
@@ -172,7 +185,10 @@ function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 			address,
 			description: ad.description ?? null,
 			heatingType: null,
-			propertyType: null,
+			propertyType:
+				ad.category?.id != null
+					? (OLX_CATEGORY_KINDS[ad.category.id] ?? null)
+					: null,
 			features: null,
 			lat: ad.map?.lat ?? null,
 			lng: ad.map?.lon ?? null,

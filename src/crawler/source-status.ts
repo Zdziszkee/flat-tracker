@@ -25,7 +25,7 @@ export interface SourceDescriptor {
 const PORTAL_SOURCES: SourceDescriptor[] = [
 	{
 		id: "otodom",
-		name: "Otodom - Małopolska + Śląsk flats for sale",
+		name: "Otodom - Małopolska + Śląsk real estate for sale",
 		kind: "portal",
 	},
 	{
@@ -55,27 +55,27 @@ const PORTAL_SOURCES: SourceDescriptor[] = [
 	},
 	{
 		id: "morizon",
-		name: "Morizon - Małopolska + Śląsk flats for sale",
+		name: "Morizon - Małopolska + Śląsk real estate for sale",
 		kind: "portal",
 	},
 	{
 		id: "gratka",
-		name: "Gratka - Małopolska + Śląsk flats for sale",
+		name: "Gratka - Małopolska + Śląsk real estate for sale",
 		kind: "portal",
 	},
 	{
 		id: "domiporta",
-		name: "Domiporta - Małopolska + Śląsk flats for sale",
+		name: "Domiporta - Małopolska + Śląsk real estate for sale",
 		kind: "portal",
 	},
 	{
 		id: "nieruchomosci-online",
-		name: "Nieruchomosci-online - Małopolska + Śląsk flats for sale",
+		name: "Nieruchomosci-online - Małopolska + Śląsk real estate for sale",
 		kind: "portal",
 	},
 	{
 		id: "rynekpierwotny",
-		name: "Rynekpierwotny - Małopolska + Śląsk new developments",
+		name: "Rynekpierwotny - Małopolska + Śląsk new developments (flats + houses)",
 		kind: "portal",
 	},
 	{
@@ -85,7 +85,7 @@ const PORTAL_SOURCES: SourceDescriptor[] = [
 	},
 	{
 		id: "investmap",
-		name: "Investmap - Kraków + Katowice investments with flats",
+		name: "Investmap - Kraków + Katowice investments (flats + houses)",
 		kind: "portal",
 	},
 	{

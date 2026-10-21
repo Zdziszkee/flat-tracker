@@ -1,7 +1,14 @@
 import { REGIONS } from "../regions.ts";
 import type { Listing } from "../types.ts";
 import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
-import { ldOfferAddress, makeLdOfferAdapter, num, str } from "./ldoffer.ts";
+import {
+	extractDodaneDates,
+	ldOfferAddress,
+	ldOfferPropertyType,
+	makeLdOfferAdapter,
+	num,
+	str,
+} from "./ldoffer.ts";
 
 function offerToListing(offer: Record<string, unknown>): Listing | null {
 	const url = str(offer.url);
@@ -45,7 +52,7 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 		address: geocodeAddress,
 		description: desc,
 		heatingType: null,
-		propertyType: null,
+		propertyType: ldOfferPropertyType(offer),
 		features: null,
 		lat: null,
 		lng: null,
@@ -56,11 +63,14 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 
 export const gratkaAdapter = makeLdOfferAdapter({
 	id: "gratka",
-	name: "Gratka - Małopolska + Śląsk flats for sale",
-	startUrls: REGIONS.map(
-		(r) => `https://gratka.pl/nieruchomosci/mieszkania/${r.name}`,
-	),
+	name: "Gratka - Małopolska + Śląsk real estate for sale",
+	startUrls: REGIONS.flatMap((r) => [
+		`https://gratka.pl/nieruchomosci/mieszkania/${r.name}`,
+		`https://gratka.pl/nieruchomosci/domy/${r.name}`,
+		`https://gratka.pl/nieruchomosci/dzialki-grunty/${r.name}`,
+	]),
 	pageParam: "page",
-	maxRequestsPerCrawl: 30,
+	maxRequestsPerCrawl: 60,
+	dateFromHtml: extractDodaneDates,
 	offerToListing,
 });

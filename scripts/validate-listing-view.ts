@@ -1,16 +1,21 @@
 /**
  * Pin the shared listing-view behavior that the map and the listings table
- * now both consume: time windows, evergreen construction rows, facets, feature
- * parsing, and formatting. Run with `bun run validate:listing-view`.
+ * now both consume: time windows, facets, feature parsing, and formatting.
+ * Run with `bun run validate:listing-view`.
  */
 import {
 	parseListingFeatures,
 	filterListings,
-	isEvergreenListing,
 	listingFacets,
 	matchesTimeWindow,
 } from "../src/lib/listing-features.ts";
+import { propertyKindOf } from "../src/lib/property-kind.ts";
 import { formatUtilities, realizationCaption } from "../src/lib/format.ts";
+import { extractDodaneDates } from "../src/crawler/sites/ldoffer.ts";
+import {
+	propertyTypeFromListingUrl,
+	propertyTypeFromValue,
+} from "../src/crawler/sites/property-type.ts";
 
 let failures = 0;
 function check(ok: boolean, label: string): void {
@@ -27,6 +32,14 @@ const budujesie = {
 	externalId: "t-1",
 	listedAt: old,
 	firstSeenAt: old,
+	propertyKind: null,
+	offerType: "sale",
+};
+const recentBudujesie = {
+	source: "budujesie",
+	externalId: "t-2",
+	listedAt: recent,
+	firstSeenAt: recent,
 	propertyKind: null,
 	offerType: "sale",
 };
@@ -70,28 +83,43 @@ const recentRent = {
 	propertyKind: "apartment" as const,
 	offerType: "long_term_rental",
 };
+const undated = {
+	source: "morizon",
+	externalId: "m-1",
+	listedAt: null,
+	firstSeenAt: null,
+	propertyKind: "apartment" as const,
+	offerType: "sale",
+};
 
-check(isEvergreenListing(budujesie), "budujesie is evergreen");
-check(isEvergreenListing(investmapStandIn), "investmap inv- is evergreen");
-check(!isEvergreenListing(investmapFlat), "investmap flat is not evergreen");
-check(matchesTimeWindow(budujesie, 1), "evergreen survives the 24h window");
-check(matchesTimeWindow(investmapStandIn, 1), "investmap stand-in survives the 24h window");
+check(!matchesTimeWindow(budujesie, 1), "old budujesie thread is hidden by the 24h window");
+check(matchesTimeWindow(recentBudujesie, 7), "recent budujesie thread survives the 7d window");
+check(!matchesTimeWindow(investmapStandIn, 1), "old investmap stand-in is hidden by the 24h window");
 check(!matchesTimeWindow(investmapFlat, 1), "old investmap flat is hidden by the 24h window");
 check(matchesTimeWindow(recentOlx, 7), "recent offer survives the 7d window");
 check(!matchesTimeWindow(oldOtodom, 7), "old offer is hidden by the 7d window");
+check(!matchesTimeWindow(undated, 30), "a row without any added date is hidden by a window");
 
 const all = [
 	budujesie,
+	recentBudujesie,
 	investmapStandIn,
 	investmapFlat,
 	oldOtodom,
 	recentOlx,
 	recentRent,
+	undated,
 ];
 const facets = listingFacets(all, 1);
-check(facets.total === 4, "facets count evergreen + recent rows only");
-check(facets.bySource.get("budujesie") === 1, "facets count budujesie");
-check(facets.bySource.get("investmap") === 1, "facets exclude old investmap flat");
+check(facets.total === 3, "facets count only rows inside the window");
+check(
+	facets.bySource.get("budujesie") === 1,
+	"facets count the recent budujesie thread and drop the old one",
+);
+check(
+	(facets.bySource.get("investmap") ?? 0) === 0,
+	"facets exclude old investmap rows",
+);
 check(facets.byKind.get("house") === 1, "facets count house");
 
 const saleOnly = filterListings(all, {
@@ -100,7 +128,7 @@ const saleOnly = filterListings(all, {
 	kind: "all",
 	offerType: "sale",
 });
-check(saleOnly.length === 3, "offerType sale excludes the rental");
+check(saleOnly.length === 2, "offerType sale excludes the rental");
 check(!saleOnly.some((r) => r.externalId === "x-2"), "sale filter drops rental");
 
 const houseOnly = filterListings(all, {
@@ -139,6 +167,68 @@ check(malformed.budujesie === null && malformed.airbnb === null, "malformed JSON
 check(formatUtilities('{"czynsz":500,"ogrzewanie":120}') === "Opłaty: czynsz 500 zł · ogrz. 120 zł", "formats utilities");
 check(formatUtilities("nope") === "", "malformed utilities degrade");
 check(realizationCaption("I kw. 2027", "2027-01-01").includes("w budowie"), "future realization is in progress");
+
+check(
+	propertyKindOf({ source: "otodom", title: "3 pokoje", propertyType: "house" }) ===
+		"house",
+	"classifier trusts an explicit house type",
+);
+check(
+	propertyKindOf({
+		source: "nieruchomosci-online",
+		title: "Działka budowlana",
+		propertyType: "plot",
+	}) === "plot",
+	"classifier trusts an explicit plot type",
+);
+check(
+	propertyKindOf({ source: "investmap", title: "Dom", propertyType: "dom" }) ===
+		"house",
+	"classifier maps the Polish house label",
+);
+check(
+	propertyTypeFromValue("TERRAIN") === "plot",
+	"maps otodom TERRAIN to plot",
+);
+check(
+	propertyTypeFromValue("Place") === "plot",
+	"maps schema.org Place to plot",
+);
+check(
+	propertyTypeFromListingUrl(
+		"https://www.morizon.pl/oferta/sprzedaz-dzialka-krakow-zmujdzka-676m2-mzn1",
+	) === "plot",
+	"plot kind from a morizon slug",
+);
+check(
+	propertyTypeFromListingUrl(
+		"https://www.domiporta.pl/nieruchomosci/sprzedam-dom-wokowice-os-nowe-168m2/1",
+	) === "house",
+	"house kind from a domiporta slug",
+);
+check(
+	propertyTypeFromListingUrl(
+		"https://krakow.nieruchomosci-online.pl/mieszkanie-w-apartamentowcu,wysoki-standard/1.html",
+	) === "apartment",
+	"flat kind from a nieruchomosci-online slug",
+);
+check(
+	propertyTypeFromListingUrl(
+		"https://www.morizon.pl/oferta/sprzedaz-dom-krakow-z-duza-dzialka-120m2-mzn1",
+	) === "house",
+	"a house slug mentioning its plot stays a house",
+);
+check(
+	propertyTypeFromListingUrl("https://example.test/oferta/ul-domowa-12") === null,
+	"a street name containing 'dom' is not a house",
+);
+const dodane = extractDodaneDates(
+	'<a href="/oferta/sprzedaz-dom-x">Dom</a><div>Dodane: 2026.08.26</div>',
+);
+check(
+	dodane.get("/oferta/sprzedaz-dom-x") === "2026-08-26T00:00:00",
+	"parses morizon/gratka card posting dates",
+);
 
 console.log(
 	failures === 0
