@@ -8,20 +8,21 @@ import { propertyTypeFromValue } from "./property-type.ts";
  * Investmap.pl — the aggregator that maps (nearly) every Polish
  * development investment, including small private ones that never appear
  * on otodom/olx. Its public JSON API returns investments WITH their
- * individual flats for sale:
+ * individual units for sale:
  *
- *   GET /api/investment/search?withEstates=1&categorySlug=mieszkania
- *       &citySlug=krakow&offset=N&limit=20
+ *   GET /api/investment/search?withEstates=1&categorySlug={mieszkania,domy}
+ *       &citySlug={krakow,katowice}&offset=N&limit=20
  *
  * Each item carries the investment (title, street, district, location)
- * and `es[].list` — the flats for sale (area, price, price_m2, floor,
- * rooms, per-flat URL). Only investments with active flats appear in the
+ * and `es[].list` — the units for sale (area, price, price_m2, floor,
+ * rooms, per-unit URL). Only investments with active units appear in the
  * response body's estate lists; paginate across the whole list, because
- * small private investments sit past pages that have no flats.
+ * small private investments sit past pages that have no units.
  *
- * Each covered city is its own search list (one `citySlug` per request), so
- * the region config's city shards drive the start URLs: Kraków for Małopolska,
- * Katowice for Śląsk. Pages are walked to the end per city.
+ * Each covered city/category is its own search list (one `citySlug` and one
+ * `categorySlug` per request), so the region config's city shards drive the
+ * start URLs: Kraków for Małopolska, Katowice for Śląsk. Pages are walked to
+ * the end per list.
  *
  * This is the auto-discovery answer for private investments: any new
  * development registered in a covered city shows up here with no per-site work.
@@ -45,9 +46,9 @@ import { propertyTypeFromValue } from "./property-type.ts";
  *
  * Detail fetches are gated by data/crawler/investmap-investments.json
  * (keyed on investment id, 30-day TTL): the first run walks every
- * investment with flats, later runs fetch only new ones plus the monthly
+ * investment with units, later runs fetch only new ones plus the monthly
  * refresh, so the hourly crawl stays light. Detail pages re-emit the
- * investment's flats (the response's `estates` mirrors the search `es`),
+ * investment's units (the response's `estates` mirrors the search `es`),
  * refining the search rows through the upsert.
  */
 
@@ -212,7 +213,7 @@ export function timelineOf(inv: ImInvestment): CachedInvestment {
 	};
 }
 
-/** One investment's flats as listings, timeline attached to `features`. */
+/** One investment's units as listings, timeline attached to `features`. */
 function investmentToListings(
 	inv: ImInvestment,
 	groups: ImEstateGroup[] | undefined,
@@ -272,10 +273,10 @@ function investmentToListings(
 
 /**
  * The investment itself as one price-less inventory row, for investments
- * with no flats currently for sale (sold out, early phase, rentals only):
+ * with no units currently for sale (sold out, early phase, rentals only):
  * without this they would be invisible on the map entirely. The externalId
  * prefix `inv-` is the contract that marks an investment-level row: the
- * listings API hides it again once flat rows for the same investment_id
+ * listings API hides it again once unit rows for the same investment_id
  * appear, and the time filter treats it like every other row.
  * The status wording is derived, never stored: the source publishes no
  * construction status or start date.
@@ -327,20 +328,20 @@ export function investmentRow(
 
 export const investmapAdapter: CheerioAdapter = {
 	id: "investmap",
-	name: "Investmap - Kraków + Katowice investments with flats",
+	name: "Investmap - Kraków + Katowice investments (flats + houses)",
 	kind: "cheerio",
 	// One search list per covered city; each walks its own offset pagination.
 	startUrls: CITY_SLUGS.flatMap((c) =>
 		CATEGORY_SLUGS.map((category) => searchUrl(c.slug, 0, category)),
 	),
 	maxRequestsPerCrawl: MAX_REQUESTS,
-	// Small private investments sit past pages that have no flats; a
+	// Small private investments sit past pages that have no units; a
 	// newest-first first-page skip would hide them forever. Always walk.
 	alwaysFullCrawl: true,
 
 	async extractHtml(html, url, enqueue) {
 		// Per-investment detail endpoint: the only place the "realizacja"
-		// timeline lives. Re-emits the investment's flats so the upsert
+		// timeline lives. Re-emits the investment's units so the upsert
 		// refines the search rows with the fresh timeline.
 		if (url.includes("/api/investment?id=")) {
 			let detail: ImDetailResponse;
@@ -391,7 +392,7 @@ export const investmapAdapter: CheerioAdapter = {
 			if (rows.length > 0) {
 				listings.push(...rows);
 			} else {
-				// No flats for sale: one price-less investment row keeps the
+				// No units for sale: one price-less investment row keeps the
 				// building on the map (see investmentRow).
 				const row = investmentRow(inv, cached, defaultCity);
 				if (row) listings.push(row);
@@ -408,7 +409,7 @@ export const investmapAdapter: CheerioAdapter = {
 		if (toFetch.length > 0) await enqueue(toFetch);
 
 		// The list is sorted with the big estates first, but investments
-		// with a handful of flats (the small private ones) still appear
+		// with a handful of units (the small private ones) still appear
 		// past pages that have none — so walk to the very end of this
 		// city's list.
 		const offset = Number(new URL(url).searchParams.get("offset") ?? 0);

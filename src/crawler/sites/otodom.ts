@@ -11,7 +11,7 @@ import {
 
 /**
  * Detail pages an incremental run may follow. A detail page is the only
- * source of a flat's coordinates, build year, building material/floors and
+ * source of a listing's coordinates, build year, building material/floors and
  * condition (db-sink promotes those out of the `features` JSON), and otodom
  * rate-limits bulk detail crawls — so each run drains a few offers that have
  * never been enriched, newest first.

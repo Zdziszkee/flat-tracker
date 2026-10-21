@@ -53,9 +53,9 @@ function saveOfferCache(cache: Record<string, CachedOffer>): void {
 
 /**
  * Rynekpierwotny lists new-development projects (osiedla), not individual
- * flats. The page state lives in window.__INITIAL_STATE__ (offerList.list.
+ * units. The page state lives in window.__INITIAL_STATE__ (offerList.list.
  * offers); each offer carries a geo point, price/area ranges for its units
- * and the number of flats for sale. We store the project with its minimum
+ * and the number of units for sale. We store the project with its minimum
  * unit price/area as representative values.
  */
 export const rynekpierwotnyAdapter: CheerioAdapter = {
