@@ -486,10 +486,10 @@ a domiporta/nieruchomosci-online URL, rynekpierwotny's `type` (1/2) and
 investmap's `es[].label`/category. The classifier trusts that value first,
 then honest title hints ("działka"/"nieruchomość gruntowa" → plot,
 "budynek mieszkalny"/"bliźniak" → house), and only then the source's
-historical feed semantics. Rows with no evidence stay untyped and show
-only under "Wszystkie" — a guess would misfile them; when adding a source,
-feed the classifier real signals (or leave it untyped) rather than
-defaulting.
+historical feed semantics. Rows with no evidence and no legacy feed
+default stay untyped and show only under "Wszystkie" — a guess would
+misfile them; when adding a source, feed the classifier real signals (or
+leave it untyped) rather than defaulting.
 
 ### Posting dates and the "Data dodania" filter
 
