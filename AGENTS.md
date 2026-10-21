@@ -130,15 +130,20 @@ crawl (no `firstPageOnly`) still follows every recent detail page.
 
 ### Building age
 
-No official source in this pipeline carries a construction year: the Kraków
-RCN GML (`RCN_Budynek` = id, rodzaj, geometria, adres), the GUGiK RCN
+The official registry sources carry no construction year: the Kraków RCN
+GML (`RCN_Budynek` = id, rodzaj, geometria, adres), the GUGiK RCN
 GeoPackages (`bud_*` = id, nr, rodzaj, pow_uzyt, cena, adres) and KIEG EGiB
 `ms:budynki` (ID_BUDYNKU, RODZAJ, KONDYGNACJE_NADZIEMNE/PODZIEMNE) all lack
-one — checked, do not re-investigate. `buildings.build_year` is therefore
-derived by `updateBuildingYears()` in `assign-buildings`: the average
-`listings.build_year` of the flats anchored to the building, else the OSM
-`start_date` tag, else null (never guessed). `/api/buildings/lookup` returns
-it and the map popup renders it as "Rok budowy: 1998 · 28 lat".
+one — checked, do not re-investigate those. The one portal that does
+publish it is nieruchomosci-online: its detail page's LD+JSON
+`additionalProperty` has "Year built", parsed into
+`listings.features.build_year` and promoted by db-sink. A listing's
+`build_year` therefore comes from that attribute or from otodom's detail
+attributes. `buildings.build_year` is derived by `updateBuildingYears()` in
+`assign-buildings`: the average `listings.build_year` of the listings anchored
+to the building, else the OSM `start_date` tag, else null (never guessed).
+`/api/buildings/lookup` returns it and the map popup renders it as
+"Rok budowy: 1998 · 28 lat".
 
 Browser binaries are a separate download and their absence must stay
 non-fatal (reported once per refresh by `src/crawler/browser.ts`). Every
@@ -203,10 +208,11 @@ re-crawls: `saveListings` coalesces coordinates, `address` and
 (a plain `excluded.address` here once wiped 28 geocode-mined budujesie
 addresses on the next full re-crawl — every nullable column a re-crawl
 can re-emit as NULL must be coalesced in `onConflictDoUpdate`). Street-only addresses anchor
-to the local street centroid (no building claim); Nominatim results
-are cached per street in `data/crawler/nominatim-cache.json` so
+to the local street centroid (no building claim); Photon results
+are cached per street in `data/crawler/nominatim-cache.json` (legacy
+filename) so
 duplicate offers and chunked drain runs never re-query. Pass
-`--local-only` to the script to skip Nominatim (e.g. while the shared
+`--local-only` to the script to skip Photon (e.g. while the shared
 instance throttles).
 
 ## Scheduled (hourly) refresh
@@ -405,7 +411,7 @@ with the build's peak at ~2 GB. If you touch the loader, watch
 | rynekpierwotny.pl | New-development projects (osiedla): flats and houses | `window.__INITIAL_STATE__` `offerList.list.offers` with geo points + price ranges; `/s/nowe-mieszkania-*` and `/s/nowe-domy-*`, pagination via the state `next` link. The list omits the posting date; a cached detail pass (max 6 uncached details per list page, `data/crawler/rynekpierwotny-offers.json`) reads `offerDetail.offer.configuration.publish_date` (fallback `create_date`) |
 | investmap.pl | **Every registered investment in Kraków and Katowice with its flats or houses** (incl. small private ones) | Public JSON API `GET /api/investment/search?withEstates=1&categorySlug={mieszkania,domy}&citySlug={krakow,katowice}&offset=N` — units inline (`es[].list`): area, price, price_m2, floor, rooms; coordinates from the investment. Construction timeline: `GET /api/investment?id=<id>` carries `investment.finish` (`{title: "I kw. 2026", date: "2026-01-01"}` = the "realizacja" quarter shown on /miasto/krakow, quarter-start date, planned or actual, the source does not distinguish; search rows only hold empty `finish: {}` placeholders). Stored per unit as `construction_end_label`/`construction_end_date` in `features`, promoted to columns, exposed by /api/listings as `constructionEndLabel`/`constructionEndDate`. Investmap publishes NO construction start date and NO status field (checked the whole API surface), so none are stored. Detail fetches are gated by `data/crawler/investmap-investments.json` (30-day TTL). Investments with NO units for sale (sold out, early phase) would otherwise be invisible entirely: the adapter emits one price-less investment-level row per building (`externalId` `inv-<id>`, `features.investment_row`), and `/api/listings` hides that stand-in again once unit rows for the same `features.investment_id` appear |
 | licytacje.komornik.pl | Court auction notices (Małopolska + Śląsk real estate, all subcategories) | Playwright only (WAF blocks non-browser TLS); anonymous JSON API `POST /services/item-back/rest/item/search` (same-origin, `termFilters` + `fullTextFilters` city, `offset` pagination); every REAL_ESTATE subcategory kept |
-| budujesie.pl | Investments under construction (Kraków housing), one phpBB topic per investment | Plain prosilver DOM cards (`viewforum.php?f=5`, 25 topics/page, `start=N` pagination); rows are long-lived inventory with no price — the map renders them as their own hard-hat symbol layer. The popup label is activity-aware: "Inwestycja w budowie" only while the thread is alive (last post within 18 months), else a factual "ostatnia aktywność MM.YYYY" — the site carries no construction status, so archived topics must not claim to be building. The adapter also fetches each topic's first page (gated per topic by `data/crawler/budujesie-topics.json`, keyed on `lastPostAt`, so only moved threads are re-fetched): the OP text becomes `description` and the preferred address source (post prose beats title mining and resolves the town — "powstaje przy ul. X w Wieliczce"), and up to 8 posts go into `features.posts`, rendered as the description + comments under the investment in the map popup and the listings expanded row. phpBB date quirks and the thread/OP-address parsing are pinned by `scripts/validate-budujesie.ts`. **Corpus = last 2 years** (`RECENT_WINDOW_DAYS = 730`): a topic is kept when it was started *or* last discussed inside the window (the 2004–2015 backlog is rebuild noise, ~60% of the threads); the OP text always survives (it is the investment description) while replies are date-filtered. Reply dates come from `p.author` ("autor: X » 25 wrz 2026, 12:44") — `<time datetime>` never matches this forum's markup — and cached thread entries with undated posts are re-fetched once. `pruneStaleBudujesie` (db-sink, FK-safe) drops rows the window evicted on every refresh's prune phase. Location is mined from the thread: OP prose first, then the title, then *comments* (a comment naming another town never displaces the agreement, and a comment-mined address must be a lexicon street or explicitly prefixed — bare "Word Number" / estate-name prose matches are rejected, they produced junk like "Zreszta 5"). Estate-name addresses ("Plaszov Carlo", "Villa Botanica") are honest geocode misses: no street to match locally and Nominatim does not know the marketing name either |
+| budujesie.pl | Investments under construction (Kraków housing), one phpBB topic per investment | Plain prosilver DOM cards (`viewforum.php?f=5`, 25 topics/page, `start=N` pagination); rows are long-lived inventory with no price — the map renders them as their own hard-hat symbol layer. The popup label is activity-aware: "Inwestycja w budowie" only while the thread is alive (last post within 18 months), else a factual "ostatnia aktywność MM.YYYY" — the site carries no construction status, so archived topics must not claim to be building. The adapter also fetches each topic's first page (gated per topic by `data/crawler/budujesie-topics.json`, keyed on `lastPostAt`, so only moved threads are re-fetched): the OP text becomes `description` and the preferred address source (post prose beats title mining and resolves the town — "powstaje przy ul. X w Wieliczce"), and up to 8 posts go into `features.posts`, rendered as the description + comments under the investment in the map popup and the listings expanded row. phpBB date quirks and the thread/OP-address parsing are pinned by `scripts/validate-budujesie.ts`. **Corpus = last 2 years** (`RECENT_WINDOW_DAYS = 730`): a topic is kept when it was started *or* last discussed inside the window (the 2004–2015 backlog is rebuild noise, ~60% of the threads); the OP text always survives (it is the investment description) while replies are date-filtered. Reply dates come from `p.author` ("autor: X » 25 wrz 2026, 12:44") — `<time datetime>` never matches this forum's markup — and cached thread entries with undated posts are re-fetched once. `pruneStaleBudujesie` (db-sink, FK-safe) drops rows the window evicted on every refresh's prune phase. Location is mined from the thread: OP prose first, then the title, then *comments* (a comment naming another town never displaces the agreement, and a comment-mined address must be a lexicon street or explicitly prefixed — bare "Word Number" / estate-name prose matches are rejected, they produced junk like "Zreszta 5"). Estate-name addresses ("Plaszov Carlo", "Villa Botanica") are honest geocode misses: no street to match locally and Photon does not know the marketing name either |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
 | GUGiK RCN (Usługa Transakcje) | Same, but every powiat in Poland: the tracked voivodeships (małopolskie + śląskie) by default, the rest on demand (per-powiat GeoPackages; parcel/building/lokal transactions) | `https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip` — imported by `import-rcn-gugik.ts` (`bun run import:rcn-gugik`, `bun run import:rcn-gugik:all`) |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
