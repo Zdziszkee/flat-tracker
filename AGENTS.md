@@ -134,12 +134,11 @@ The official registry sources carry no construction year: the Kraków RCN
 GML (`RCN_Budynek` = id, rodzaj, geometria, adres), the GUGiK RCN
 GeoPackages (`bud_*` = id, nr, rodzaj, pow_uzyt, cena, adres) and KIEG EGiB
 `ms:budynki` (ID_BUDYNKU, RODZAJ, KONDYGNACJE_NADZIEMNE/PODZIEMNE) all lack
-one — checked, do not re-investigate those. The one portal that does
-publish it is nieruchomosci-online: its detail page's LD+JSON
-`additionalProperty` has "Year built", parsed into
-`listings.features.build_year` and promoted by db-sink. A listing's
-`build_year` therefore comes from that attribute or from otodom's detail
-attributes. `buildings.build_year` is derived by `updateBuildingYears()` in
+one — checked, do not re-investigate those. The portals that do publish it
+are nieruchomosci-online (detail LD+JSON `additionalProperty` "Year built")
+and otodom (detail attributes `build_year`); both are parsed into
+`listings.features.build_year` and promoted by db-sink. `buildings.build_year`
+is derived by `updateBuildingYears()` in
 `assign-buildings`: the average `listings.build_year` of the listings anchored
 to the building, else the OSM `start_date` tag, else null (never guessed).
 `/api/buildings/lookup` returns it and the map popup renders it as
