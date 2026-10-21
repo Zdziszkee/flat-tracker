@@ -46,8 +46,9 @@ override a documented project convention.
 - **DB**: SQLite + Drizzle ORM (`drizzle-orm/better-sqlite3`)
 - **Orchestration**: Effect TS wraps the crawl pipeline (`src/crawler/pipeline.ts`)
 - **Geocoding**: Overpass API (free) — building footprints + point-in-polygon
-- **Map**: mapbox-gl (light-v11 style) with 3D buildings
-  (`fill-extrusion` layer), listings as a GeoJSON circle layer,
+- **Map**: mapbox-gl with the Mapbox Standard style (3D landmarks/trees,
+  config-driven light), our own RCN `fill-extrusion` layer, listings as a
+  GeoJSON circle layer,
   `maxBounds` = the union of the tracked region boxes (Małopolska + Śląsk)
   plus a little slack (a tight box makes `fitBounds` crop the north and south),
   default camera fitted to both. Token: `VITE_MAPBOX_TOKEN` in `.env.local` (public
@@ -645,6 +646,16 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   block never rendered for any source). `showListingPopup` therefore
   hydrates the full row from the GeoJSON source data by `id`; keep
   nested data out of click-feature reads or hydrate the same way.
+- **Mapbox GL caches 404 tile bodies**: the shared `mapbox-tiles` Cache
+  API entry stores the JSON body of sparse Standard-style tiles
+  (hd-roads, indoor, procedural-buildings, landmark-pois). A later cache
+  read hands that JSON to the vector-tile parser, which throws "Expected
+  varint not more than 10 bytes". The live fetch path correctly treats a
+  404 as an empty tile; only the cached path is broken (still present in
+  mapbox-gl 3.28 and 3.33). `src/components/map/tile-cache.ts` prunes
+  cached 404s on load/idle and deletes the whole tile cache when the
+  parser error fires; do not remove it without re-checking the Mapbox
+  bug.
 - **Railways/stations overlay** ("Kolej" toggle): generated
   `src/data/region-railways.ts` via `bun run build:railways`, which parses
   the same Geofabrik PBFs `osm-index.ts` uses (Overpass was unusable when

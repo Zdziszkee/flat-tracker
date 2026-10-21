@@ -29,6 +29,7 @@ import {
 	popupHtml,
 	renderValuationHtml,
 } from "./map/popups";
+import { pruneBadTileCache, resetTileCache } from "./map/tile-cache";
 import type {
 	ApiListing,
 	BuildingLookup,
@@ -347,6 +348,19 @@ function MapCanvas({
 			new mapboxgl.NavigationControl({ visualizePitch: true }),
 			"top-right",
 		);
+
+		// Mapbox GL caches 404 tile bodies and later parses the cached JSON as
+		// a vector tile ("Expected varint..."). Drop those entries after load
+		// and interactions; a parse error means one slipped through, so reset
+		// the tile cache and let the map refetch.
+		map.on("load", () => pruneBadTileCache(true));
+		map.on("idle", () => pruneBadTileCache());
+		map.on("error", (event) => {
+			const message = event.error?.message ?? "";
+			if (message.includes("Expected varint not more than 10 bytes")) {
+				resetTileCache();
+			}
+		});
 
 		// Terrain + hillshade, per docs.mapbox.com/mapbox-gl-js/example/add-terrain
 		// and /example/hillshade: add the DEM source(s) and setTerrain in
