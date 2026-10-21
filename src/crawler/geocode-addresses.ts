@@ -11,15 +11,16 @@ import {
  * CLI: geocode every listing that lacks coordinates (full drain).
  *
  * Addresses match the local OSM building index first (fast, offline);
- * the rest go through Nominatim at ~1 req/s. Listings without a stored
+ * the rest go through Photon at ~1 req/s. Listings without a stored
  * address get one mined from their title, which is persisted so later
  * runs skip straight to the local index.
  *
- * The hourly refresh runs the same pass with a small Nominatim budget
+ * The hourly refresh runs the same pass with a small Photon budget
  * (see refresh.ts), so the backlog here is normally empty. Pass
- * `--local-only` to skip Nominatim entirely (e.g. while the shared
+ * `--local-only` to skip Photon entirely (e.g. while the shared
  * instance is throttling), `--reset` to drop every address-only
- * source's stored coordinates first and re-anchor the whole feed, and
+ * source's stored coordinates first and re-anchor the whole feed (this also
+ * discards nieruchomosci-online detail rows' portal coordinates), and
  * `--source=<id>` to scope either run to one source (targeted repair,
  * e.g. licytacje-komornik after a matcher fix).
  */
@@ -31,7 +32,7 @@ async function main(): Promise<void> {
 		?.slice("--source=".length);
 
 	if (reset) {
-		// Old cached Nominatim results may reflect the previous matcher; a
+		// Old cached Photon results may reflect the previous matcher; a
 		// reset must re-query from a clean slate.
 		await rm(NOM_CACHE_PATH, { force: true });
 	}
