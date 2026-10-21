@@ -16,7 +16,7 @@ import {
  * persistent detail pass: at most a few uncached details per list page, so
  * pagination keeps its budget and every run fills a bit of the backlog.
  */
-const DETAIL_BUDGET_PER_PAGE = 3;
+const DETAIL_BUDGET_PER_PAGE = 8;
 
 interface CachedDetail {
 	listedAt: string | null;
@@ -73,7 +73,7 @@ export const nieruchomosciOnlineAdapter = makeLdGraphAdapter({
 		`https://www.nieruchomosci-online.pl/szukaj.html?1,dom,sprzedaz,${r.name},,,`,
 		`https://www.nieruchomosci-online.pl/szukaj.html?2,dzialka,sprzedaz,${r.name},,,`,
 	]),
-	maxRequestsPerCrawl: 60,
+	maxRequestsPerCrawl: 140,
 	// The hourly run spends one request per category/region plus a few
 	// detail pages; details fill dates and coordinates over successive runs.
 	firstPageOnlyRequests:

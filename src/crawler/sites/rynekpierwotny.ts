@@ -10,7 +10,7 @@ import { num, str } from "./ldoffer.ts";
  * `create_date`) is the authoritative "data dodania". A small persistent
  * detail pass fills the backlog without crowding out list pagination.
  */
-const DETAIL_BUDGET_PER_PAGE = 3;
+const DETAIL_BUDGET_PER_PAGE = 6;
 
 interface CachedOffer {
 	listedAt: string | null;
@@ -69,7 +69,7 @@ export const rynekpierwotnyAdapter: CheerioAdapter = {
 		`https://rynekpierwotny.pl/s/nowe-mieszkania-${r.name}/?sort=2`,
 		`https://rynekpierwotny.pl/s/nowe-domy-${r.name}/?sort=2`,
 	]),
-	maxRequestsPerCrawl: 80,
+	maxRequestsPerCrawl: 120,
 	// One newest page per kind and region plus a few detail pages.
 	firstPageOnlyRequests: REGIONS.length * 2 * (1 + DETAIL_BUDGET_PER_PAGE),
 
