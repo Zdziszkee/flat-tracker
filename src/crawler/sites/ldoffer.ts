@@ -69,9 +69,11 @@ export function offerGeocodeAddress(
 		return formatAddressForGeocode(street, number, district, "Kraków");
 	}
 	if (!locality) return null;
-	return inKrakow
-		? formatAddressForGeocode(locality, undefined, null, "Kraków")
-		: formatAddressForGeocode(locality, undefined, null, null);
+	if (!inKrakow)
+		return formatAddressForGeocode(locality, undefined, null, null);
+	return locality.toLowerCase() === "kraków"
+		? "Kraków"
+		: formatAddressForGeocode(locality, undefined, null, "Kraków");
 }
 
 /** The offer slug carries the city ("...-krakow-...", "...-wielicki-..."). */

@@ -259,6 +259,15 @@ check(
 	) === "Lipnica Dolna",
 	"out-of-town plot falls back to the town, not Kraków",
 );
+check(
+	offerGeocodeAddress(
+		"https://www.morizon.pl/oferta/sprzedaz-mieszkanie-krakow-x",
+		null,
+		undefined,
+		"Kraków",
+	) === "Kraków",
+	"town-level Kraków address is not duplicated",
+);
 
 console.log(
 	failures === 0
