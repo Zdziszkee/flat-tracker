@@ -2,7 +2,11 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { REGIONS } from "../regions.ts";
 import type { Listing } from "../types.ts";
-import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
+import {
+	formatAddressForGeocode,
+	minedStreetLooksReal,
+	parseAddressFromText,
+} from "./address.ts";
 import { findLdNodes, makeLdGraphAdapter } from "./ldgraph.ts";
 import { num, str } from "./ldoffer.ts";
 import {
@@ -147,9 +151,32 @@ function offerToListing(
 	const area = extractArea(description);
 	const rooms = extractRooms(description);
 	const parsed = parseAddressFromText(description);
-	const address = parsed
-		? formatAddressForGeocode(parsed.street, parsed.number)
-		: null;
+	const structured = (item.address ?? {}) as Record<string, unknown>;
+	const street = str(structured.streetAddress);
+	const locality = str(structured.addressLocality);
+	const parsedMatchesStreet =
+		parsed != null &&
+		street != null &&
+		parsed.street.trim().toLowerCase() === street.trim().toLowerCase();
+	const plausibleParsed =
+		parsed != null && minedStreetLooksReal(parsed.street) ? parsed : null;
+	const address = street
+		? formatAddressForGeocode(
+				street,
+				parsedMatchesStreet ? parsed.number : undefined,
+				null,
+				locality,
+			)
+		: plausibleParsed
+			? formatAddressForGeocode(
+					plausibleParsed.street,
+					plausibleParsed.number,
+					null,
+					locality,
+				)
+			: locality
+				? formatAddressForGeocode(locality, undefined, null, null)
+				: null;
 
 	// No title in the feed; derive a readable one from the description.
 	const title =

@@ -1,6 +1,10 @@
 import { REGIONS } from "../regions.ts";
 import type { Listing } from "../types.ts";
-import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
+import {
+	formatAddressForGeocode,
+	minedStreetLooksReal,
+	parseAddressFromText,
+} from "./address.ts";
 import { findLdNodes, hasLdType, makeLdGraphAdapter } from "./ldgraph.ts";
 import { num, str } from "./ldoffer.ts";
 import { propertyTypeFromListingUrl } from "./property-type.ts";
@@ -57,9 +61,10 @@ function itemToListing(
 		parsed != null &&
 		street != null &&
 		parsed.street.trim().toLowerCase() === street.trim().toLowerCase();
-	// A lower-case run ("oraz 898") is prose, not a street name.
+	// A lower-case run ("oraz 898") or a sentence fragment is prose, not a
+	// street name; only use the mined street when it passes the shared gate.
 	const plausibleParsed =
-		parsed != null && /^\p{Lu}/u.test(parsed.street.trim()) ? parsed : null;
+		parsed != null && minedStreetLooksReal(parsed.street) ? parsed : null;
 	const address = street
 		? formatAddressForGeocode(
 				street,
