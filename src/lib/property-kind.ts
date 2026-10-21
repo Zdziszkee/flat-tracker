@@ -15,6 +15,9 @@ export type PropertyKind = "apartment" | "house" | "plot";
 const APARTMENT_TYPES = new Set([
 	"apartment",
 	"flat",
+	"block",
+	"tenement",
+	"ribbon",
 	"serviced_apartment",
 	"aparthotel",
 	"condominium",
