@@ -1,5 +1,6 @@
 import type { PropertyKind } from "#/lib/property-kind";
 import type { CheerioAdapter, Listing } from "../types.ts";
+import { formatAddressForGeocode } from "./address.ts";
 import { findLdNodes } from "./ldjson.ts";
 import { propertyTypeFromValue } from "./property-type.ts";
 
@@ -44,6 +45,38 @@ export function ldOfferAddress(offer: Record<string, unknown>): OfferAddress {
 		streetAddress: address.streetAddress,
 		addressLocality: address.addressLocality,
 	};
+}
+
+/**
+ * Morizon/Gratka's `addressLocality` is a Kraków district for Kraków rows
+ * ("Mistrzejowice") but a town for everything else ("Wieliczka"). The offer
+ * URL carries the city slug, so it decides which reading applies; without
+ * this, every out-of-town house was geocoded as "..., Kraków".
+ */
+export function offerGeocodeAddress(
+	offerUrl: string,
+	street: string | null,
+	number: string | undefined,
+	locality: string | null,
+): string | null {
+	const inKrakow = isKrakowOfferUrl(offerUrl);
+	if (street) {
+		if (!inKrakow) {
+			return formatAddressForGeocode(street, number, null, locality);
+		}
+		const district =
+			locality && locality.toLowerCase() !== "kraków" ? locality : null;
+		return formatAddressForGeocode(street, number, district, "Kraków");
+	}
+	if (!locality) return null;
+	return inKrakow
+		? formatAddressForGeocode(locality, undefined, null, "Kraków")
+		: formatAddressForGeocode(locality, undefined, null, null);
+}
+
+/** The offer slug carries the city ("...-krakow-...", "...-wielicki-..."). */
+export function isKrakowOfferUrl(offerUrl: string): boolean {
+	return /[-/]krakow[-/]/iu.test(offerUrl);
 }
 
 /** Schema.org `itemOffered.@type` -> the three UI kinds. */

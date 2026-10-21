@@ -11,7 +11,10 @@ import {
 } from "../src/lib/listing-features.ts";
 import { propertyKindOf } from "../src/lib/property-kind.ts";
 import { formatUtilities, realizationCaption } from "../src/lib/format.ts";
-import { extractDodaneDates } from "../src/crawler/sites/ldoffer.ts";
+import {
+	extractDodaneDates,
+	offerGeocodeAddress,
+} from "../src/crawler/sites/ldoffer.ts";
 import {
 	propertyTypeFromListingUrl,
 	propertyTypeFromValue,
@@ -228,6 +231,33 @@ const dodane = extractDodaneDates(
 check(
 	dodane.get("/oferta/sprzedaz-dom-x") === "2026-08-26T00:00:00",
 	"parses morizon/gratka card posting dates",
+);
+check(
+	offerGeocodeAddress(
+		"https://www.morizon.pl/oferta/sprzedaz-mieszkanie-krakow-mistrzejowice-x",
+		"Mackiewicza",
+		"12",
+		"Mistrzejowice",
+	) === "Mackiewicza 12, Mistrzejowice, Kraków",
+	"Kraków district address keeps the city",
+);
+check(
+	offerGeocodeAddress(
+		"https://gratka.pl/nieruchomosci/dom-wielicki-niepolomice-wola-zabierzowska/ob/1",
+		"Wola Zabierzowska",
+		undefined,
+		"Niepołomice",
+	) === "Wola Zabierzowska, Niepołomice",
+	"out-of-town house address uses its own town",
+);
+check(
+	offerGeocodeAddress(
+		"https://www.morizon.pl/oferta/sprzedaz-dzialka-bochenski-lipnica-x",
+		null,
+		undefined,
+		"Lipnica Dolna",
+	) === "Lipnica Dolna",
+	"out-of-town plot falls back to the town, not Kraków",
 );
 
 console.log(

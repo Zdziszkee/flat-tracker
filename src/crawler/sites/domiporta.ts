@@ -38,15 +38,45 @@ function itemToListing(
 	const offer = (item.offers ?? {}) as Record<string, unknown>;
 	const price = num(offer.price);
 	if (!title || !url || price === null) return null;
+	const offered = (offer.itemOffered ?? {}) as Record<string, unknown>;
+	const size = (offered.floorSize ?? {}) as Record<string, unknown>;
+	const areaM2 = num(size.value);
+	const rooms = num(offered.numberOfRooms);
+	const structured = (offered.address ?? {}) as Record<string, unknown>;
+	const street = str(structured.streetAddress);
+	const city = str(structured.addressLocality);
 
 	// No structured address; parse street (+ number) from the title/description.
 	const district = extractDistrict(title);
 	const description = str(item.description);
 	const parsed =
 		parseAddressFromText(description) ?? parseAddressFromText(title);
-	const address = parsed
-		? formatAddressForGeocode(parsed.street, parsed.number, district)
-		: null;
+	// The structured address is authoritative for the street and town; title
+	// mining may only contribute a housenumber when it agrees on the street.
+	const parsedMatchesStreet =
+		parsed != null &&
+		street != null &&
+		parsed.street.trim().toLowerCase() === street.trim().toLowerCase();
+	// A lower-case run ("oraz 898") is prose, not a street name.
+	const plausibleParsed =
+		parsed != null && /^\p{Lu}/u.test(parsed.street.trim()) ? parsed : null;
+	const address = street
+		? formatAddressForGeocode(
+				street,
+				parsedMatchesStreet ? parsed.number : undefined,
+				district,
+				city ?? null,
+			)
+		: plausibleParsed
+			? formatAddressForGeocode(
+					plausibleParsed.street,
+					plausibleParsed.number,
+					district,
+					city ?? null,
+				)
+			: city
+				? formatAddressForGeocode(city, undefined, null, null)
+				: null;
 
 	return {
 		source: "domiporta",
@@ -54,9 +84,9 @@ function itemToListing(
 		url,
 		title,
 		price,
-		pricePerM2: null,
-		areaM2: null,
-		rooms: null,
+		pricePerM2: areaM2 && areaM2 > 0 ? price / areaM2 : null,
+		areaM2,
+		rooms,
 		floor: null,
 		district,
 		address,

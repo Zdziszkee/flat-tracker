@@ -1,12 +1,14 @@
 import { REGIONS } from "../regions.ts";
 import type { Listing } from "../types.ts";
-import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
+import { parseAddressFromText } from "./address.ts";
 import {
 	extractDodaneDates,
+	isKrakowOfferUrl,
 	ldOfferAddress,
 	ldOfferPropertyType,
 	makeLdOfferAdapter,
 	num,
+	offerGeocodeAddress,
 	str,
 } from "./ldoffer.ts";
 
@@ -22,21 +24,24 @@ function offerToListing(offer: Record<string, unknown>): Listing | null {
 	const rooms = num(item.numberOfRooms ?? item.rooms);
 	const floor = num(item.floorLevel ?? item.floor);
 	const area = num(size.value);
-	const district = str(addr.addressLocality);
+	const locality = str(addr.addressLocality);
 
 	// Street name is structured; a housenumber may appear in the description.
 	const street = str(addr.streetAddress);
 	const desc = str(item.description);
 	const parsed = desc ? parseAddressFromText(desc) : null;
-	const geocodeAddress = street
-		? formatAddressForGeocode(
-				street,
-				parsed && parsed.street.toLowerCase() === street.toLowerCase()
-					? parsed.number
-					: undefined,
-				district,
-			)
-		: null;
+	const geocodeAddress = offerGeocodeAddress(
+		url,
+		street,
+		parsed && street && parsed.street.toLowerCase() === street.toLowerCase()
+			? parsed.number
+			: undefined,
+		locality,
+	);
+	const district =
+		isKrakowOfferUrl(url) && locality && locality.toLowerCase() !== "kraków"
+			? locality
+			: null;
 
 	return {
 		source: "morizon",
