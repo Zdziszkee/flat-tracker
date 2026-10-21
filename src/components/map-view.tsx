@@ -130,7 +130,7 @@ export default function MapView({
 				</span>
 				{showParcels && (
 					<span className="flex items-center gap-1">
-						<span className="inline-block h-2.5 w-2.5 rounded-sm border border-gray-600" />{" "}
+						<span className="inline-block h-2.5 w-2.5 rounded-sm border border-slate-400" />{" "}
 						granice działek (od zbliżenia 14)
 					</span>
 				)}
@@ -139,11 +139,11 @@ export default function MapView({
 					działka z historią RCN
 				</span>
 				<span className="flex items-center gap-1">
-					<span className="inline-block h-1 w-4 rounded-full bg-slate-800 ring-1 ring-white" />{" "}
+					<span className="inline-block h-1 w-4 rounded-full bg-slate-600 ring-1 ring-white" />{" "}
 					kolej
 				</span>
 				<span className="flex items-center gap-1">
-					<span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-700 ring-1 ring-white" />{" "}
+					<span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-900 ring-1 ring-white" />{" "}
 					stacja kolejowa
 				</span>
 				{showOccupancy && (
@@ -585,8 +585,8 @@ function MapCanvas({
 
 			// Railways + stations (generated src/data/region-railways.ts, see
 			// /api/railways): the basemap draws rails as faint grey — users
-			// asked for them to READ: white casing under a thick dark line,
-			// stations as blue dots with names. One mixed source, layers split
+			// asked for them to READ: white casing under a thick slate line,
+			// stations as near-black dots with names. One mixed source, layers split
 			// by geometry type; under the listings so pins stay clickable.
 			map.addSource("railways", {
 				type: "geojson",
@@ -609,7 +609,7 @@ function MapCanvas({
 				source: "railways",
 				filter: ["==", ["geometry-type"], "LineString"],
 				paint: {
-					"line-color": "#1f2937",
+					"line-color": "#475569",
 					"line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 18, 8],
 				},
 			});
@@ -620,7 +620,7 @@ function MapCanvas({
 				filter: ["==", ["geometry-type"], "Point"],
 				paint: {
 					"circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 3.5, 16, 7],
-					"circle-color": "#1d4ed8",
+					"circle-color": "#0f172a",
 					"circle-stroke-color": "#ffffff",
 					"circle-stroke-width": 1.5,
 				},
@@ -639,7 +639,7 @@ function MapCanvas({
 					"text-allow-overlap": false,
 				},
 				paint: {
-					"text-color": "#1e3a8a",
+					"text-color": "#0f172a",
 					"text-halo-color": "#ffffff",
 					"text-halo-width": 1.5,
 				},
@@ -929,7 +929,7 @@ function MapCanvas({
 				source: "parcels",
 				layout: { visibility: "none" },
 				paint: {
-					"line-color": "#1f2937",
+					"line-color": "#94a3b8",
 					"line-width": ["interpolate", ["linear"], ["zoom"], 14, 1.5, 17, 2.4],
 					"line-opacity": [
 						"interpolate",
@@ -958,7 +958,7 @@ function MapCanvas({
 					"text-letter-spacing": 0.05,
 				},
 				paint: {
-					"text-color": "#1f2937",
+					"text-color": "#64748b",
 					"text-halo-color": "#ffffff",
 					"text-halo-width": 1.2,
 					"text-opacity": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.6, 1],

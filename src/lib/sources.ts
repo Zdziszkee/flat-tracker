@@ -27,17 +27,17 @@ export const SOURCE_COLORS = {
 	otodom: "#2563eb",
 	olx: "#f97316",
 	morizon: "#16a34a",
-	gratka: "#4ade80",
+	gratka: "#84cc16",
 	domiporta: "#a855f7",
-	"nieruchomosci-online": "#ca8a04",
+	"nieruchomosci-online": "#92400e",
 	rynekpierwotny: "#06b6d4",
-	investmap: "#0891b2",
+	investmap: "#0f766e",
 	airbnb: "#ff385c",
 	booking: "#003580",
-	books: "#8b5cf6",
+	books: "#6d28d9",
 	skaleczna: "#d946ef",
-	"licytacje-komornik": "#6b7280",
-	budujesie: "#f59e0b",
+	"licytacje-komornik": "#be123c",
+	budujesie: "#365314",
 } satisfies Record<string, string>;
 
 export type KnownSource = keyof typeof SOURCE_LABELS;

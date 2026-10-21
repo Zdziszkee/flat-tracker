@@ -12,7 +12,7 @@ import type {
 } from "#/lib/listing-features";
 import { DAY_OPTIONS } from "#/lib/listing-features";
 import { PROPERTY_KIND_LABELS, type PropertyKind } from "#/lib/property-kind";
-import { sourceLabel } from "#/lib/sources";
+import { SOURCE_COLORS, sourceLabel } from "#/lib/sources";
 
 interface ListingFiltersProps {
 	value: Filters;
@@ -48,6 +48,14 @@ export function ListingFilters({
 						<SelectItem value="all">Wszystkie ({facets.total})</SelectItem>
 						{sources.map((source) => (
 							<SelectItem key={source} value={source}>
+								<span
+									className="mr-2 inline-block size-2.5 shrink-0 rounded-full ring-1 ring-black/10"
+									style={{
+										backgroundColor:
+											SOURCE_COLORS[source as keyof typeof SOURCE_COLORS] ??
+											"#94a3b8",
+									}}
+								/>
 								{sourceLabel(source)} ({facets.bySource.get(source) ?? 0})
 							</SelectItem>
 						))}

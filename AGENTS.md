@@ -656,6 +656,12 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   cached 404s on load/idle and deletes the whole tile cache when the
   parser error fires; do not remove it without re-checking the Mapbox
   bug.
+- **Map colors are one palette**: `SOURCE_COLORS` in `src/lib/sources.ts`
+  is the single source for the listing circles and the source-filter
+  color dots; the station/railway, komornik diamond and budujesie
+  hard-hat colors live in `map-view.tsx` / `map/icons.ts`. Keep every
+  pair visually distinct (check with a color-distance pass when adding a
+  source), because the map has no other legend for source colors.
 - **Railways/stations overlay** ("Kolej" toggle): generated
   `src/data/region-railways.ts` via `bun run build:railways`, which parses
   the same Geofabrik PBFs `osm-index.ts` uses (Overpass was unusable when

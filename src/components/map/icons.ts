@@ -24,7 +24,9 @@ export function makeKomornikIcon(): ImageData {
 	canvas.height = size;
 	const ctx = canvas.getContext("2d");
 	if (ctx) {
-		ctx.fillStyle = "#7c3aed";
+		// Crimson keeps the diamond distinct from every source circle
+		// (domiporta purple, airbnb red, olx orange).
+		ctx.fillStyle = "#be123c";
 		ctx.strokeStyle = "#ffffff";
 		ctx.lineWidth = 2;
 		ctx.beginPath();
@@ -40,7 +42,7 @@ export function makeKomornikIcon(): ImageData {
 	return new ImageData(size, size);
 }
 
-/** Construction hard-hat marker for budujesie.pl investments (amber). */
+/** Construction hard-hat marker for budujesie.pl investments (dark olive). */
 export function makeBudujesieIcon(): ImageData {
 	const size = 28;
 	const canvas = document.createElement("canvas");
@@ -48,7 +50,7 @@ export function makeBudujesieIcon(): ImageData {
 	canvas.height = size;
 	const ctx = canvas.getContext("2d");
 	if (ctx) {
-		ctx.fillStyle = "#f59e0b";
+		ctx.fillStyle = "#365314";
 		ctx.strokeStyle = "#ffffff";
 		ctx.lineWidth = 2;
 		ctx.beginPath();
