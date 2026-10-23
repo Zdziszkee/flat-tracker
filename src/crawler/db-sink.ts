@@ -362,6 +362,28 @@ export async function pruneStaleBudujesie(cutoff: Date): Promise<number> {
 	return ids.length;
 }
 
+/**
+ * Event-shaped sources (auction notices) disappear from their list when the
+ * auction closes. `listedAt` is often absent, so prune by the last crawl
+ * that actually saw the row, after a grace period that lets a transient
+ * list-page failure heal itself.
+ */
+export async function pruneUnseenListings(
+	sources: string[],
+	cutoff: Date,
+): Promise<number> {
+	const stale = await db
+		.select({ id: listings.id })
+		.from(listings)
+		.where(
+			and(inArray(listings.source, sources), lt(listings.lastSeenAt, cutoff)),
+		);
+	const ids = stale.map((r) => r.id);
+	if (ids.length === 0) return 0;
+	await deleteListingRows(ids);
+	return ids.length;
+}
+
 /** Listings plus their FK dependents, chunked under SQLite's
  * bound-variable cap (~999) on big first-run prunes. */
 async function deleteListingRows(ids: number[]): Promise<void> {

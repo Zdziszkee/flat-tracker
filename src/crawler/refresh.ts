@@ -10,6 +10,7 @@ import { blockStatus } from "./crawler.ts";
 import {
 	pruneOldListings,
 	pruneStaleBudujesie,
+	pruneUnseenListings,
 	recordCrawlRun,
 } from "./db-sink.ts";
 import { geocodeUnlocatedListings } from "./geocode-listings.ts";
@@ -360,7 +361,13 @@ export async function refreshAll(
 			// "Only recent ones from last 2 years posted": the budujesie
 			// forum corpus (posts + comments) is capped at the 730-day
 			// window the adapter enforces at emission time.
-			(await pruneStaleBudujesie(new Date(now - 730 * 24 * 60 * 60 * 1000)));
+			(await pruneStaleBudujesie(new Date(now - 730 * 24 * 60 * 60 * 1000))) +
+			// Auction notices vanish from their list once the auction closes;
+			// a two-week grace period tolerates one bad list fetch.
+			(await pruneUnseenListings(
+				["mapalicytacji"],
+				new Date(now - 14 * 24 * 60 * 60 * 1000),
+			));
 
 		// Airbnb room-page enrichment: bedrooms/beds/bathrooms, guests,
 		// amenities for listings captured by the search crawl. Budgeted so

@@ -104,6 +104,11 @@ const PORTAL_SOURCES: SourceDescriptor[] = [
 		kind: "portal",
 	},
 	{
+		id: "mapalicytacji",
+		name: "Mapa Licytacji - gminne, AMW, KOWR, skarbowe, PKP, Orange, TAURON (Małopolska + Śląsk)",
+		kind: "portal",
+	},
+	{
 		id: "investmap",
 		name: "Investmap - Kraków + Katowice investments (flats + houses)",
 		kind: "portal",
