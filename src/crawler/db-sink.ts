@@ -199,10 +199,14 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					title: sql.raw(`excluded.title`),
 					price: sql.raw(`excluded.price`),
 					pricePerM2: sql.raw(`excluded.pricePerM2`),
-					areaM2: sql.raw(`excluded.areaM2`),
-					rooms: sql.raw(`excluded.rooms`),
-					floor: sql.raw(`excluded.floor`),
-					district: sql.raw(`excluded.district`),
+					// List pages may omit detail-only fields (area on a full
+					// classifieds card, rooms/floor on a list row); a later
+					// detail row owns them. Coalesce so the next list crawl
+					// cannot wipe what the detail pass just enriched.
+					areaM2: sql`coalesce(excluded.areaM2, ${listings.areaM2})`,
+					rooms: sql`coalesce(excluded.rooms, ${listings.rooms})`,
+					floor: sql`coalesce(excluded.floor, ${listings.floor})`,
+					district: sql`coalesce(excluded.district, ${listings.district})`,
 					address: sql`coalesce(excluded.address, ${listings.address})`,
 					description: sql`coalesce(excluded.description, ${listings.description})`,
 					heatingType: sql`coalesce(excluded.heating_type, ${listings.heatingType})`,

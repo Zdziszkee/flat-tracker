@@ -44,6 +44,26 @@ const PORTAL_SOURCES: SourceDescriptor[] = [
 		kind: "portal",
 	},
 	{
+		id: "adresowo",
+		name: "Adresowo - Małopolska + Śląsk direct-owner flats, houses and plots",
+		kind: "portal",
+	},
+	{
+		id: "gethome",
+		name: "GetHome - Małopolska + Śląsk real estate for sale",
+		kind: "portal",
+	},
+	{
+		id: "sprzedajemy",
+		name: "Sprzedajemy - Małopolska + Śląsk classifieds (flats, houses, plots)",
+		kind: "portal",
+	},
+	{
+		id: "tabelaofert",
+		name: "TabelaOfert - Małopolska + Śląsk new developments (flats, houses, plots)",
+		kind: "portal",
+	},
+	{
 		id: "airbnb",
 		name: "Airbnb - Małopolska + Śląsk short-term rentals",
 		kind: "portal",

@@ -25,6 +25,7 @@ const TYPE_VALUES: Record<string, PropertyKind> = {
 	place: "plot",
 	plot: "plot",
 	land: "plot",
+	lot: "plot",
 	dzialka: "plot",
 	działka: "plot",
 	dzialki: "plot",
