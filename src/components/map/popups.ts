@@ -219,6 +219,43 @@ export function popupHtml(listing: ApiListing): string {
     </div>`;
 }
 
+export interface PublicInvestmentPopupProps {
+	name: string;
+	categoryLabel: string;
+	statusLabel: string;
+	description: string | null;
+	url: string | null;
+	year: number | null;
+	city: string | null;
+}
+
+/** Popup for the planned/completed public-investment layer. */
+export function publicInvestmentPopupHtml(
+	props: PublicInvestmentPopupProps,
+): string {
+	const meta = [props.categoryLabel, props.statusLabel, props.year]
+		.filter((value) => value != null && value !== "")
+		.join(" · ");
+	return `
+    <div class="min-w-56 space-y-1 text-sm">
+      <div class="font-semibold leading-tight">${escapeHtml(props.name)}</div>
+      <div class="text-gray-600">${escapeHtml(meta)}</div>
+      ${props.city ? `<div class="text-gray-500">${escapeHtml(props.city)}</div>` : ""}
+      ${
+				props.description
+					? `<p class="max-h-40 overflow-y-auto text-xs text-gray-600">${escapeHtml(
+							props.description.slice(0, 600),
+						)}</p>`
+					: ""
+			}
+      ${
+				props.url
+					? `<a href="${props.url}" target="_blank" rel="noreferrer" class="mt-1 block text-blue-600 underline">Otwórz mapę źródłową</a>`
+					: ""
+			}
+    </div>`;
+}
+
 /** "28 lat", "3 lata", "1 rok". */
 export function ageLabel(year: number): string {
 	const age = new Date().getFullYear() - year;

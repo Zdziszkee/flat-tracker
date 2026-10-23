@@ -23,6 +23,7 @@ import {
 	setPhase,
 	setSourceProgress,
 } from "./progress.ts";
+import { importPublicInvestments } from "./public-investments.ts";
 import { refreshLockedByOther } from "./refresh-lock.ts";
 import { adapters } from "./sites/index.ts";
 import type { SiteAdapter } from "./types.ts";
@@ -151,6 +152,7 @@ export async function refreshAll(
 		"geocoding",
 		"rcn-import",
 		"building-assign",
+		"public-investments",
 	]);
 	// Fresh clone: browser binaries are a separate download, so the
 	// browser-rendered portals would fail with a stack trace each.
@@ -368,6 +370,50 @@ export async function refreshAll(
 				["mapalicytacji"],
 				new Date(now - 14 * 24 * 60 * 60 * 1000),
 			));
+
+		// Planned/completed city investments: a weekly KML refresh, not a
+		// portal crawl. Failures are isolated like a portal failure.
+		setPhase("public-investments");
+		const investmentsStarted = Date.now();
+		setSourceProgress("public-investments", {
+			state: "running",
+			startedAt: new Date(investmentsStarted).toISOString(),
+		});
+		try {
+			const investments = await importPublicInvestments();
+			await recordCrawlRun({
+				source: "public-investments",
+				startedAt: new Date(investmentsStarted),
+				finishedAt: new Date(),
+				pages: 2,
+				newCount: investments.inserted,
+				updatedCount: investments.updated,
+			});
+			setSourceProgress("public-investments", {
+				state: "ok",
+				finishedAt: new Date().toISOString(),
+				pages: 2,
+				newCount: investments.inserted,
+				updatedCount: investments.updated,
+			});
+		} catch (err) {
+			const error = causeLine(err);
+			console.error(`[refresh] public investments failed: ${error}`);
+			await recordCrawlRun({
+				source: "public-investments",
+				startedAt: new Date(investmentsStarted),
+				finishedAt: new Date(),
+				pages: 0,
+				newCount: 0,
+				updatedCount: 0,
+				error,
+			});
+			setSourceProgress("public-investments", {
+				state: "failed",
+				finishedAt: new Date().toISOString(),
+				error,
+			});
+		}
 
 		// Airbnb room-page enrichment: bedrooms/beds/bathrooms, guests,
 		// amenities for listings captured by the search crawl. Budgeted so

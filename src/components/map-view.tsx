@@ -22,11 +22,13 @@ import { occupancyToGeoJson, toGeoJson } from "./map/geojson";
 import {
 	makeBudujesieIcon,
 	makeKomornikIcon,
+	publicInvestmentColorExpr,
 	sourceColorExpr,
 } from "./map/icons";
 import {
 	buildingPopupHtml,
 	popupHtml,
+	publicInvestmentPopupHtml,
 	renderValuationHtml,
 } from "./map/popups";
 import { pruneBadTileCache, resetTileCache } from "./map/tile-cache";
@@ -45,6 +47,7 @@ export default function MapView({
 	showParcels,
 	showRailways,
 	showOccupancy,
+	showInvestments,
 	occupancySource,
 	occupancyMonth,
 }: {
@@ -55,6 +58,7 @@ export default function MapView({
 	showParcels: boolean;
 	showRailways: boolean;
 	showOccupancy: boolean;
+	showInvestments: boolean;
 	occupancySource: "airbnb" | "booking" | "all";
 	occupancyMonth: string;
 }) {
@@ -110,6 +114,7 @@ export default function MapView({
 				showParcels={showParcels}
 				showRailways={showRailways}
 				showOccupancy={showOccupancy}
+				showInvestments={showInvestments}
 				occupancy={occupancyCells}
 				onReady={() => setMapReady(true)}
 			/>
@@ -194,6 +199,7 @@ function MapCanvas({
 	showParcels,
 	showRailways,
 	showOccupancy,
+	showInvestments,
 	occupancy,
 	onReady,
 }: {
@@ -201,6 +207,7 @@ function MapCanvas({
 	showParcels: boolean;
 	showRailways: boolean;
 	showOccupancy: boolean;
+	showInvestments: boolean;
 	occupancy: OccupancyCell[];
 	/** Fires once the first full render settles (map "idle"). */
 	onReady?: () => void;
@@ -214,6 +221,8 @@ function MapCanvas({
 	const showRailwaysRef = useRef(showRailways);
 	// Same for the occupancy heatmap toggle.
 	const showOccupancyRef = useRef(showOccupancy);
+	// Same for the public-investment layer.
+	const showInvestmentsRef = useRef(showInvestments);
 	// Set by the mount effect: re-reads the viewport and refetches if needed.
 	const syncParcelsRef = useRef<(() => void) | null>(null);
 	// Latest listings snapshot, readable from the async map-load callback
@@ -643,6 +652,60 @@ function MapCanvas({
 					"text-halo-color": "#ffffff",
 					"text-halo-width": 1.5,
 				},
+			});
+
+			// Planned/completed public investments (city roads, schools, parks,
+			// sport, culture). Their own point layer, under the listings so
+			// offers stay clickable; the toggle controls visibility.
+			map.addSource("public-investments", {
+				type: "geojson",
+				data: apiUrl("/api/public-investments"),
+			});
+			map.addLayer({
+				id: "public-investments",
+				type: "circle",
+				source: "public-investments",
+				layout: {
+					visibility: showInvestmentsRef.current ? "visible" : "none",
+				},
+				paint: {
+					"circle-color": publicInvestmentColorExpr(),
+					"circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 4.5, 16, 9],
+					"circle-opacity": 0.9,
+					"circle-stroke-color": "#ffffff",
+					"circle-stroke-width": 1.5,
+				},
+			});
+			map.on("click", "public-investments", (event) => {
+				const feature = event.features?.[0];
+				if (!feature) return;
+				const props =
+					(
+						feature as unknown as {
+							properties?: Record<string, unknown>;
+						}
+					).properties ?? {};
+				const year = Number(props.year);
+				const html = publicInvestmentPopupHtml({
+					name: String(props.name ?? "Inwestycja"),
+					categoryLabel: String(props.categoryLabel ?? ""),
+					statusLabel: String(props.statusLabel ?? ""),
+					description:
+						typeof props.description === "string" ? props.description : null,
+					url: typeof props.url === "string" ? props.url : null,
+					year: Number.isFinite(year) ? year : null,
+					city: typeof props.city === "string" ? props.city : null,
+				});
+				new mapboxgl.Popup({ maxWidth: "340px" })
+					.setLngLat(event.lngLat)
+					.setHTML(html)
+					.addTo(map);
+			});
+			map.on("mouseenter", "public-investments", () => {
+				map.getCanvas().style.cursor = "pointer";
+			});
+			map.on("mouseleave", "public-investments", () => {
+				map.getCanvas().style.cursor = "";
 			});
 
 			// Listings as a GeoJSON circle layer (fast with thousands of points).
@@ -1356,6 +1419,18 @@ function MapCanvas({
 			}
 		}
 	}, [showRailways]);
+
+	// Public-investment layer visibility (data is static for the session).
+	useEffect(() => {
+		showInvestmentsRef.current = showInvestments;
+		const map = mapRef.current;
+		if (!map?.getLayer("public-investments")) return;
+		map.setLayoutProperty(
+			"public-investments",
+			"visibility",
+			showInvestments ? "visible" : "none",
+		);
+	}, [showInvestments]);
 
 	// Occupancy heatmap visibility toggle. Data updates live in the effect
 	// below — kept separate so flipping visibility never re-serializes or

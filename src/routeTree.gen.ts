@@ -19,6 +19,7 @@ import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiMarketChartsRouteImport } from './routes/api/market-charts'
 import { Route as ApiOccupancyHeatmapRouteImport } from './routes/api/occupancy-heatmap'
 import { Route as ApiParcelsRouteImport } from './routes/api/parcels'
+import { Route as ApiPublicInvestmentsRouteImport } from './routes/api/public-investments'
 import { Route as ApiRailwaysRouteImport } from './routes/api/railways'
 import { Route as ApiRefreshRouteImport } from './routes/api/refresh'
 import { Route as ApiSourcesRouteImport } from './routes/api/sources'
@@ -79,6 +80,11 @@ const ApiOccupancyHeatmapRoute = ApiOccupancyHeatmapRouteImport.update({
 const ApiParcelsRoute = ApiParcelsRouteImport.update({
   id: '/api/parcels',
   path: '/api/parcels',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicInvestmentsRoute = ApiPublicInvestmentsRouteImport.update({
+  id: '/api/public-investments',
+  path: '/api/public-investments',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiRailwaysRoute = ApiRailwaysRouteImport.update({
@@ -148,6 +154,7 @@ export interface FileRoutesByFullPath {
   '/api/market-charts': typeof ApiMarketChartsRoute
   '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
+  '/api/public-investments': typeof ApiPublicInvestmentsRoute
   '/api/railways': typeof ApiRailwaysRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/sources': typeof ApiSourcesRoute
@@ -171,6 +178,7 @@ export interface FileRoutesByTo {
   '/api/market-charts': typeof ApiMarketChartsRoute
   '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
+  '/api/public-investments': typeof ApiPublicInvestmentsRoute
   '/api/railways': typeof ApiRailwaysRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/sources': typeof ApiSourcesRoute
@@ -195,6 +203,7 @@ export interface FileRoutesById {
   '/api/market-charts': typeof ApiMarketChartsRoute
   '/api/occupancy-heatmap': typeof ApiOccupancyHeatmapRoute
   '/api/parcels': typeof ApiParcelsRouteWithChildren
+  '/api/public-investments': typeof ApiPublicInvestmentsRoute
   '/api/railways': typeof ApiRailwaysRoute
   '/api/refresh': typeof ApiRefreshRoute
   '/api/sources': typeof ApiSourcesRoute
@@ -220,6 +229,7 @@ export interface FileRouteTypes {
     | '/api/market-charts'
     | '/api/occupancy-heatmap'
     | '/api/parcels'
+    | '/api/public-investments'
     | '/api/railways'
     | '/api/refresh'
     | '/api/sources'
@@ -243,6 +253,7 @@ export interface FileRouteTypes {
     | '/api/market-charts'
     | '/api/occupancy-heatmap'
     | '/api/parcels'
+    | '/api/public-investments'
     | '/api/railways'
     | '/api/refresh'
     | '/api/sources'
@@ -266,6 +277,7 @@ export interface FileRouteTypes {
     | '/api/market-charts'
     | '/api/occupancy-heatmap'
     | '/api/parcels'
+    | '/api/public-investments'
     | '/api/railways'
     | '/api/refresh'
     | '/api/sources'
@@ -290,6 +302,7 @@ export interface RootRouteChildren {
   ApiMarketChartsRoute: typeof ApiMarketChartsRoute
   ApiOccupancyHeatmapRoute: typeof ApiOccupancyHeatmapRoute
   ApiParcelsRoute: typeof ApiParcelsRouteWithChildren
+  ApiPublicInvestmentsRoute: typeof ApiPublicInvestmentsRoute
   ApiRailwaysRoute: typeof ApiRailwaysRoute
   ApiRefreshRoute: typeof ApiRefreshRoute
   ApiSourcesRoute: typeof ApiSourcesRoute
@@ -371,6 +384,13 @@ declare module '@tanstack/react-router' {
       path: '/api/parcels'
       fullPath: '/api/parcels'
       preLoaderRoute: typeof ApiParcelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public-investments': {
+      id: '/api/public-investments'
+      path: '/api/public-investments'
+      fullPath: '/api/public-investments'
+      preLoaderRoute: typeof ApiPublicInvestmentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/railways': {
@@ -488,6 +508,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiMarketChartsRoute: ApiMarketChartsRoute,
   ApiOccupancyHeatmapRoute: ApiOccupancyHeatmapRoute,
   ApiParcelsRoute: ApiParcelsRouteWithChildren,
+  ApiPublicInvestmentsRoute: ApiPublicInvestmentsRoute,
   ApiRailwaysRoute: ApiRailwaysRoute,
   ApiRefreshRoute: ApiRefreshRoute,
   ApiSourcesRoute: ApiSourcesRoute,

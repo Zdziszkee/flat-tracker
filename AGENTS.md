@@ -85,6 +85,7 @@ bun run assign-buildings  # match listings/transactions to OSM buildings
 bun run geocode-addresses # geocode listings that carry only an address
 bun run import:rcn-gugik       # małopolska RCN packages (cadence-gated)
 bun run import:rcn-gugik:all   # every GUGiK powiat in Poland (resumable drain)
+bun run import:public-investments # Kraków planned/completed projects (--force)
 bun run discover:rcn-powiats   # refresh the GUGiK package catalogue
 bun run build:powiats     # regenerate src/data/region-powiats.ts (Overpass)
 bun run validate:powiats  # dataset sanity: counts, city centres, overlaps
@@ -422,9 +423,30 @@ with the build's peak at ~2 GB. If you touch the loader, watch
 | budujesie.pl | Investments under construction (Kraków housing), one phpBB topic per investment | Plain prosilver DOM cards (`viewforum.php?f=5`, 25 topics/page, `start=N` pagination); rows are long-lived inventory with no price — the map renders them as their own hard-hat symbol layer. The popup label is activity-aware: "Inwestycja w budowie" only while the thread is alive (last post within 18 months), else a factual "ostatnia aktywność MM.YYYY" — the site carries no construction status, so archived topics must not claim to be building. The adapter also fetches each topic's first page (gated per topic by `data/crawler/budujesie-topics.json`, keyed on `lastPostAt`, so only moved threads are re-fetched): the OP text becomes `description` and the preferred address source (post prose beats title mining and resolves the town — "powstaje przy ul. X w Wieliczce"), and up to 8 posts go into `features.posts`, rendered as the description + comments under the investment in the map popup and the listings expanded row. phpBB date quirks and the thread/OP-address parsing are pinned by `scripts/validate-budujesie.ts`. **Corpus = last 2 years** (`RECENT_WINDOW_DAYS = 730`): a topic is kept when it was started *or* last discussed inside the window (the 2004–2015 backlog is rebuild noise, ~60% of the threads); the OP text always survives (it is the investment description) while replies are date-filtered. Reply dates come from `p.author` ("autor: X » 25 wrz 2026, 12:44") — `<time datetime>` never matches this forum's markup — and cached thread entries with undated posts are re-fetched once. `pruneStaleBudujesie` (db-sink, FK-safe) drops rows the window evicted on every refresh's prune phase. Location is mined from the thread: OP prose first, then the title, then *comments* (a comment naming another town never displaces the agreement, and a comment-mined address must be a lexicon street or explicitly prefixed — bare "Word Number" / estate-name prose matches are rejected, they produced junk like "Zreszta 5"). Estate-name addresses ("Plaszov Carlo", "Villa Botanica") are honest geocode misses: no street to match locally and Photon does not know the marketing name either |
 | airbnb.pl | Short-term rentals, Małopolska + Śląsk | Quadtree-partitioned search pages (`data-deferred-state-0` embedded JSON) plus a detail pass for room type, amenities and coordinates; Airbnb publishes no listing creation date, so `firstSeenAt` is the added date |
 | booking.com | Short-term rentals, Małopolska + Śląsk | Camoufox/Playwright only (DataDome); property cards plus the Apollo cache for coordinates; Booking publishes no listing creation date, so `firstSeenAt` is the added date |
+| Kraków My Maps (public investments) | Planned and completed city projects: roads, schools, parks, sport, culture | Two Google My Maps KML exports (`/maps/d/kml?mid=...`), point placemarks with HTML descriptions. Imported by `src/crawler/public-investments.ts` into `public_investments` (7-day gate, `bun run import:public-investments -- --force`), served by `/api/public-investments` as GeoJSON, and drawn by the map's "Inwestycje publiczne" toggle. National GDDKiA road and PKP PLK/KPK rail programmes were checked but publish no georeferenced project records (SVG map/PDF only), so they remain research sources rather than imports |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
 | GUGiK RCN (Usługa Transakcje) | Same, but every powiat in Poland: the tracked voivodeships (małopolskie + śląskie) by default, the rest on demand (per-powiat GeoPackages; parcel/building/lokal transactions) | `https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip` — imported by `import-rcn-gugik.ts` (`bun run import:rcn-gugik`, `bun run import:rcn-gugik:all`) |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
+
+### Public investment layer
+
+`public_investments` is deliberately separate from `listings`: city projects
+are not offers and must not appear in the price table, source filters or
+property-kind counts. The map's "Inwestycje publiczne" toggle loads
+`/api/public-investments` (GeoJSON, category-colored points) and shows the
+project name, category, status, year and description. The importer fetches
+the City of Kraków's planned and completed My Maps KML exports, classifies
+each placemark (road/rail/school/park/sport/culture/health/other) from its
+name first and description second, and upserts by a hash of name +
+coordinates. The 7-day gate lives in
+`data/crawler/public-investments-state.json`; both maps must download before
+the complete-dump prune runs, so one failed request cannot delete half the
+layer.
+
+National programmes were evaluated for the same layer: GDDKiA publishes an
+SVG road-construction map and PDF programme, and PKP PLK/KPK publishes a
+rail map and PDF reports, but neither exposes georeferenced project records
+or a stable API. They are documented as research sources, not imported.
 
 ### RCN GML structure (import-rcn.ts)
 

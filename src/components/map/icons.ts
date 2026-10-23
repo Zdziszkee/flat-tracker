@@ -1,5 +1,6 @@
 import type { ExpressionSpecification } from "mapbox-gl";
 
+import { PUBLIC_INVESTMENT_CATEGORY_COLORS } from "#/lib/public-investments";
 import { SOURCE_COLORS } from "#/lib/sources";
 
 /** Mapbox match expression coloring each point by its source. */
@@ -13,6 +14,22 @@ export function sourceColorExpr(): ExpressionSpecification {
 		["get", "source"],
 		...pairs,
 		"#94a3b8",
+	] as ExpressionSpecification;
+}
+
+/** Match expression coloring public-investment points by category. */
+export function publicInvestmentColorExpr(): ExpressionSpecification {
+	const pairs: string[] = [];
+	for (const [category, color] of Object.entries(
+		PUBLIC_INVESTMENT_CATEGORY_COLORS,
+	)) {
+		pairs.push(category, color);
+	}
+	return [
+		"match",
+		["get", "category"],
+		...pairs,
+		PUBLIC_INVESTMENT_CATEGORY_COLORS.other,
 	] as ExpressionSpecification;
 }
 

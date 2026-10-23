@@ -6,6 +6,10 @@ import { useListingFilters } from "#/hooks/use-listing-filters";
 import { useListings } from "#/hooks/use-listings";
 import { useSources } from "#/hooks/use-sources";
 import { listingFacets, listingSearchSchema } from "#/lib/listing-features";
+import {
+	PUBLIC_INVESTMENT_CATEGORY_COLORS,
+	PUBLIC_INVESTMENT_CATEGORY_LABELS,
+} from "#/lib/public-investments";
 
 // mapbox-gl touches `window` at module load, so it must never be imported
 // during SSR. The lazy import is only triggered after mount on the client.
@@ -21,6 +25,7 @@ const PARCELS_STORAGE_KEY = "flat-tracker:show-parcels";
 /** localStorage key for the "Kolej" overlay toggle. */
 const RAILWAYS_STORAGE_KEY = "flat-tracker:show-railways";
 const OCCUPANCY_STORAGE_KEY = "flat-tracker:show-occupancy";
+const PUBLIC_INVESTMENTS_STORAGE_KEY = "flat-tracker:show-public-investments";
 
 function MapPage() {
 	const { filters, setFilters } = useListingFilters("/map");
@@ -41,6 +46,8 @@ function MapPage() {
 	const [showRailways, setShowRailways] = useState(true);
 	/** Short-term rental occupancy heatmap layer. */
 	const [showOccupancy, setShowOccupancy] = useState(false);
+	/** Planned/completed city projects (roads, schools, parks, ...). */
+	const [showInvestments, setShowInvestments] = useState(false);
 	const [occupancySource, setOccupancySource] = useState<
 		"airbnb" | "booking" | "all"
 	>("all");
@@ -58,6 +65,12 @@ function MapPage() {
 			if (railStored !== null) setShowRailways(railStored === "1");
 			const occStored = window.localStorage.getItem(OCCUPANCY_STORAGE_KEY);
 			if (occStored !== null) setShowOccupancy(occStored === "1");
+			const investmentsStored = window.localStorage.getItem(
+				PUBLIC_INVESTMENTS_STORAGE_KEY,
+			);
+			if (investmentsStored !== null) {
+				setShowInvestments(investmentsStored === "1");
+			}
 		} catch {
 			// Private mode / storage disabled: keep the default.
 		}
@@ -136,6 +149,24 @@ function MapPage() {
 						/>
 						Obłożenie STR
 					</label>
+					<label className="flex items-center gap-1.5 text-sm text-gray-700">
+						<input
+							type="checkbox"
+							checked={showInvestments}
+							onChange={(e) => {
+								setShowInvestments(e.target.checked);
+								try {
+									window.localStorage.setItem(
+										PUBLIC_INVESTMENTS_STORAGE_KEY,
+										e.target.checked ? "1" : "0",
+									);
+								} catch {
+									// Not fatal: the toggle just won't persist.
+								}
+							}}
+						/>
+						Inwestycje publiczne
+					</label>
 					{showOccupancy && (
 						<>
 							<select
@@ -191,12 +222,34 @@ function MapPage() {
 							showParcels={showParcels}
 							showRailways={showRailways}
 							showOccupancy={showOccupancy}
+							showInvestments={showInvestments}
 							occupancySource={occupancySource}
 							occupancyMonth={occupancyMonth}
 						/>
 					</Suspense>
 				)}
 			</div>
+			{showInvestments && (
+				<div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t px-4 py-1.5 text-xs text-gray-600">
+					<span className="font-medium text-gray-700">Inwestycje:</span>
+					{Object.entries(PUBLIC_INVESTMENT_CATEGORY_LABELS).map(
+						([key, label]) => (
+							<span key={key} className="inline-flex items-center gap-1.5">
+								<span
+									className="inline-block size-2 rounded-full"
+									style={{
+										background:
+											PUBLIC_INVESTMENT_CATEGORY_COLORS[
+												key as keyof typeof PUBLIC_INVESTMENT_CATEGORY_COLORS
+											],
+									}}
+								/>
+								{label}
+							</span>
+						),
+					)}
+				</div>
+			)}
 		</div>
 	);
 }

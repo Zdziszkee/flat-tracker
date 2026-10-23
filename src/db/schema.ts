@@ -47,6 +47,46 @@ export const buildings = sqliteTable("buildings", {
 	),
 });
 
+/**
+ * Planned / completed public investments (roads, schools, parks, sport,
+ * culture) that are not real-estate listings. Imported from the city's
+ * published My Maps KML; the map draws them as a separate, toggleable
+ * layer and the listings table does not see them.
+ */
+export const publicInvestments = sqliteTable(
+	"public_investments",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		source: text().notNull(),
+		externalId: text().notNull(),
+		name: text().notNull(),
+		/** road | rail | school | park | sport | culture | health | other */
+		category: text().notNull(),
+		/** planned | in_progress | completed */
+		status: text().notNull(),
+		description: text(),
+		url: text(),
+		lat: real(),
+		lng: real(),
+		/** GeoJSON line/polygon when the source publishes one (points today). */
+		geometry: text(),
+		/** Planned or actual delivery year, when the source states one. */
+		year: integer({ mode: "number" }),
+		city: text(),
+		region: text(),
+		lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
+		scrapedAt: integer("scraped_at", { mode: "timestamp" }).notNull(),
+	},
+	(table) => [
+		uniqueIndex("public_investments_source_external_idx").on(
+			table.source,
+			table.externalId,
+		),
+		index("public_investments_status_idx").on(table.status),
+		index("public_investments_category_idx").on(table.category),
+	],
+);
+
 /** A flat listing scraped from a listings portal (otodom, olx, ...). */
 export const listings = sqliteTable(
 	"listings",

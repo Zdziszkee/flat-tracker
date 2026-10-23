@@ -148,6 +148,13 @@
       "when": 1792526602658,
       "tag": "0020_freezing_vengeance",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1792792235937,
+      "tag": "0021_jazzy_mandarin",
+      "breakpoints": true
     }
   ]
 }

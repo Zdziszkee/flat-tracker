@@ -28,6 +28,7 @@ export type RefreshPhase =
 	| "geocode"
 	| "rcn"
 	| "building-assign"
+	| "public-investments"
 	| "done";
 
 export interface RefreshProgress {

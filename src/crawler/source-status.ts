@@ -14,7 +14,12 @@
  *   calendar (which runs on its own daily task, not inside `refreshAll`).
  */
 
-type SourceKind = "portal" | "rcn" | "geocode" | "airbnb-calendar";
+type SourceKind =
+	| "portal"
+	| "rcn"
+	| "geocode"
+	| "airbnb-calendar"
+	| "public-investments";
 
 export interface SourceDescriptor {
 	id: string;
@@ -138,6 +143,11 @@ const PIPELINE_SOURCES: SourceDescriptor[] = [
 		id: "airbnb-calendar",
 		name: "Airbnb availability calendar",
 		kind: "airbnb-calendar",
+	},
+	{
+		id: "public-investments",
+		name: "Planned and completed public investments (Kraków My Maps)",
+		kind: "public-investments",
 	},
 ];
 
