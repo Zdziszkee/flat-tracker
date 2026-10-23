@@ -685,7 +685,8 @@ function MapCanvas({
 							properties?: Record<string, unknown>;
 						}
 					).properties ?? {};
-				const year = Number(props.year);
+				const rawYear = props.year;
+				const year = rawYear == null || rawYear === "" ? null : Number(rawYear);
 				const html = publicInvestmentPopupHtml({
 					name: String(props.name ?? "Inwestycja"),
 					categoryLabel: String(props.categoryLabel ?? ""),
@@ -693,7 +694,7 @@ function MapCanvas({
 					description:
 						typeof props.description === "string" ? props.description : null,
 					url: typeof props.url === "string" ? props.url : null,
-					year: Number.isFinite(year) ? year : null,
+					year: year !== null && Number.isFinite(year) ? year : null,
 					city: typeof props.city === "string" ? props.city : null,
 				});
 				new mapboxgl.Popup({ maxWidth: "340px" })
