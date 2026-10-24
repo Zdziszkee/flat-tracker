@@ -7,12 +7,339 @@ import {
 } from "#/lib/format";
 import { escapeHtml } from "#/lib/html";
 import { parseListingFeatures } from "#/lib/listing-features";
-import type { OfferValuation } from "#/types/listing";
+import { PROPERTY_KIND_LABELS } from "#/lib/property-kind";
+import { sourceLabel } from "#/lib/sources";
+import type { ListingAttributesDto, OfferValuation } from "#/types/listing";
 import type { ApiListing, BuildingLookup } from "./types";
+
+const BUILDING_TYPE_LABELS: Record<string, string> = {
+	block: "blok",
+	apartment: "apartamentowiec",
+	tenement: "kamienica",
+	semi_detached: "bliźniak",
+	townhouse: "szeregowiec",
+	detached: "wolnostojący",
+	house: "dom",
+};
+
+const MARKET_LABELS: Record<string, string> = {
+	primary: "pierwotny",
+	secondary: "wtórny",
+	pierwotny: "pierwotny",
+	wtórny: "wtórny",
+};
+
+const CONDITION_LABELS: Record<string, string> = {
+	good: "dobry",
+	very_good: "bardzo dobry",
+	excellent: "bardzo dobry",
+	to_renovation: "do remontu",
+	renovation: "do remontu",
+	for_renovation: "do remontu",
+	to_completion: "do wykończenia",
+	not_good: "do remontu",
+	poor: "do remontu",
+	new: "nowy",
+};
+
+const HEATING_LABELS: Record<string, string> = {
+	urban: "miejskie",
+	district: "miejskie",
+	gas: "gazowe",
+	electric: "elektryczne",
+	electricity: "elektryczne",
+	oil: "olejowe",
+	solid_fuel: "na paliwo stałe",
+	coal: "węglowe",
+	wood: "na drewno",
+	heat_pump: "pompa ciepła",
+};
+
+const MATERIAL_LABELS: Record<string, string> = {
+	concrete: "żelbet",
+	reinforced_concrete: "żelbet",
+	brick: "cegła",
+	ceramic: "ceramika",
+	wood: "drewno",
+	steel: "stal",
+	silicate: "silikat",
+	aerated_concrete: "beton komórkowy",
+};
+
+const OWNERSHIP_LABELS: Record<string, string> = {
+	full_ownership: "własność",
+	cooperative: "spółdzielcze",
+	leasehold: "użytkowanie wieczyste",
+	share: "udział",
+};
+
+const OFFER_TYPE_LABELS: Record<string, string> = {
+	sale: "sprzedaż",
+	long_term_rental: "wynajem",
+	short_term_rental: "krótki termin",
+};
+
+const AUCTION_TYPE_LABELS: Record<string, string> = {
+	amw: "AMW",
+	kowr: "KOWR",
+	skarbowe: "Skarb Państwa",
+	gminne: "gmina",
+	pkp: "PKP",
+	orange: "Orange",
+	tauron: "Tauron",
+	licytacja: "licytacja",
+	przetarg: "przetarg",
+};
+
+const STATUS_BADGES: Record<string, { label: string; className: string }> = {
+	reserved: {
+		label: "Zarezerwowane",
+		className: "bg-amber-100 text-amber-800",
+	},
+	sold: { label: "Sprzedane", className: "bg-gray-200 text-gray-700" },
+	expired: { label: "Wygasłe", className: "bg-gray-200 text-gray-500" },
+};
+
+function humanizeLabel(value: string): string {
+	const text = value.replace(/[_-]+/gu, " ").trim();
+	return text ? text.charAt(0).toUpperCase() + text.slice(1) : "";
+}
+
+function mappedLabel(
+	map: Record<string, string>,
+	value: string | null | undefined,
+): string | null {
+	if (!value) return null;
+	return map[value.toLowerCase()] ?? humanizeLabel(value);
+}
+
+function floorLabel(value: string): string {
+	const text = value.toLowerCase().trim();
+	if (text === "ground_floor" || text === "parter") return "parter";
+	if (text === "basement") return "suterena";
+	if (text === "garage") return "garaż";
+	if (text === "roof") return "poddasze";
+	const match = text.match(/^floor_(-?\d+)$/u);
+	if (!match) return value;
+	const number = Number.parseInt(match[1], 10);
+	if (number === 0) return "parter";
+	return number < 0 ? "suterena" : match[1];
+}
+
+function formatArea(value: number): string {
+	return `${value.toLocaleString("pl-PL", { maximumFractionDigits: 1 })} m²`;
+}
+
+function rawText(raw: Record<string, unknown>, keys: string[]): string | null {
+	for (const key of keys) {
+		const value = raw[key];
+		if (typeof value === "string" && value.trim()) return value.trim();
+		if (typeof value === "number" && Number.isFinite(value)) {
+			return String(value);
+		}
+	}
+	return null;
+}
+
+function rawNumber(
+	raw: Record<string, unknown>,
+	keys: string[],
+): number | null {
+	for (const key of keys) {
+		const value = raw[key];
+		if (typeof value === "number" && Number.isFinite(value)) return value;
+		if (typeof value !== "string") continue;
+		const parsed = Number.parseFloat(
+			value
+				.replace(/\u00a0/g, " ")
+				.replace(/\s/g, "")
+				.replace(",", "."),
+		);
+		if (Number.isFinite(parsed)) return parsed;
+	}
+	return null;
+}
+
+function rawBool(raw: Record<string, unknown>, keys: string[]): boolean | null {
+	for (const key of keys) {
+		const value = raw[key];
+		if (typeof value === "boolean") return value;
+		if (typeof value === "number") return value > 0;
+		if (typeof value !== "string") continue;
+		const text = value.trim().toLowerCase();
+		if (/^(tak|yes|true|1)$/u.test(text)) return true;
+		if (/^(nie|no|false|0|brak)$/u.test(text)) return false;
+	}
+	return null;
+}
+
+/**
+ * Amenity fallback for rows crawled before the promoted columns existed.
+ * The server sends normalized `attributes` for new rows; this reads the
+ * common raw feature arrays of the older payloads.
+ */
+function rawFeature(
+	raw: Record<string, unknown>,
+	keys: string[],
+	terms: string[],
+): boolean | null {
+	const direct = rawBool(raw, keys);
+	if (direct !== null) return direct;
+	for (const key of [
+		"amenities",
+		"extras_types",
+		"udogodnienia",
+		"equipment",
+		"wyposazenie",
+		"amenityFeature",
+		"additionalProperty",
+	]) {
+		const list = raw[key];
+		if (!Array.isArray(list)) continue;
+		const text = list
+			.map((entry) => {
+				if (typeof entry === "string") return entry;
+				if (entry && typeof entry === "object") {
+					const record = entry as Record<string, unknown>;
+					return `${record.name ?? ""} ${record.value ?? ""}`;
+				}
+				return "";
+			})
+			.join(" ")
+			.toLowerCase();
+		if (/(?:^|\W)(?:bez|brak|nie\s+ma)\s+/u.test(text)) {
+			const positive = terms.some(
+				(term) =>
+					text.includes(term) &&
+					!text.includes(`brak ${term}`) &&
+					!text.includes(`bez ${term}`),
+			);
+			if (positive) return true;
+			continue;
+		}
+		if (terms.some((term) => text.includes(term))) return true;
+	}
+	return null;
+}
+
+function fallbackAttributes(
+	raw: Record<string, unknown>,
+): Partial<ListingAttributesDto> {
+	return {
+		city:
+			rawText(raw, ["city", "city_name", "address_city", "address_locality"]) ??
+			undefined,
+		street:
+			rawText(raw, ["street", "street_name", "address_street"]) ?? undefined,
+		streetNumber: rawText(raw, ["street_number", "building_no"]) ?? undefined,
+		postalCode: rawText(raw, ["postal_code", "postalCode", "zip"]) ?? undefined,
+		plotAreaM2:
+			rawNumber(raw, [
+				"plot_area",
+				"plot_area_m2",
+				"lot_size",
+				"powierzchnia_dzialki",
+			]) ?? undefined,
+		plotType: rawText(raw, ["plot_type", "lot_type"]) ?? undefined,
+		buildingType:
+			rawText(raw, ["building_type", "buildingType", "builttype"]) ?? undefined,
+		market: rawText(raw, ["market", "rynek"]) ?? undefined,
+		buildYear:
+			rawNumber(raw, ["build_year", "year_built", "rok_budowy"]) ?? undefined,
+		buildingMaterial:
+			rawText(raw, ["building_material", "buildingMaterial", "material"]) ??
+			undefined,
+		floorCount:
+			rawNumber(raw, ["floors_num", "floor_count", "building_floors_num"]) ??
+			undefined,
+		condition: rawText(raw, ["condition", "stan"]) ?? undefined,
+		ownership: rawText(raw, ["ownership"]) ?? undefined,
+		hasBalcony:
+			rawFeature(
+				raw,
+				["balcony", "has_balcony", "balkon"],
+				["balkon", "balcony"],
+			) ?? undefined,
+		hasTerrace:
+			rawFeature(
+				raw,
+				["terrace", "has_terrace", "taras"],
+				["taras", "terrace"],
+			) ?? undefined,
+		hasGarden:
+			rawFeature(
+				raw,
+				["garden", "has_garden", "ogrod", "ogrodek"],
+				["ogród", "ogrod", "garden"],
+			) ?? undefined,
+		hasElevator:
+			rawFeature(
+				raw,
+				["lift", "elevator", "has_elevator", "winda"],
+				["winda", "wind", "lift", "elevator"],
+			) ?? undefined,
+		hasParking:
+			rawFeature(raw, ["parking", "has_parking"], ["parking", "postojow"]) ??
+			undefined,
+		hasGarage:
+			rawFeature(
+				raw,
+				["garage", "garaz", "has_garage"],
+				["garaż", "garaz", "garage"],
+			) ?? undefined,
+		hasBasement:
+			rawFeature(
+				raw,
+				["basement", "piwnica", "has_basement"],
+				["piwnic", "basement"],
+			) ?? undefined,
+		isFurnished:
+			rawBool(raw, ["furniture", "furnished", "umeblowane"]) ?? undefined,
+		petsAllowed:
+			rawBool(raw, ["pets", "pets_allowed", "zwierzeta"]) ?? undefined,
+		adminFee:
+			rawNumber(raw, [
+				"total_maintenance_fee",
+				"admin_fee",
+				"czynsz",
+				"rent",
+			]) ?? undefined,
+		deposit: rawNumber(raw, ["deposit", "kaucja"]) ?? undefined,
+		priceNegotiable:
+			rawBool(raw, ["price_negotiable", "negotiable"]) ?? undefined,
+		priceOnRequest:
+			rawBool(raw, ["price_on_request", "on_request"]) ?? undefined,
+		advertiserType:
+			rawText(raw, ["advertiser_type", "seller_type", "user_type"]) ??
+			undefined,
+		agencyName: rawText(raw, ["agency", "agency_name"]) ?? undefined,
+		portalStatus: rawText(raw, ["portal_status", "status"]) ?? undefined,
+		sourceUpdatedAt:
+			rawText(raw, [
+				"source_updated_at",
+				"modified_at",
+				"updated_at",
+				"last_refresh_time",
+			]) ?? undefined,
+		investmentTitle:
+			rawText(raw, ["investment_title", "development_title"]) ?? undefined,
+		developer: rawText(raw, ["developer", "developer_name"]) ?? undefined,
+		auctionType: rawText(raw, ["auction_type", "auction_label"]) ?? undefined,
+		auctionDate:
+			rawText(raw, ["auction_date", "termin_licytacji"]) ?? undefined,
+		wadium: rawNumber(raw, ["wadium"]) ?? undefined,
+		seller:
+			rawText(raw, ["seller", "organ_egzekucyjny", "sprzedajacy"]) ?? undefined,
+	};
+}
 
 export function popupHtml(listing: ApiListing): string {
 	const stats = listing.transactionStats;
 	const features = parseListingFeatures(listing.features);
+	const attributes = {
+		...fallbackAttributes(features.raw),
+		...listing.attributes,
+	};
 	const minYear = yearOf(stats?.txMinDate);
 	const maxYear = yearOf(stats?.txMaxDate);
 	const range = minYear && maxYear ? ` (${minYear}-${maxYear})` : "";
@@ -20,13 +347,23 @@ export function popupHtml(listing: ApiListing): string {
 	const addedLabel = added
 		? new Date(added).toLocaleDateString("pl-PL")
 		: "n/d";
+	const streetLine = attributes.street
+		? `${attributes.street}${
+				attributes.streetNumber ? ` ${attributes.streetNumber}` : ""
+			}`
+		: null;
+	const cityLine = [attributes.postalCode, attributes.city]
+		.filter(Boolean)
+		.join(" ");
+	const structuredLocation = [streetLine, cityLine].filter(Boolean).join(", ");
 	const location =
-		listing.address ?? listing.district ?? listing.buildingAddress ?? "";
+		listing.address ??
+		(structuredLocation || listing.district || listing.buildingAddress || "");
 
 	// Physical layout: portal columns first, then Airbnb PDP extraction.
 	// bedrooms wins over rooms so short-term rentals show sypialnie.
 	const layoutParts: string[] = [];
-	if (listing.areaM2) layoutParts.push(`${listing.areaM2} m²`);
+	if (listing.areaM2) layoutParts.push(formatArea(listing.areaM2));
 	if (listing.rooms && listing.bedrooms == null)
 		layoutParts.push(`${listing.rooms} pok.`);
 	if (listing.bedrooms != null)
@@ -43,32 +380,129 @@ export function popupHtml(listing: ApiListing): string {
 		);
 	if (listing.maxGuests != null)
 		layoutParts.push(`do ${listing.maxGuests} gości`);
-	if (listing.floor) layoutParts.push(`piętro ${listing.floor}`);
-	if (listing.propertyType) layoutParts.push(listing.propertyType);
-	if (listing.plotAreaM2) layoutParts.push(`działka ${listing.plotAreaM2} m²`);
-	if (listing.buildingType) layoutParts.push(listing.buildingType);
+	if (listing.floor) {
+		const floor = floorLabel(listing.floor);
+		layoutParts.push(floor === "parter" ? floor : `piętro ${floor}`);
+	}
+	if (attributes.plotAreaM2) {
+		const plot = attributes.plotType
+			? `działka ${attributes.plotType}`
+			: "działka";
+		layoutParts.push(`${plot} ${formatArea(attributes.plotAreaM2)}`);
+	}
 	const details = layoutParts.join(" · ");
 
-	const heating = listing.heatingType
-		? `Ogrzewanie: ${listing.heatingType}`
-		: "";
 	const utilities = formatUtilities(listing.utilities);
+
+	// Parameter grid: only the facts the portal actually published.
+	const facts: Array<[string, string]> = [];
+	const offerLabel = mappedLabel(OFFER_TYPE_LABELS, listing.offerType);
+	if (offerLabel) facts.push(["Oferta", humanizeLabel(offerLabel)]);
+	const kindLabel = listing.propertyKind
+		? PROPERTY_KIND_LABELS[listing.propertyKind]
+		: listing.propertyType
+			? (PROPERTY_KIND_LABELS[
+					listing.propertyType as keyof typeof PROPERTY_KIND_LABELS
+				] ?? humanizeLabel(listing.propertyType))
+			: null;
+	if (kindLabel) facts.push(["Typ", kindLabel]);
+	const marketLabel = mappedLabel(MARKET_LABELS, attributes.market);
+	if (marketLabel) facts.push(["Rynek", marketLabel]);
+	if (attributes.buildYear) {
+		const currentYear = new Date().getFullYear();
+		const age = currentYear - attributes.buildYear;
+		facts.push([
+			"Rok budowy",
+			age > 0
+				? `${attributes.buildYear} (${ageLabel(attributes.buildYear)})`
+				: String(attributes.buildYear),
+		]);
+	}
+	const material = mappedLabel(MATERIAL_LABELS, attributes.buildingMaterial);
+	if (material) facts.push(["Materiał", material]);
+	if (attributes.buildingType) {
+		const buildingType = mappedLabel(
+			BUILDING_TYPE_LABELS,
+			attributes.buildingType,
+		);
+		if (buildingType) facts.push(["Budynek", buildingType]);
+	}
+	if (attributes.floorCount)
+		facts.push(["Kondygnacje", String(attributes.floorCount)]);
+	const condition = mappedLabel(CONDITION_LABELS, attributes.condition);
+	if (condition) facts.push(["Stan", condition]);
+	const ownership = mappedLabel(OWNERSHIP_LABELS, attributes.ownership);
+	if (ownership) facts.push(["Forma własności", ownership]);
+	const heating = mappedLabel(HEATING_LABELS, listing.heatingType);
+	if (heating) facts.push(["Ogrzewanie", heating]);
+	const advertiserBase =
+		attributes.advertiserType === "private"
+			? "Oferta prywatna"
+			: attributes.advertiserType === "agency"
+				? "Biuro nieruchomości"
+				: attributes.advertiserType === "developer"
+					? "Deweloper"
+					: mappedLabel({}, attributes.advertiserType);
+	const advertiser =
+		advertiserBase && attributes.agencyName
+			? `${advertiserBase}: ${attributes.agencyName}`
+			: (advertiserBase ?? attributes.agencyName);
+	if (advertiser) facts.push(["Oferujący", advertiser]);
+	if (
+		attributes.investmentTitle &&
+		!listing.title
+			.toLowerCase()
+			.includes(attributes.investmentTitle.toLowerCase())
+	) {
+		facts.push(["Inwestycja", attributes.investmentTitle]);
+	}
+	if (attributes.developer) facts.push(["Deweloper", attributes.developer]);
+	const factsHtml =
+		facts.length > 0
+			? `<div class="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 border-t pt-1 text-xs">
+				${facts
+					.map(
+						([label, value]) =>
+							`<span class="text-gray-400">${escapeHtml(label)}</span><span class="break-words text-gray-700">${escapeHtml(value)}</span>`,
+					)
+					.join("")}
+			</div>`
+			: "";
 
 	// Rental cost breakdown and auction terms, when the portal published them.
 	const costParts: string[] = [];
-	if (listing.adminFee)
-		costParts.push(`Czynsz: ${formatPln(listing.adminFee)}`);
-	if (listing.deposit) costParts.push(`Kaucja: ${formatPln(listing.deposit)}`);
+	if (attributes.adminFee)
+		costParts.push(`Czynsz: ${formatPln(attributes.adminFee)}/mc`);
+	if (attributes.deposit)
+		costParts.push(`Kaucja: ${formatPln(attributes.deposit)}`);
 	const costs = costParts.join(" · ");
 	let auctionHtml = "";
-	if (listing.auctionType || listing.auctionDate) {
-		const date = listing.auctionDate
-			? new Date(listing.auctionDate).toLocaleDateString("pl-PL")
-			: "";
-		auctionHtml = `<div class="text-purple-700">${escapeHtml(
-			[listing.auctionType, date].filter(Boolean).join(" · "),
-		)}</div>`;
+	const auctionDate = attributes.auctionDate
+		? new Date(attributes.auctionDate).toLocaleDateString("pl-PL")
+		: null;
+	const auctionLabel = mappedLabel(AUCTION_TYPE_LABELS, attributes.auctionType);
+	if (auctionLabel || auctionDate || attributes.wadium || attributes.seller) {
+		const auctionHead = [auctionLabel, auctionDate].filter(Boolean).join(" · ");
+		const auctionMeta = [
+			attributes.wadium ? `Wadium: ${formatPln(attributes.wadium)}` : null,
+			attributes.seller ? `Organizator: ${attributes.seller}` : null,
+		]
+			.filter(Boolean)
+			.join(" · ");
+		auctionHtml = `<div class="border-t pt-1 text-xs text-purple-800">
+			<div class="font-medium">Aukcja / przetarg</div>
+			${auctionHead ? `<div>${escapeHtml(auctionHead)}</div>` : ""}
+			${auctionMeta ? `<div class="text-gray-600">${escapeHtml(auctionMeta)}</div>` : ""}
+		</div>`;
 	}
+
+	const statusBadge = attributes.portalStatus
+		? STATUS_BADGES[attributes.portalStatus.toLowerCase()]
+		: null;
+
+	const priceText = attributes.priceOnRequest
+		? "Cena na zapytanie"
+		: formatPln(listing.price);
 
 	// Forum-sourced investments are construction threads, not offers: no
 	// price row, show thread activity instead of a valuation. Investmap
@@ -163,26 +597,74 @@ export function popupHtml(listing: ApiListing): string {
 			`<div class="text-gray-500">Wolne ~${listing.availabilityCount} nocy/rok</div>`,
 		);
 
-	// Amenities preview from the enriched features JSON.
+	// Amenity flags from the promoted columns plus the Airbnb amenity list.
 	let amenitiesHtml = "";
+	const amenityBadges = (
+		[
+			[attributes.hasBalcony, "Balkon"],
+			[attributes.hasTerrace, "Taras"],
+			[attributes.hasGarden, "Ogród"],
+			[attributes.hasElevator, "Winda"],
+			[attributes.hasParking, "Parking"],
+			[attributes.hasGarage, "Garaż"],
+			[attributes.hasBasement, "Piwnica"],
+			[attributes.isFurnished, "Umeblowane"],
+			[attributes.petsAllowed, "Zwierzęta OK"],
+		] as Array<[boolean | null | undefined, string]>
+	)
+		.filter(([present]) => present)
+		.map(([, label]) => label);
 	const amenities = features.airbnb?.amenities ?? [];
-	if (amenities.length > 0) {
+	if (amenityBadges.length > 0 || amenities.length > 0) {
 		const shown = amenities.slice(0, 6).map((amenity) => escapeHtml(amenity));
 		const rest = amenities.length - shown.length;
 		amenitiesHtml = `
 	      <div class="border-t pt-1 text-xs">
 	        <div class="font-medium text-emerald-700">Udogodnienia</div>
-	        <div class="text-gray-600">${shown.join(", ")}${
-						rest > 0
-							? ` <span class="text-gray-400">+${rest} więcej</span>`
+	        ${
+						amenityBadges.length > 0
+							? `<div class="mt-0.5 flex flex-wrap gap-1">${amenityBadges
+									.map(
+										(label) =>
+											`<span class="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-800">${escapeHtml(label)}</span>`,
+									)
+									.join("")}</div>`
 							: ""
-					}</div>
+					}
+	        ${
+						shown.length > 0
+							? `<div class="mt-0.5 text-gray-600">${shown.join(", ")}${
+									rest > 0
+										? ` <span class="text-gray-400">+${rest} więcej</span>`
+										: ""
+								}</div>`
+							: ""
+					}
 	      </div>`;
 	}
 
+	const updated = attributes.sourceUpdatedAt
+		? new Date(attributes.sourceUpdatedAt)
+		: null;
+	const updatedLabel =
+		updated && !Number.isNaN(updated.getTime())
+			? updated.toLocaleDateString("pl-PL")
+			: null;
+	const updatedCaption =
+		updatedLabel && updatedLabel !== addedLabel
+			? ` · akt. ${updatedLabel}`
+			: "";
+
 	return `
-    <div class="min-w-56 space-y-1 text-sm">
-      <div class="font-semibold leading-tight">${escapeHtml(listing.title)}</div>
+    <div class="min-w-64 space-y-1 text-sm">
+      <div class="flex items-start justify-between gap-2">
+        <div class="font-semibold leading-tight">${escapeHtml(listing.title)}</div>
+        ${
+					statusBadge
+						? `<span class="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${statusBadge.className}">${escapeHtml(statusBadge.label)}</span>`
+						: ""
+				}
+      </div>
       <div class="text-gray-500">${escapeHtml(location)}</div>
       <div class="flex justify-between gap-4 pt-1">
         <span class="font-medium${
@@ -192,7 +674,7 @@ export function popupHtml(listing: ApiListing): string {
 						? budLabel
 						: isInvestmentRow
 							? "Inwestycja"
-							: `${formatPln(listing.price)}${
+							: `${priceText}${
 									listing.pricePeriod === "night"
 										? '<span class="text-xs font-normal text-gray-400"> /noc</span>'
 										: ""
@@ -202,11 +684,13 @@ export function popupHtml(listing: ApiListing): string {
 					isBudujesie
 						? escapeHtml(threadStats)
 						: listing.pricePerM2
-							? `${listing.pricePerM2.toFixed(0)} zł/m²`
+							? `${Math.round(listing.pricePerM2).toLocaleString("pl-PL")} zł/m²`
 							: ""
 				}</span>
       </div>
-      <div class="text-gray-500">${escapeHtml(details)}</div>
+      ${attributes.priceNegotiable ? '<div class="text-xs text-gray-500">Cena do negocjacji</div>' : ""}
+      ${details ? `<div class="text-gray-500">${escapeHtml(details)}</div>` : ""}
+      ${factsHtml}
       ${realizationHtml}
       ${
 				listing.rating != null && listing.rating > 0
@@ -217,12 +701,11 @@ export function popupHtml(listing: ApiListing): string {
 						}</div>`
 					: ""
 			}
-      ${heating ? `<div class="text-gray-500">${escapeHtml(heating)}</div>` : ""}
       ${utilities ? `<div class="text-gray-500">${escapeHtml(utilities)}</div>` : ""}
       ${costs ? `<div class="text-gray-500">${escapeHtml(costs)}</div>` : ""}
       ${auctionHtml}
       ${stayLines.join("\n      ")}
-      <div class="text-gray-400">Dodano: ${addedLabel}</div>
+      <div class="text-gray-400">Dodano: ${addedLabel} · ${escapeHtml(sourceLabel(listing.source))}${updatedCaption}</div>
       ${threadHtml}
       ${amenitiesHtml}
       ${

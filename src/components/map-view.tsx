@@ -1332,7 +1332,7 @@ function MapCanvas({
 				const popup = new mapboxgl.Popup({
 					offset: 16,
 					closeButton: false,
-					maxWidth: "320px",
+					maxWidth: "360px",
 				})
 					.setLngLat(e.lngLat)
 					.setHTML(
@@ -1341,6 +1341,16 @@ function MapCanvas({
 							: popupHtml(listing),
 					)
 					.addTo(map);
+				// The popup now carries a parameter grid, costs, amenities and
+				// the valuation slot; let tall popups scroll instead of
+				// running off the viewport.
+				const content = popup
+					.getElement()
+					?.querySelector<HTMLElement>(".mapboxgl-popup-content");
+				if (content) {
+					content.style.maxHeight = "70vh";
+					content.style.overflowY = "auto";
+				}
 				popupRef.current = popup;
 				if (wantValuation) {
 					void fetch(`/api/valuation/offer?id=${listing.id}`)

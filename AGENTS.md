@@ -545,9 +545,14 @@ returns only the columns the table renders, plus `total` and the
 source/kind facets; `/listings` uses it so opening the table does not
 download the map feed. Both shapes share the same dedupe pipeline
 (`loadVisibleRows`) and the same `filterListings` classifier.
-The map shape is ~35 MB raw (~30k rows today), so `src/lib/server-response.ts`
-gzips it to ~3.9 MB (`Vary: Accept-Encoding`) and `withCache` holds the
+The map shape is ~46 MB raw (~37k rows today), so `src/lib/server-response.ts`
+gzips it to ~4.7 MB (`Vary: Accept-Encoding`) and `withCache` holds the
 serialized/gzipped body for 60 s; non-gzip clients still get the raw body.
+The promoted listing attributes travel as one `attributes` object per row
+(only non-null, non-false, non-zero values) rather than ~40 mostly-null
+columns; the popup renders them as a parameter grid, cost/auction blocks and
+amenity badges, and falls back to the raw `features` keys for rows crawled
+before the columns existed.
 
 `/api/buildings/labels` accepts `?bbox=minLng,minLat,maxLng,maxLat` and is
 called by the map only above zoom 15.2 for the current viewport. The
@@ -684,8 +689,8 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
 - **mapbox strips nested objects from click features**: what layer click
   handlers get via `e.features` (backed by `queryRenderedFeatures`) keeps
   only primitive properties — nested objects survive as empty shells
-  (`transactionStats` lost its `txCount` and the popup's RCN history
-  block never rendered for any source). `showListingPopup` therefore
+  (`transactionStats` lost its `txCount`, and the popup's `attributes`
+  object comes back empty too). `showListingPopup` therefore
   hydrates the full row from the GeoJSON source data by `id`; keep
   nested data out of click-feature reads or hydrate the same way.
 - **Mapbox GL caches 404 tile bodies**: the shared `mapbox-tiles` Cache

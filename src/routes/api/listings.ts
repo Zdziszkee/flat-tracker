@@ -16,6 +16,7 @@ import {
 import { propertyKindOf } from "#/lib/property-kind";
 import { withCache } from "#/lib/server-cache";
 import { gzipJson, jsonResponse } from "#/lib/server-response";
+import type { ListingAttributesDto } from "#/types/listing";
 
 /** Normalize a string for cross-source matching: lowercase, no
  * diacritics, alphanumerics only, single spaces. */
@@ -97,13 +98,43 @@ async function loadRawRows() {
 				district: listings.district,
 				address: listings.address,
 				city: listings.city,
+				voivodeship: listings.voivodeship,
+				postalCode: listings.postalCode,
+				street: listings.street,
+				streetNumber: listings.streetNumber,
 				plotAreaM2: listings.plotAreaM2,
+				plotType: listings.plotType,
 				buildingType: listings.buildingType,
+				market: listings.market,
+				buildYear: listings.buildYear,
+				buildingMaterial: listings.buildingMaterial,
+				floorCount: listings.floorCount,
+				condition: listings.condition,
+				ownership: listings.ownership,
+				hasBalcony: listings.hasBalcony,
+				hasTerrace: listings.hasTerrace,
+				hasGarden: listings.hasGarden,
+				hasElevator: listings.hasElevator,
+				hasParking: listings.hasParking,
+				hasGarage: listings.hasGarage,
+				hasBasement: listings.hasBasement,
+				isFurnished: listings.isFurnished,
+				petsAllowed: listings.petsAllowed,
 				adminFee: listings.adminFee,
 				deposit: listings.deposit,
+				priceNegotiable: listings.priceNegotiable,
+				priceOnRequest: listings.priceOnRequest,
 				advertiserType: listings.advertiserType,
+				agencyName: listings.agencyName,
+				portalStatus: listings.portalStatus,
+				sourceUpdatedAt: listings.sourceUpdatedAt,
+				investmentId: listings.investmentId,
+				investmentTitle: listings.investmentTitle,
+				developer: listings.developer,
 				auctionType: listings.auctionType,
 				auctionDate: listings.auctionDate,
+				wadium: listings.wadium,
+				seller: listings.seller,
 				lat: listings.lat,
 				lng: listings.lng,
 				listedAt: listings.listedAt,
@@ -147,6 +178,63 @@ type RawListing = Omit<
 	listedAt: string | null;
 	firstSeenAt: string | null;
 };
+
+/**
+ * Columns promoted from `features` for the popup. The map feed has no use
+ * for them as top-level row fields, so it ships a compact `attributes`
+ * object with only the present values instead of 35 mostly-null columns on
+ * every one of ~30k rows.
+ */
+const ATTRIBUTE_KEYS = [
+	"city",
+	"postalCode",
+	"street",
+	"streetNumber",
+	"plotAreaM2",
+	"plotType",
+	"buildingType",
+	"market",
+	"buildYear",
+	"buildingMaterial",
+	"floorCount",
+	"condition",
+	"ownership",
+	"hasBalcony",
+	"hasTerrace",
+	"hasGarden",
+	"hasElevator",
+	"hasParking",
+	"hasGarage",
+	"hasBasement",
+	"isFurnished",
+	"petsAllowed",
+	"adminFee",
+	"deposit",
+	"priceNegotiable",
+	"priceOnRequest",
+	"advertiserType",
+	"agencyName",
+	"portalStatus",
+	"sourceUpdatedAt",
+	"investmentTitle",
+	"developer",
+	"auctionType",
+	"auctionDate",
+	"wadium",
+	"seller",
+] as const;
+
+function popupAttributes(row: RawListing): ListingAttributesDto {
+	const out: ListingAttributesDto = {};
+	for (const key of ATTRIBUTE_KEYS) {
+		const value = row[key];
+		if (value == null || value === false || value === 0) continue;
+		Object.assign(out, {
+			[key]: value instanceof Date ? value.toISOString() : value,
+		});
+	}
+	return out;
+}
 
 type KindedListing = RawListing & {
 	propertyKind: ReturnType<typeof propertyKindOf>;
@@ -343,15 +431,24 @@ export const Route = createFileRoute("/api/listings")({
 						]),
 					);
 					const body = JSON.stringify({
-						listings: rows.map((row) => ({
-							...row,
-							features: clientFeatures(row),
-							mapLat: row.buildingLat ?? row.lat,
-							mapLng: row.buildingLng ?? row.lng,
-							transactionStats: row.buildingId
-								? (summaryByBuilding.get(String(row.buildingId)) ?? null)
-								: null,
-						})),
+						listings: rows.map((row) => {
+							// Keep the map row lean: the promoted columns move into
+							// `attributes` instead of duplicating at the top level.
+							const base: Record<string, unknown> = { ...row };
+							for (const key of ATTRIBUTE_KEYS) delete base[key];
+							const attributes = popupAttributes(row);
+							return {
+								...base,
+								attributes:
+									Object.keys(attributes).length > 0 ? attributes : undefined,
+								features: clientFeatures(row),
+								mapLat: row.buildingLat ?? row.lat,
+								mapLng: row.buildingLng ?? row.lng,
+								transactionStats: row.buildingId
+									? (summaryByBuilding.get(String(row.buildingId)) ?? null)
+									: null,
+							};
+						}),
 						generatedAt: new Date().toISOString(),
 					});
 					return { body, gzip: await gzipJson(body) };

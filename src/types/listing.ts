@@ -11,6 +11,51 @@ export interface TransactionStats {
 }
 
 /**
+ * Normalized portal attributes shipped with the map feed for the popup.
+ * Only non-null values are sent; adapters keep the raw blob in `features`.
+ */
+export interface ListingAttributesDto {
+	city?: string | null;
+	voivodeship?: string | null;
+	postalCode?: string | null;
+	street?: string | null;
+	streetNumber?: string | null;
+	plotAreaM2?: number | null;
+	plotType?: string | null;
+	buildingType?: string | null;
+	hasBalcony?: boolean | null;
+	hasTerrace?: boolean | null;
+	hasGarden?: boolean | null;
+	hasElevator?: boolean | null;
+	hasParking?: boolean | null;
+	hasGarage?: boolean | null;
+	hasBasement?: boolean | null;
+	isFurnished?: boolean | null;
+	petsAllowed?: boolean | null;
+	adminFee?: number | null;
+	deposit?: number | null;
+	priceNegotiable?: boolean | null;
+	priceOnRequest?: boolean | null;
+	advertiserType?: string | null;
+	agencyName?: string | null;
+	portalStatus?: string | null;
+	sourceUpdatedAt?: string | null;
+	investmentId?: string | null;
+	investmentTitle?: string | null;
+	developer?: string | null;
+	auctionType?: string | null;
+	auctionDate?: string | null;
+	wadium?: number | null;
+	seller?: string | null;
+	market?: string | null;
+	buildYear?: number | null;
+	buildingMaterial?: string | null;
+	floorCount?: number | null;
+	condition?: string | null;
+	ownership?: string | null;
+}
+
+/**
  * The row `/api/listings` returns. Keep this as the single client/server
  * contract: the map, the listings table, and the popup all read it.
  */
@@ -43,6 +88,7 @@ export interface ListingDto {
 	propertyType: string | null;
 	/** Derived server-side by `propertyKindOf`; null means "no evidence". */
 	propertyKind?: PropertyKind | null;
+	attributes?: ListingAttributesDto | null;
 	features: string | null;
 	constructionEndLabel?: string | null;
 	constructionEndDate?: string | null;

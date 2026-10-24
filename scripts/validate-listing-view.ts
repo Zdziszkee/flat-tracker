@@ -19,6 +19,8 @@ import {
 	propertyTypeFromListingUrl,
 	propertyTypeFromValue,
 } from "../src/crawler/sites/property-type.ts";
+import { popupHtml } from "../src/components/map/popups.ts";
+import type { ApiListing } from "../src/components/map/types.ts";
 
 let failures = 0;
 function check(ok: boolean, label: string): void {
@@ -267,6 +269,116 @@ check(
 		"Kraków",
 	) === "Kraków",
 	"town-level Kraków address is not duplicated",
+);
+
+const popupBase = {
+	id: 1,
+	source: "otodom",
+	externalId: "popup-1",
+	url: "https://example.com/offer",
+	title: "Mieszkanie 3 pokoje",
+	price: 750_000,
+	pricePerM2: 15_000,
+	areaM2: 50,
+	rooms: 3,
+	floor: "3",
+	district: null,
+	address: "ul. Długa 5, Kraków",
+	lat: null,
+	lng: null,
+	listedAt: "2026-10-01T00:00:00.000Z",
+	firstSeenAt: "2026-10-01T00:00:00.000Z",
+	heatingType: "miejskie",
+	propertyType: "apartment",
+	propertyKind: "apartment",
+	features: "{}",
+	buildingId: null,
+	buildingAddress: null,
+	mapLat: null,
+	mapLng: null,
+	offerType: "sale",
+	transactionStats: null,
+} as unknown as ApiListing;
+
+const richPopup = popupHtml({
+	...popupBase,
+	attributes: {
+		city: "Kraków",
+		street: "Długa",
+		streetNumber: "5",
+		buildYear: 2010,
+		buildingMaterial: "cegła",
+		market: "secondary",
+		condition: "good",
+		hasBalcony: true,
+		hasElevator: true,
+		adminFee: 706,
+		deposit: 3500,
+		advertiserType: "agency",
+		agencyName: "Biuro X",
+		portalStatus: "reserved",
+	},
+});
+check(
+	richPopup.includes("Rok budowy") && richPopup.includes("2010"),
+	"popup renders the build year",
+);
+check(richPopup.includes("Rynek"), "popup renders the market");
+check(
+	richPopup.includes("Biuro nieruchomości: Biuro X"),
+	"popup renders the advertiser and agency",
+);
+check(richPopup.includes("Zarezerwowane"), "popup renders the portal status");
+check(
+	richPopup.includes("Czynsz:") && richPopup.includes("Kaucja:"),
+	"popup renders the rental costs",
+);
+check(richPopup.includes("Balkon"), "popup renders amenity badges");
+check(!richPopup.includes("undefined"), "popup has no undefined placeholders");
+
+const fallbackPopup = popupHtml({
+	...popupBase,
+	attributes: undefined,
+	features: JSON.stringify({
+		build_year: 1998,
+		building_material: "cegła",
+		city: "Kraków",
+		street: "Długa",
+		street_number: "5",
+		extras_types: ["balkon", "winda"],
+	}),
+});
+check(
+	fallbackPopup.includes("Rok budowy") && fallbackPopup.includes("Balkon"),
+	"popup falls back to raw features for old rows",
+);
+
+const floorPopup = popupHtml({ ...popupBase, floor: "floor_0" });
+check(
+	floorPopup.includes("parter") && !floorPopup.includes("floor_0"),
+	"popup humanizes the portal floor code",
+);
+
+const onRequestPopup = popupHtml({
+	...popupBase,
+	price: null,
+	attributes: { priceOnRequest: true },
+});
+check(
+	onRequestPopup.includes("Cena na zapytanie"),
+	"popup labels a price-on-request offer",
+);
+
+const escapedPopup = popupHtml({
+	...popupBase,
+	title: '<img src=x onerror="alert(1)">',
+	attributes: { agencyName: "<script>alert(1)</script>" },
+});
+check(
+	!escapedPopup.includes("<img") &&
+		!escapedPopup.includes("<script>") &&
+		escapedPopup.includes("&lt;img"),
+	"popup escapes portal text",
 );
 
 console.log(
