@@ -7,7 +7,37 @@ import {
 } from "./address.ts";
 import { findLdNodes, hasLdType, makeLdGraphAdapter } from "./ldgraph.ts";
 import { num, str } from "./ldoffer.ts";
-import { propertyTypeFromListingUrl } from "./property-type.ts";
+import {
+	propertyTypeFromListingUrl,
+	propertyTypeFromValue,
+} from "./property-type.ts";
+
+function pairsToRecord(value: unknown): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	if (!Array.isArray(value)) return out;
+	for (const entry of value) {
+		if (!entry || typeof entry !== "object") continue;
+		const record = entry as Record<string, unknown>;
+		const name = str(record.name);
+		if (!name) continue;
+		out[name.toLowerCase()] = record.value ?? true;
+	}
+	return out;
+}
+
+function imageInfo(value: unknown): {
+	count: number | null;
+	primary: string | null;
+} {
+	if (typeof value === "string") return { count: 1, primary: value };
+	if (Array.isArray(value)) {
+		const first = value.find(
+			(entry): entry is string => typeof entry === "string",
+		);
+		return { count: value.length, primary: first ?? null };
+	}
+	return { count: null, primary: null };
+}
 
 /**
  * Domiporta embeds its results as an ItemList inside an @graph LD+JSON
@@ -46,9 +76,28 @@ function itemToListing(
 	const size = (offered.floorSize ?? {}) as Record<string, unknown>;
 	const areaM2 = num(size.value);
 	const rooms = num(offered.numberOfRooms);
-	const structured = (offered.address ?? {}) as Record<string, unknown>;
-	const street = str(structured.streetAddress);
+	const structured = (offered.address ?? item.address ?? {}) as Record<
+		string,
+		unknown
+	>;
 	const city = str(structured.addressLocality);
+	const streetRaw = str(structured.streetAddress);
+	const street =
+		streetRaw && streetRaw.toLowerCase() !== city?.toLowerCase()
+			? streetRaw
+			: null;
+	const region = str(structured.addressRegion);
+	const postalCode = str(structured.postalCode);
+	const floor = str(offered.floorLevel ?? item.floorLevel);
+	const yearBuilt = num(offered.yearBuilt);
+	const amenities = pairsToRecord(offered.amenityFeature);
+	const heating = Object.entries(amenities).find(([key]) =>
+		/ogrzewanie|heating/iu.test(key),
+	)?.[1];
+	const seller = (item.seller ?? {}) as Record<string, unknown>;
+	const sellerName = str(seller.name);
+	const sellerType = str(seller["@type"]);
+	const images = imageInfo(item.image);
 
 	// No structured address; parse street (+ number) from the title/description.
 	const district = extractDistrict(title);
@@ -92,14 +141,38 @@ function itemToListing(
 		pricePerM2: areaM2 && areaM2 > 0 ? price / areaM2 : null,
 		areaM2,
 		rooms,
-		floor: null,
+		floor,
 		district,
 		address,
 		description,
-		heatingType: null,
+		heatingType: typeof heating === "string" ? heating : null,
 		propertyType:
-			propertyTypeFromListingUrl(url) ?? propertyTypeFromListingUrl(pageUrl),
-		features: null,
+			propertyTypeFromValue(offered["@type"]) ??
+			propertyTypeFromListingUrl(url) ??
+			propertyTypeFromListingUrl(pageUrl),
+		features:
+			Object.keys(amenities).length ||
+			yearBuilt != null ||
+			city ||
+			sellerName ||
+			images.count != null
+				? JSON.stringify({
+						...amenities,
+						...(city ? { city } : {}),
+						...(region ? { voivodeship: region } : {}),
+						...(postalCode ? { postal_code: postalCode } : {}),
+						...(street ? { street } : {}),
+						...(yearBuilt != null ? { year_built: yearBuilt } : {}),
+						...(floor ? { floor } : {}),
+						...(sellerName &&
+						sellerType &&
+						/organization|realestateagent/iu.test(sellerType)
+							? { agency: sellerName }
+							: {}),
+						...(images.count != null ? { image_count: images.count } : {}),
+						...(images.primary ? { primary_image: images.primary } : {}),
+					})
+				: null,
 		lat: null,
 		lng: null,
 		listedAt: str(item.datePosted),

@@ -131,6 +131,50 @@ export const listings = sqliteTable(
 		condition: text(),
 		/** Ownership form (full_ownership, cooperative, ...). */
 		ownership: text(),
+		/** Normalized location parts, split out of the free-text address. */
+		city: text(),
+		voivodeship: text(),
+		postalCode: text("postal_code"),
+		street: text(),
+		streetNumber: text("street_number"),
+		/** Land area for houses and plots, distinct from the built area. */
+		plotAreaM2: real("plot_area_m2"),
+		/** Plot designation: budowlana, rolna, rekreacyjna, siedliskowa, ... */
+		plotType: text("plot_type"),
+		/** Building construction type: block, apartment, house, townhouse, ... */
+		buildingType: text("building_type"),
+		/** Amenity flags promoted from the portal attribute blob. */
+		hasBalcony: integer("has_balcony", { mode: "boolean" }),
+		hasTerrace: integer("has_terrace", { mode: "boolean" }),
+		hasGarden: integer("has_garden", { mode: "boolean" }),
+		hasElevator: integer("has_elevator", { mode: "boolean" }),
+		hasParking: integer("has_parking", { mode: "boolean" }),
+		hasGarage: integer("has_garage", { mode: "boolean" }),
+		hasBasement: integer("has_basement", { mode: "boolean" }),
+		isFurnished: integer("is_furnished", { mode: "boolean" }),
+		petsAllowed: integer("pets_allowed", { mode: "boolean" }),
+		/** Monthly administrative fee / czynsz (rentals and some sales). */
+		adminFee: real("admin_fee"),
+		/** Refundable deposit / kaucja (rentals). */
+		deposit: real(),
+		priceNegotiable: integer("price_negotiable", { mode: "boolean" }),
+		priceOnRequest: integer("price_on_request", { mode: "boolean" }),
+		/** private | agency | developer */
+		advertiserType: text("advertiser_type"),
+		agencyName: text("agency_name"),
+		/** Portal's own lifecycle status: active, reserved, sold, expired... */
+		portalStatus: text("portal_status"),
+		/** Portal's last modification time, distinct from scrapedAt. */
+		sourceUpdatedAt: integer("source_updated_at", { mode: "timestamp" }),
+		/** New-development grouping (project id/title and developer name). */
+		investmentId: text("investment_id"),
+		investmentTitle: text("investment_title"),
+		developer: text(),
+		/** Auction/tender metadata (AMW, KOWR, KAS, gminne, PKP, ...). */
+		auctionType: text("auction_type"),
+		auctionDate: integer("auction_date", { mode: "timestamp" }),
+		wadium: real(),
+		seller: text(),
 		/** Last crawl that saw this offer still live. */
 		lastSeenAt: integer("last_seen_at", { mode: "timestamp" }),
 		/** When the offer disappeared from the portal (sold/withdrawn). */
@@ -191,6 +235,9 @@ export const listings = sqliteTable(
 		index("listings_source_listed_idx").on(t.source, t.listedAt),
 		index("listings_price_m2_idx").on(t.pricePerM2),
 		index("listings_area_idx").on(t.areaM2),
+		index("listings_city_idx").on(t.city),
+		index("listings_investment_idx").on(t.investmentId),
+		index("listings_auction_date_idx").on(t.auctionDate),
 		index("listings_active_idx").on(t.isActive),
 	],
 );

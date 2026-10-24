@@ -181,6 +181,7 @@ function offerToListing(
 	// No title in the feed; derive a readable one from the description.
 	const title =
 		description.split(".")[0]?.slice(0, 120) || "Mieszkanie na sprzedaż";
+	const itemFeatures = additionalProperties(item);
 
 	return {
 		source: "nieruchomosci-online",
@@ -197,7 +198,25 @@ function offerToListing(
 		description: description || null,
 		heatingType: null,
 		propertyType: propertyTypeFromListingUrl(url) ?? kindFromSearchUrl(pageUrl),
-		features: null,
+		features:
+			itemFeatures.length > 0 || locality || street
+				? JSON.stringify({
+						...Object.fromEntries(
+							itemFeatures.map((property) => [
+								property.name.toLowerCase().replace(/\s+/gu, "_"),
+								property.value,
+							]),
+						),
+						...(locality ? { city: locality } : {}),
+						...(street ? { street } : {}),
+						...(str(structured.addressRegion)
+							? { voivodeship: str(structured.addressRegion) }
+							: {}),
+						...(str(structured.postalCode)
+							? { postal_code: str(structured.postalCode) }
+							: {}),
+					})
+				: null,
 		lat: null,
 		lng: null,
 		listedAt: null,
@@ -322,13 +341,47 @@ function additionalProperties(
 function detailFeatures(node: Record<string, unknown>): string | null {
 	const features: Record<string, unknown> = {};
 	for (const property of additionalProperties(node)) {
+		const key = property.name.toLowerCase().replace(/\s+/gu, "_");
 		if (/^year built$/iu.test(property.name)) {
 			features.build_year = num(property.value);
 		} else if (/^total floors in building$/iu.test(property.name)) {
 			features.building_floors_num = num(property.value);
 		} else if (/^building type$/iu.test(property.name)) {
 			features.building_type = str(property.value);
+		} else {
+			features[key] = property.value;
 		}
+	}
+	const address = (node.address ?? {}) as Record<string, unknown>;
+	const city = str(address.addressLocality);
+	const region = str(address.addressRegion);
+	const postalCode = str(address.postalCode);
+	const street = str(address.streetAddress);
+	if (city) features.city = city;
+	if (region) features.voivodeship = region;
+	if (postalCode) features.postal_code = postalCode;
+	if (street) features.street = street;
+	const floor = str(node.floorLevel);
+	if (floor) features.floor = floor;
+	const agent = (node.agent ?? {}) as Record<string, unknown>;
+	const agentName = str(agent.name);
+	const agentType = str(agent["@type"]);
+	if (
+		agentName &&
+		agentType &&
+		/realestateagent|organization/iu.test(agentType)
+	) {
+		features.agency = agentName;
+	}
+	const images = node.image;
+	if (Array.isArray(images)) {
+		features.image_count = images.length;
+		features.primary_image =
+			images.find((entry): entry is string => typeof entry === "string") ??
+			null;
+	} else if (typeof images === "string") {
+		features.image_count = 1;
+		features.primary_image = images;
 	}
 	return Object.keys(features).length > 0 ? JSON.stringify(features) : null;
 }

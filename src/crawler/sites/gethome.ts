@@ -40,6 +40,15 @@ interface GhProperty {
 	heat?: string | null;
 	address?: string | null;
 	lot_type?: string | null;
+	balconies?: number | string | null;
+	garden?: unknown;
+	terraces?: number | string | null;
+	bathroom_number?: number | string | null;
+	shape?: string | null;
+	location?: {
+		path?: Array<{ name?: string | null; type?: string | null }>;
+		short_name?: string | null;
+	} | null;
 	address_details?: {
 		city?: string | null;
 		street?: string | null;
@@ -66,6 +75,7 @@ interface GhOffer {
 		lon?: number | string | null;
 	} | null;
 	agency?: { name?: string | null } | null;
+	pictures?: Array<Record<string, unknown>> | null;
 }
 
 interface GhState {
@@ -164,6 +174,35 @@ function offerToListing(offer: GhOffer): Listing | null {
 		building_type: str(property.type),
 		lot_type: str(property.lot_type),
 		lot_size: num(property.lot_size),
+		...(property.type === "lot" ? { plot_area: num(property.size) } : {}),
+		...(num(property.balconies) != null
+			? { balconies: num(property.balconies) }
+			: {}),
+		...(property.garden != null ? { garden: property.garden } : {}),
+		...(num(property.terraces) != null
+			? { terraces: num(property.terraces) }
+			: {}),
+		...(num(property.bathroom_number) != null
+			? { bathrooms: num(property.bathroom_number) }
+			: {}),
+		...(property.shape ? { shape: property.shape } : {}),
+		...(city ? { city } : {}),
+		...(district ? { district } : {}),
+		...(street ? { street } : {}),
+		...(() => {
+			const voivodeship = property.location?.path?.find(
+				(entry) => entry.type?.toLowerCase() === "województwo",
+			)?.name;
+			return voivodeship ? { voivodeship } : {};
+		})(),
+		...(offer.pictures
+			? {
+					image_count: offer.pictures.length,
+					primary_image:
+						str(offer.pictures[0]?.o_img_500) ??
+						str(offer.pictures[0]?.o_img_360x171),
+				}
+			: {}),
 	};
 
 	return {

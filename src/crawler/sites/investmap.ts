@@ -235,7 +235,14 @@ function investmentToListings(
 		(inv.category?.slug === "domy" ? "house" : null);
 	for (const estate of groups?.[0]?.list ?? []) {
 		const area = estate.area && estate.area > 0 ? estate.area : null;
-		const features: Record<string, unknown> = { investment_id: inv.id };
+		const features: Record<string, unknown> = {
+			investment_id: inv.id,
+			investment_title: inv.title,
+			market: "primary",
+			...(city ? { city } : {}),
+			...(district ? { district } : {}),
+			...(inv.street ? { street: inv.street } : {}),
+		};
 		if (timeline?.constructionEndLabel)
 			features.construction_end_label = timeline.constructionEndLabel;
 		if (timeline?.constructionEndDate)
@@ -293,6 +300,10 @@ export function investmentRow(
 	const features: Record<string, unknown> = {
 		investment_id: inv.id,
 		investment_row: true,
+		investment_title: inv.title,
+		market: "primary",
+		...(city ? { city } : {}),
+		...(inv.street ? { street: inv.street } : {}),
 	};
 	if (timeline?.constructionEndLabel)
 		features.construction_end_label = timeline.constructionEndLabel;

@@ -9,6 +9,7 @@ import {
 	listings,
 } from "#/db/schema";
 
+import { normalizeListingAttributes } from "./attributes.ts";
 import type { Listing } from "./types.ts";
 
 export interface SaveReport {
@@ -41,16 +42,8 @@ function featureNumber(v: unknown): number | null {
 }
 
 /** Promote the analytics-hot attributes out of the features JSON blob. */
-function extractFeatureFields(features: string | null): {
-	market: string | null;
-	buildYear: number | null;
-	buildingMaterial: string | null;
-	floorCount: number | null;
-	condition: string | null;
-	ownership: string | null;
-	constructionEndLabel: string | null;
-	constructionEndDate: string | null;
-} {
+function extractFeatureFields(features: string | null) {
+	const normalized = normalizeListingAttributes(features);
 	const out = {
 		market: null as string | null,
 		buildYear: null as number | null,
@@ -60,6 +53,7 @@ function extractFeatureFields(features: string | null): {
 		ownership: null as string | null,
 		constructionEndLabel: null as string | null,
 		constructionEndDate: null as string | null,
+		...normalized,
 	};
 	if (!features) return out;
 	try {
@@ -161,6 +155,38 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 			floorCount: f.floorCount,
 			condition: f.condition,
 			ownership: f.ownership,
+			city: f.city,
+			voivodeship: f.voivodeship,
+			postalCode: f.postalCode,
+			street: f.street,
+			streetNumber: f.streetNumber,
+			plotAreaM2: f.plotAreaM2,
+			plotType: f.plotType,
+			buildingType: f.buildingType,
+			hasBalcony: f.hasBalcony,
+			hasTerrace: f.hasTerrace,
+			hasGarden: f.hasGarden,
+			hasElevator: f.hasElevator,
+			hasParking: f.hasParking,
+			hasGarage: f.hasGarage,
+			hasBasement: f.hasBasement,
+			isFurnished: f.isFurnished,
+			petsAllowed: f.petsAllowed,
+			adminFee: f.adminFee,
+			deposit: f.deposit,
+			priceNegotiable: f.priceNegotiable,
+			priceOnRequest: f.priceOnRequest,
+			advertiserType: f.advertiserType,
+			agencyName: f.agencyName,
+			portalStatus: f.portalStatus,
+			sourceUpdatedAt: f.sourceUpdatedAt,
+			investmentId: f.investmentId,
+			investmentTitle: f.investmentTitle,
+			developer: f.developer,
+			auctionType: f.auctionType,
+			auctionDate: f.auctionDate,
+			wadium: f.wadium,
+			seller: f.seller,
 			constructionEndLabel: f.constructionEndLabel,
 			constructionEndDate: f.constructionEndDate,
 			firstSeenAt: now,
@@ -218,6 +244,38 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					floorCount: sql`coalesce(excluded.floor_count, ${listings.floorCount})`,
 					condition: sql`coalesce(excluded.condition, ${listings.condition})`,
 					ownership: sql`coalesce(excluded.ownership, ${listings.ownership})`,
+					city: sql`coalesce(excluded.city, ${listings.city})`,
+					voivodeship: sql`coalesce(excluded.voivodeship, ${listings.voivodeship})`,
+					postalCode: sql`coalesce(excluded.postal_code, ${listings.postalCode})`,
+					street: sql`coalesce(excluded.street, ${listings.street})`,
+					streetNumber: sql`coalesce(excluded.street_number, ${listings.streetNumber})`,
+					plotAreaM2: sql`coalesce(excluded.plot_area_m2, ${listings.plotAreaM2})`,
+					plotType: sql`coalesce(excluded.plot_type, ${listings.plotType})`,
+					buildingType: sql`coalesce(excluded.building_type, ${listings.buildingType})`,
+					hasBalcony: sql`coalesce(excluded.has_balcony, ${listings.hasBalcony})`,
+					hasTerrace: sql`coalesce(excluded.has_terrace, ${listings.hasTerrace})`,
+					hasGarden: sql`coalesce(excluded.has_garden, ${listings.hasGarden})`,
+					hasElevator: sql`coalesce(excluded.has_elevator, ${listings.hasElevator})`,
+					hasParking: sql`coalesce(excluded.has_parking, ${listings.hasParking})`,
+					hasGarage: sql`coalesce(excluded.has_garage, ${listings.hasGarage})`,
+					hasBasement: sql`coalesce(excluded.has_basement, ${listings.hasBasement})`,
+					isFurnished: sql`coalesce(excluded.is_furnished, ${listings.isFurnished})`,
+					petsAllowed: sql`coalesce(excluded.pets_allowed, ${listings.petsAllowed})`,
+					adminFee: sql`coalesce(excluded.admin_fee, ${listings.adminFee})`,
+					deposit: sql`coalesce(excluded.deposit, ${listings.deposit})`,
+					priceNegotiable: sql`coalesce(excluded.price_negotiable, ${listings.priceNegotiable})`,
+					priceOnRequest: sql`coalesce(excluded.price_on_request, ${listings.priceOnRequest})`,
+					advertiserType: sql`coalesce(excluded.advertiser_type, ${listings.advertiserType})`,
+					agencyName: sql`coalesce(excluded.agency_name, ${listings.agencyName})`,
+					portalStatus: sql`coalesce(excluded.portal_status, ${listings.portalStatus})`,
+					sourceUpdatedAt: sql`coalesce(excluded.source_updated_at, ${listings.sourceUpdatedAt})`,
+					investmentId: sql`coalesce(excluded.investment_id, ${listings.investmentId})`,
+					investmentTitle: sql`coalesce(excluded.investment_title, ${listings.investmentTitle})`,
+					developer: sql`coalesce(excluded.developer, ${listings.developer})`,
+					auctionType: sql`coalesce(excluded.auction_type, ${listings.auctionType})`,
+					auctionDate: sql`coalesce(excluded.auction_date, ${listings.auctionDate})`,
+					wadium: sql`coalesce(excluded.wadium, ${listings.wadium})`,
+					seller: sql`coalesce(excluded.seller, ${listings.seller})`,
 					// Investment timeline (investmap): search rows carry the
 					// cached value or NULL, detail rows the fresh one - never
 					// wipe what a previous run stored.

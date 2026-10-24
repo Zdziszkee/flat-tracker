@@ -404,6 +404,8 @@ function detailToListing(
 	const organizerUrl =
 		cleanText(str(it?.url)) ??
 		cleanText($("a.btn[target='_blank']").eq(0).attr("href"));
+	const cityName = cleanText(str(it?.city)) ?? null;
+	const streetName = cleanText(str(it?.street)) ?? null;
 
 	const features: Record<string, unknown> = {
 		auction_type: type,
@@ -415,6 +417,10 @@ function detailToListing(
 		parcel,
 		category,
 		region,
+		...(cityName ? { city: cityName } : {}),
+		...(streetName ? { street: streetName } : {}),
+		...(propertyType === "plot" && areaM2 != null ? { plot_area: areaM2 } : {}),
+		portal_status: "active",
 		organizer_url: organizerUrl,
 		// A tender is not a court execution; the UI can label it honestly.
 		distress_sale: type === "skarbowe",

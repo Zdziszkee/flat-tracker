@@ -4,6 +4,7 @@ import { db } from "#/db/index";
 import { listings as listingsTable } from "#/db/schema";
 import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
+import { formatAddressForGeocode } from "./address.ts";
 import {
 	propertyTypeFromListingUrl,
 	propertyTypeFromValue,
@@ -74,6 +75,7 @@ interface NextData {
 				};
 			};
 			unifiedAd?: OtodomDetail;
+			ad?: OtodomDetail;
 		};
 	};
 }
@@ -106,16 +108,41 @@ interface OtodomDetail {
 		salePrice?: { value?: number };
 		rentPrice?: { value?: number };
 		rentalPrice?: { value?: number };
+		totalMaintenanceFee?: { value?: number };
+		deposit?: { value?: number };
+		onRequest?: boolean;
+		isNegotiable?: boolean;
+		type?: string;
 	};
 	attributes?: Record<string, string | number | string[] | undefined>;
 	description?: string;
 	location?: {
 		coordinates?: { latitude?: number; longitude?: number };
+		address?: {
+			street?: { name?: string | null; number?: string | null } | null;
+			city?: string | null;
+			province?: string | null;
+			postalCode?: string | null;
+			district?: string | null;
+		} | null;
 		reverseGeocoding?: {
 			locations?: Array<{ name?: string; locationLevel?: string }>;
 		};
 	};
-	lifecycle?: { createdAt?: string };
+	lifecycle?: { createdAt?: string; updatedAt?: string };
+	createdAt?: string;
+	modifiedAt?: string;
+	market?: string;
+	status?: string;
+	advertiserType?: string;
+	advertType?: string;
+	agency?: { name?: string | null } | null;
+	owner?: { type?: string | null; name?: string | null } | null;
+	ownerAccount?: { type?: string | null; name?: string | null } | null;
+	developmentId?: string | number | null;
+	developmentTitle?: string | null;
+	images?: Array<{ large?: string; medium?: string }> | null;
+	exclusiveOffer?: boolean;
 }
 
 const ROOMS: Record<string, number> = {
@@ -269,9 +296,106 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 		};
 	}
 
-	function detailToListing(detail: OtodomDetail, url: string): Listing {
-		const attrs = detail.attributes ?? {};
-		const price = detail.price?.[opts.priceKey]?.value ?? null;
+	function detailToListing(
+		detail: OtodomDetail,
+		fallback: OtodomDetail | null,
+		url: string,
+	): Listing {
+		const attrs = detail.attributes ?? fallback?.attributes ?? {};
+		const priceData = {
+			...(fallback?.price ?? {}),
+			...(detail.price ?? {}),
+		};
+		const price =
+			priceData[opts.priceKey]?.value ??
+			fallback?.price?.[opts.priceKey]?.value ??
+			null;
+		const location = detail.location ?? fallback?.location;
+		const addressNode = location?.address;
+		const reverse = location?.reverseGeocoding?.locations;
+		const city =
+			addressNode?.city ??
+			reverse?.find((entry) => entry.locationLevel === "city_or_village")
+				?.name ??
+			null;
+		const province =
+			addressNode?.province ??
+			reverse?.find((entry) => entry.locationLevel === "voivodeship")?.name ??
+			null;
+		const district = addressNode?.district ?? districtOf(reverse) ?? null;
+		const streetName = addressNode?.street?.name ?? null;
+		const streetNumber = addressNode?.street?.number ?? null;
+		const address = streetName
+			? formatAddressForGeocode(
+					streetName,
+					streetNumber ?? undefined,
+					district,
+					city,
+				)
+			: [district, city].filter(Boolean).join(", ") || null;
+
+		const features: Record<string, unknown> = {
+			...attrs,
+			...(detail.market ? { market: detail.market } : {}),
+			...(detail.status ? { status: detail.status } : {}),
+			...(city ? { city } : {}),
+			...(province ? { voivodeship: province } : {}),
+			...(addressNode?.postalCode
+				? { postal_code: addressNode.postalCode }
+				: {}),
+			...(streetName ? { street: streetName } : {}),
+			...(streetNumber ? { street_number: streetNumber } : {}),
+			...(detail.advertiserType
+				? { advertiser_type: detail.advertiserType }
+				: detail.ownerAccount?.type
+					? { advertiser_type: detail.ownerAccount.type }
+					: detail.owner?.type
+						? { advertiser_type: detail.owner.type }
+						: {}),
+			...(detail.agency?.name
+				? { agency: detail.agency.name }
+				: detail.ownerAccount?.name
+					? { agency: detail.ownerAccount.name }
+					: {}),
+			...((detail.modifiedAt ??
+			detail.lifecycle?.updatedAt ??
+			fallback?.lifecycle?.updatedAt)
+				? {
+						source_updated_at:
+							detail.modifiedAt ??
+							detail.lifecycle?.updatedAt ??
+							fallback?.lifecycle?.updatedAt,
+					}
+				: {}),
+			...(priceData.totalMaintenanceFee?.value != null
+				? { total_maintenance_fee: priceData.totalMaintenanceFee.value }
+				: {}),
+			...(priceData.deposit?.value != null
+				? { deposit: priceData.deposit.value }
+				: {}),
+			...(priceData.onRequest != null
+				? { price_on_request: priceData.onRequest }
+				: {}),
+			...(priceData.isNegotiable != null
+				? { price_negotiable: priceData.isNegotiable }
+				: {}),
+			...(detail.developmentId != null
+				? { investment_id: detail.developmentId }
+				: {}),
+			...(detail.developmentTitle
+				? { investment_title: detail.developmentTitle }
+				: {}),
+			...(detail.images
+				? {
+						image_count: detail.images.length,
+						primary_image:
+							detail.images[0]?.large ?? detail.images[0]?.medium ?? null,
+					}
+				: {}),
+			...(detail.exclusiveOffer != null
+				? { exclusive_offer: detail.exclusiveOffer }
+				: {}),
+		};
 
 		return {
 			source: opts.sourceId ?? opts.id,
@@ -283,8 +407,8 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 			areaM2: Number(attrs.m) || null,
 			rooms: Number(attrs.rooms_num) || null,
 			floor: typeof attrs.floor_no === "string" ? attrs.floor_no : null,
-			district: districtOf(detail.location?.reverseGeocoding?.locations),
-			address: null,
+			district,
+			address,
 			description: detail.description ?? null,
 			heatingType: attrStr(attrs, ["heating", "heating_type", "ogrzewanie"]),
 			propertyType:
@@ -292,10 +416,10 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 					? OTODOM_CATEGORY_TYPES[detail.category.id]
 					: null) ??
 				propertyTypeFromListingUrl(url) ??
-				attrStr(attrs, ["type", "property_type", "building_type"]),
-			features: Object.keys(attrs).length ? JSON.stringify(attrs) : null,
-			lat: detail.location?.coordinates?.latitude ?? null,
-			lng: detail.location?.coordinates?.longitude ?? null,
+				attrStr(attrs, ["type", "property_type"]),
+			features: Object.keys(features).length ? JSON.stringify(features) : null,
+			lat: location?.coordinates?.latitude ?? null,
+			lng: location?.coordinates?.longitude ?? null,
 			// The list page's `dateCreated` is the authoritative "added" date:
 			// it is what otodom's `daysSinceCreated` filter uses. The detail's
 			// `lifecycle.createdAt` is the original creation date and can be much
@@ -341,8 +465,12 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 			const pageProps = data.props?.pageProps;
 
 			// Detail pages: full data + coordinates.
-			if (isOtodomDetailUrl(url) && pageProps?.unifiedAd) {
-				const listing = detailToListing(pageProps.unifiedAd, url);
+			if (isOtodomDetailUrl(url) && (pageProps?.ad || pageProps?.unifiedAd)) {
+				const listing = detailToListing(
+					pageProps.ad ?? pageProps.unifiedAd ?? {},
+					pageProps.unifiedAd ?? null,
+					url,
+				);
 				return listing.externalId ? [listing] : [];
 			}
 

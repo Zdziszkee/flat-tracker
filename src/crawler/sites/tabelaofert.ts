@@ -118,6 +118,19 @@ function propertyValue(properties: unknown, name: string): string | null {
 	return null;
 }
 
+function propertiesMap(value: unknown): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	if (!Array.isArray(value)) return out;
+	for (const entry of value) {
+		if (!entry || typeof entry !== "object") continue;
+		const record = entry as Record<string, unknown>;
+		const name = cleanText(str(record.name));
+		if (!name) continue;
+		out[name.toLowerCase()] = record.value ?? true;
+	}
+	return out;
+}
+
 /** "IV kwartał 2026" / "I kw. 2026" -> quarter-start ISO date. */
 export function quarterStart(label: string | null): string | null {
 	if (!label) return null;
@@ -159,6 +172,8 @@ function offerToListing(
 	const floor = str(item.floorLevel);
 	const street = str(addressNode.streetAddress);
 	const locality = cleanText(str(addressNode.addressLocality));
+	const city = locality?.split(",")[0]?.trim() ?? null;
+	const voivodeship = cleanText(str(addressNode.addressRegion));
 	const district = locality?.includes(",")
 		? locality.split(",").slice(1).join(",").trim() || null
 		: null;
@@ -177,12 +192,19 @@ function offerToListing(
 		propertyTypeFromListingUrl(context.pageUrl);
 
 	const features: Record<string, unknown> = {
+		...propertiesMap(item.additionalProperty),
 		market: "pierwotny",
 		investment_id: context.investmentId,
 		investment_title: investmentTitle,
 		developer: context.developer,
 		construction_end_label: context.constructionEndLabel,
 		construction_end_date: context.constructionEndDate,
+		...(city ? { city } : {}),
+		...(voivodeship ? { voivodeship } : {}),
+		...(district ? { district } : {}),
+		...(street ? { street } : {}),
+		...(propertyType === "plot" && areaM2 != null ? { plot_area: areaM2 } : {}),
+		advertiser_type: "developer",
 	};
 
 	return {

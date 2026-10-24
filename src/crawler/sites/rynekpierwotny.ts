@@ -289,7 +289,15 @@ function offerToListing(offer: RpOffer, urlOverride?: string): Listing | null {
 		heatingType: null,
 		propertyType:
 			offer.type === 2 ? "house" : offer.type === 1 ? "apartment" : null,
-		features: null,
+		features: JSON.stringify({
+			investment_id: id,
+			investment_title: name,
+			market: "primary",
+			...(city ? { city } : {}),
+			...(offer.street_name ? { street: offer.street_name } : {}),
+			...(offer.street_number ? { street_number: offer.street_number } : {}),
+			vendor_slug: vendorSlug,
+		}),
 		// GeoJSON Point coordinates are [lng, lat].
 		lat,
 		lng,

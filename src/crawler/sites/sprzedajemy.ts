@@ -220,7 +220,11 @@ function cardToListing(
 		description: null,
 		heatingType: null,
 		propertyType: propertyTypeFromListingUrl(pageUrl),
-		features: JSON.stringify({ list_page: pageUrl }),
+		features: JSON.stringify({
+			list_page: pageUrl,
+			...(city ? { city } : {}),
+			...(district ? { district } : {}),
+		}),
 		lat: null,
 		lng: null,
 		listedAt: parseListedAt(date),
@@ -309,6 +313,12 @@ function detailToListing(
 		html.match(/"content_category"\s*:\s*"([^"]+)"/u)?.[1] ?? "";
 	const propertyType =
 		typeFromCategory(categoryText) ?? propertyTypeFromListingUrl(url);
+	const advertiser = attribute("oferta od") || null;
+	const building = attribute("zabudowa") || null;
+	const adminFee = parseNumberText(attribute("czynsz"));
+	const deposit = parseNumberText(
+		description?.match(/kaucja[^0-9]{0,30}([\d\s.,]+)/iu)?.[1],
+	);
 
 	const listing: Listing = {
 		source: "sprzedajemy",
@@ -329,11 +339,27 @@ function detailToListing(
 		heatingType: heating,
 		propertyType,
 		features: JSON.stringify({
+			...attributes,
 			market,
 			build_year: buildYear,
 			building_material: material,
 			ownership,
 			category: categoryText || null,
+			...(city ? { city } : {}),
+			...(district ? { district } : {}),
+			...(plausible
+				? {
+						street: plausible.street,
+						...(plausible.number ? { street_number: plausible.number } : {}),
+					}
+				: {}),
+			...(propertyType === "plot" && areaM2 != null
+				? { plot_area: areaM2 }
+				: {}),
+			...(advertiser ? { advertiser_type: advertiser } : {}),
+			...(building ? { building_type: building } : {}),
+			...(adminFee != null ? { admin_fee: adminFee } : {}),
+			...(deposit != null ? { deposit } : {}),
 		}),
 		lat,
 		lng,

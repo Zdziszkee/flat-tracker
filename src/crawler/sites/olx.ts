@@ -14,8 +14,10 @@ interface OlxAd {
 	title: string;
 	url?: string;
 	price?: {
-		regularPrice?: { value?: number };
+		regularPrice?: { value?: number; negotiable?: boolean };
 		value?: number;
+		displayValue?: string;
+		negotiable?: boolean;
 	};
 	params?: Array<{
 		key: string;
@@ -24,6 +26,7 @@ interface OlxAd {
 	}>;
 	location?: {
 		cityName?: string;
+		regionName?: string;
 		districtName?: string;
 	};
 	map?: {
@@ -31,6 +34,11 @@ interface OlxAd {
 		lon?: number;
 	};
 	createdTime?: number;
+	lastRefreshTime?: string;
+	status?: string;
+	isBusiness?: boolean;
+	isActive?: boolean;
+	photos?: string[];
 	description?: string;
 	category?: { id?: number };
 }
@@ -150,6 +158,11 @@ interface OlxAdapterOptions {
 
 function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 	function adToListing(ad: OlxAd, url: string): Listing {
+		const params: Record<string, string> = {};
+		for (const param of ad.params ?? []) {
+			if (!param.key) continue;
+			params[param.key] = param.normalizedValue ?? param.value ?? "";
+		}
 		const pricePerM2 = Number(paramValue(ad, "price_per_m")) || null;
 		const areaM2 = Number(paramValue(ad, "m")) || null;
 		const roomsRaw = paramValue(ad, "rooms");
@@ -170,6 +183,32 @@ function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 					.filter(Boolean)
 					.join(", ")
 			: null;
+		const features: Record<string, unknown> = {
+			...params,
+			...(ad.location?.cityName ? { city: ad.location.cityName } : {}),
+			...(ad.location?.regionName
+				? { voivodeship: ad.location.regionName }
+				: {}),
+			...(ad.location?.districtName
+				? { district: ad.location.districtName }
+				: {}),
+			...(ad.status ? { status: ad.status } : {}),
+			...(ad.isActive != null ? { is_active: ad.isActive } : {}),
+			...(ad.isBusiness != null ? { is_business: ad.isBusiness } : {}),
+			...(ad.lastRefreshTime ? { last_refresh_time: ad.lastRefreshTime } : {}),
+			...((ad.price?.negotiable ?? ad.price?.regularPrice?.negotiable) != null
+				? {
+						price_negotiable:
+							ad.price?.negotiable ?? ad.price?.regularPrice?.negotiable,
+					}
+				: {}),
+			...(ad.photos
+				? {
+						image_count: ad.photos.length,
+						primary_image: ad.photos[0] ?? null,
+					}
+				: {}),
+		};
 
 		return {
 			source: opts.sourceId ?? opts.id,
@@ -184,12 +223,12 @@ function makeOlxAdapter(opts: OlxAdapterOptions): CheerioAdapter {
 			district: ad.location?.districtName ?? city,
 			address,
 			description: ad.description ?? null,
-			heatingType: null,
+			heatingType: paramValue(ad, "heating") ?? null,
 			propertyType:
 				ad.category?.id != null
 					? (OLX_CATEGORY_KINDS[ad.category.id] ?? null)
 					: null,
-			features: null,
+			features: Object.keys(features).length ? JSON.stringify(features) : null,
 			lat: ad.map?.lat ?? null,
 			lng: ad.map?.lon ?? null,
 			listedAt: ad.createdTime ? new Date(ad.createdTime).toISOString() : null,

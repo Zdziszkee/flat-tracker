@@ -210,8 +210,15 @@ function cardToListing(
 		features: JSON.stringify({
 			source_category: propertyType,
 			private_owner: true,
+			advertiser_type: "private",
 			list_page: pageUrl,
 			list_description: listDescription,
+			...(city ? { city } : {}),
+			...(district ? { district } : {}),
+			...(street ? { street } : {}),
+			...(propertyType === "plot" && areaM2 != null
+				? { plot_area: areaM2 }
+				: {}),
 		}),
 		lat: null,
 		lng: null,
@@ -257,6 +264,7 @@ function detailToListing(
 
 	const canonical =
 		absoluteUrl($('link[rel="canonical"]').eq(0).attr("href")) ?? url;
+	const propertyType = propertyTypeFromListingUrl(url);
 
 	const listing: Listing = {
 		source: "adresowo",
@@ -272,8 +280,14 @@ function detailToListing(
 		address,
 		description: description ? description.slice(0, 2000) : null,
 		heatingType: null,
-		propertyType: propertyTypeFromListingUrl(url),
-		features: JSON.stringify({ private_owner: true }),
+		propertyType,
+		features: JSON.stringify({
+			private_owner: true,
+			advertiser_type: "private",
+			...(propertyType === "plot" && areaM2 != null
+				? { plot_area: areaM2 }
+				: {}),
+		}),
 		lat: num(geo.latitude),
 		lng: num(geo.longitude),
 		listedAt: null,

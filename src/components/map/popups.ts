@@ -45,12 +45,30 @@ export function popupHtml(listing: ApiListing): string {
 		layoutParts.push(`do ${listing.maxGuests} gości`);
 	if (listing.floor) layoutParts.push(`piętro ${listing.floor}`);
 	if (listing.propertyType) layoutParts.push(listing.propertyType);
+	if (listing.plotAreaM2) layoutParts.push(`działka ${listing.plotAreaM2} m²`);
+	if (listing.buildingType) layoutParts.push(listing.buildingType);
 	const details = layoutParts.join(" · ");
 
 	const heating = listing.heatingType
 		? `Ogrzewanie: ${listing.heatingType}`
 		: "";
 	const utilities = formatUtilities(listing.utilities);
+
+	// Rental cost breakdown and auction terms, when the portal published them.
+	const costParts: string[] = [];
+	if (listing.adminFee)
+		costParts.push(`Czynsz: ${formatPln(listing.adminFee)}`);
+	if (listing.deposit) costParts.push(`Kaucja: ${formatPln(listing.deposit)}`);
+	const costs = costParts.join(" · ");
+	let auctionHtml = "";
+	if (listing.auctionType || listing.auctionDate) {
+		const date = listing.auctionDate
+			? new Date(listing.auctionDate).toLocaleDateString("pl-PL")
+			: "";
+		auctionHtml = `<div class="text-purple-700">${escapeHtml(
+			[listing.auctionType, date].filter(Boolean).join(" · "),
+		)}</div>`;
+	}
 
 	// Forum-sourced investments are construction threads, not offers: no
 	// price row, show thread activity instead of a valuation. Investmap
@@ -201,6 +219,8 @@ export function popupHtml(listing: ApiListing): string {
 			}
       ${heating ? `<div class="text-gray-500">${escapeHtml(heating)}</div>` : ""}
       ${utilities ? `<div class="text-gray-500">${escapeHtml(utilities)}</div>` : ""}
+      ${costs ? `<div class="text-gray-500">${escapeHtml(costs)}</div>` : ""}
+      ${auctionHtml}
       ${stayLines.join("\n      ")}
       <div class="text-gray-400">Dodano: ${addedLabel}</div>
       ${threadHtml}

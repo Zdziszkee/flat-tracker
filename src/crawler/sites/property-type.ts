@@ -18,6 +18,7 @@ const TYPE_VALUES: Record<string, PropertyKind> = {
 	kawalerka: "apartment",
 	mieszkanie: "apartment",
 	house: "house",
+	singlefamilyresidence: "house",
 	dom: "house",
 	domy: "house",
 	domu: "house",

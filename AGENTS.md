@@ -585,7 +585,22 @@ price, pricePerM2, areaM2, rooms, floor, district, lat, lng, listedAt).
 ### DB schema (`src/db/schema.ts`)
 
 - `listings` — active offers; unique `(source, externalId)`; upserted by the
-  sink, so detail-page records refine list-page records
+  sink, so detail-page records refine list-page records. Beyond the core
+  offer columns it stores the normalized intersection of portal attributes:
+  location parts (`city`, `voivodeship`, `postalCode`, `street`,
+  `streetNumber`), plot/building type, amenity flags (`hasBalcony`,
+  `hasTerrace`, `hasGarden`, `hasElevator`, `hasParking`, `hasGarage`,
+  `hasBasement`, `isFurnished`, `petsAllowed`), costs (`adminFee`,
+  `deposit`), commercial terms (`priceNegotiable`, `priceOnRequest`,
+  `advertiserType`, `agencyName`, `portalStatus`, `sourceUpdatedAt`),
+  new-development grouping (`investmentId`, `investmentTitle`, `developer`)
+  and auction metadata (`auctionType`, `auctionDate`, `wadium`, `seller`).
+  Adapters keep the raw payload in `features`; `src/crawler/attributes.ts`
+  promotes it (alias-key flattening, boolean/date/area coercion, negation-
+  aware amenity text). Every promoted column is upserted with
+  `coalesce(excluded.X, listings.X)` so a list-only re-crawl cannot wipe a
+  detail-enriched value. `bun run validate:listing-attributes` pins the
+  alias, unit, negation and coercion cases.
 - `buildings` — OSM buildings referenced by listings/transactions
   (osmId unique, address, tags, geometry)
 - `osm_buildings` — local OSM footprint index for małopolska (bbox, centroid,
