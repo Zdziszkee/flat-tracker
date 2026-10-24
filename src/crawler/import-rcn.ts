@@ -524,6 +524,7 @@ export async function importRcn(force = false): Promise<number> {
 		street: string | null;
 		streetNumber: string | null;
 		market: number | null;
+		kind: "unit";
 		lat: number | null;
 		lng: number | null;
 		parcelId: string | null;
@@ -598,6 +599,7 @@ export async function importRcn(force = false): Promise<number> {
 			street: adres?.ulica || null,
 			streetNumber: adres?.numer || null,
 			market: tx.rynek ? Number.parseInt(tx.rynek, 10) : null,
+			kind: "unit",
 			lat: pos.lat,
 			lng: pos.lng,
 			parcelId,
@@ -648,6 +650,7 @@ async function flush(
 		street: string | null;
 		streetNumber: string | null;
 		market: number | null;
+		kind: "unit";
 		lat: number | null;
 		lng: number | null;
 		parcelId: string | null;

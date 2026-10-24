@@ -264,6 +264,13 @@ export const transactions = sqliteTable(
 		district: text(),
 		/** 1 = rynek pierwotny (primary), 2 = rynek wtórny (secondary). */
 		market: integer({ mode: "number" }),
+		/**
+		 * Registry object family: a dwelling/unit, a whole building or land.
+		 * GUGiK writes this explicitly from its three transaction tables;
+		 * the Kraków apartment GML uses `unit`. NULL is legacy/ambiguous and
+		 * must not be used as evidence for a segment-specific valuation.
+		 */
+		kind: text(),
 		lat: real(),
 		lng: real(),
 		/**
@@ -290,6 +297,7 @@ export const transactions = sqliteTable(
 		index("transactions_district_date_idx").on(t.district, t.date),
 		index("transactions_price_m2_date_idx").on(t.pricePerM2, t.date),
 		index("transactions_building_date_idx").on(t.buildingId, t.date),
+		index("transactions_kind_date_idx").on(t.kind, t.date),
 		/**
 		 * Partial index over every tracked region (`src/db/region.ts`): the
 		 * RCN import is national, so a regional aggregation would otherwise
@@ -315,6 +323,56 @@ export const transactions = sqliteTable(
 		index("transactions_region_date_idx")
 			.on(t.date, t.pricePerM2, t.parcelId)
 			.where(sql.raw(REGION_PREDICATE_SQL)),
+	],
+);
+
+/**
+ * Quarterly, chain-linked property price indices used to bring historical
+ * RCN comparables to the valuation date. One row is a complete
+ * segment/geography/period observation; `strata` retains the area-band
+ * medians that produced the link so the calculation stays auditable.
+ */
+export const priceIndices = sqliteTable(
+	"price_indices",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		/** flat | flat_primary | flat_secondary | house | plot. */
+		segment: text().notNull(),
+		/** district | grid10 | region | external_city. */
+		geographyType: text("geography_type").notNull(),
+		/** Normalized district, grid key, region id or external city slug. */
+		geographyKey: text("geography_key").notNull(),
+		/** Quarter as YYYY-Qn, e.g. 2026-Q3. */
+		period: text().notNull(),
+		/** Chain index, 100 at the first usable quarter in this series. */
+		indexValue: real("index_value").notNull(),
+		/** Overall median for the observation, before area stratification. */
+		medianPriceM2: real("median_price_m2"),
+		sampleCount: integer("sample_count").notNull(),
+		/** JSON: area-band medians and counts used for the chain link. */
+		strata: text(),
+		/** stratified_median | external. */
+		method: text().notNull(),
+		/** rcn | nbp. */
+		source: text().notNull(),
+		generatedAt: integer("generated_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+	},
+	(t) => [
+		uniqueIndex("price_indices_series_period_idx").on(
+			t.segment,
+			t.geographyType,
+			t.geographyKey,
+			t.period,
+			t.source,
+		),
+		index("price_indices_lookup_idx").on(
+			t.segment,
+			t.geographyType,
+			t.geographyKey,
+			t.period,
+		),
 	],
 );
 

@@ -322,6 +322,7 @@ interface RowInsert {
 	floor: string | null;
 	street: string | null;
 	market: number | null;
+	kind: "unit" | "building" | "parcel";
 	lat: number | null;
 	lng: number | null;
 	parcelId: string | null;
@@ -410,6 +411,7 @@ async function collectFromGpkg(
 		};
 		const tables: Array<{
 			t: string;
+			kind: RowInsert["kind"];
 			idCol: string;
 			area: string[];
 			/** true when the area column is hectares (RCN land areas). */
@@ -421,6 +423,7 @@ async function collectFromGpkg(
 		}> = [
 			{
 				t: "transakcje_dzialki",
+				kind: "parcel",
 				idCol: "dzi_id_dzialki",
 				area: ["dzi_pow_ewid", "nier_pow_gruntu"],
 				areaHectares: true,
@@ -429,6 +432,7 @@ async function collectFromGpkg(
 			},
 			{
 				t: "transakcje_budynki",
+				kind: "building",
 				idCol: "bud_id_budynku",
 				area: ["bud_pow_uzyt", "nier_pow_gruntu"],
 				price: ["bud_cena_brutto", "tran_cena_brutto"],
@@ -436,6 +440,7 @@ async function collectFromGpkg(
 			},
 			{
 				t: "transakcje_lokale",
+				kind: "unit",
 				idCol: "lok_id_lokalu",
 				area: ["lok_pow_uzyt"],
 				price: ["lok_cena_brutto", "tran_cena_brutto"],
@@ -526,6 +531,7 @@ async function collectFromGpkg(
 								: null,
 						street: null,
 						market: MARKET_BY_RYNKU[mktRaw] ?? null,
+						kind: spec.kind,
 						lat,
 						lng,
 						parcelId: spec.isParcel ? extKey || null : null,

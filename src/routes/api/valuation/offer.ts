@@ -3,25 +3,14 @@ import { json } from "@tanstack/react-start";
 import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
+import type { PropertyKind } from "#/lib/property-kind";
+import { propertyKindOf } from "#/lib/property-kind";
+import { estimateSaleValue } from "#/lib/valuation/offer-model";
+import type { ValuationSegment } from "#/types/listing";
 
 /**
  * Per-offer valuation + net-ROI analysis.
- *
- * Compares an offer against three comp sets (price per m², sale offers):
- *   1. same BUILDING (listings.buildingId)
- *   2. same AREA (district, fallback 1 km bbox on coordinates)
- *   3. RCN TRANSACTIONS within ~1 km in the last 24 months (ground truth)
- * blended (building 50 %, area 25 %, RCN 25 % — renormalized over
- * whichever sets exist) into a fair-value estimate.
- *
- * Rental potential (LT + STR) is estimated from comparable rentals
- * within 1 km — filtered to a SIMILAR SIZE band (±40 % of the offer's
- * area, widening to ±100 %, then unfiltered) so a unique 250 m² kamienica
- * is never compared against studio rents. Net = income − opłaty
- * (czynsz adm.); STR assumes the area's classified occupancy.
  */
-
-const EPOCH_CUTOFF = Math.floor(Date.now() / 1000) - 365 * 2 * 86400;
 
 function bbox(lat: number, lng: number, meters: number) {
 	const dLat = meters / 111_320;
@@ -34,17 +23,6 @@ function bbox(lat: number, lng: number, meters: number) {
 	};
 }
 
-function rating(pct: number): { label: string; tone: string } {
-	if (pct <= -15)
-		return { label: "mocno niedowartościowana", tone: "text-emerald-600" };
-	if (pct <= -5)
-		return { label: "niedowartościowana", tone: "text-emerald-600" };
-	if (pct < 5) return { label: "wycena uczciwa", tone: "text-gray-700" };
-	if (pct < 15)
-		return { label: "lekko przewartościowana", tone: "text-amber-600" };
-	return { label: "przewartościowana", tone: "text-red-600" };
-}
-
 function czynszFromUtilities(json: string | null): number {
 	try {
 		const u = JSON.parse(json ?? "{}") as { czynsz?: number | null };
@@ -52,11 +30,6 @@ function czynszFromUtilities(json: string | null): number {
 	} catch {
 		return 0;
 	}
-}
-
-interface Comp {
-	avg: number;
-	n: number;
 }
 
 export const Route = createFileRoute("/api/valuation/offer")({
@@ -70,6 +43,8 @@ export const Route = createFileRoute("/api/valuation/offer")({
 				const offer = await db.get<{
 					id: number;
 					source: string;
+					externalId: string;
+					title: string;
 					offerType: string;
 					price: number | null;
 					pricePerM2: number | null;
@@ -80,92 +55,31 @@ export const Route = createFileRoute("/api/valuation/offer")({
 					lng: number | null;
 					buildingId: number | null;
 					utilities: string | null;
+					propertyType: string | null;
+					market: string | null;
+					plotType: string | null;
 				}>(sql`
-					SELECT id, source, offer_type AS offerType, price,
+					SELECT id, source, externalId, title, offer_type AS offerType, price,
 					       pricePerM2, areaM2, rooms, district,
-					       lat, lng, building_id AS buildingId, utilities
+					       lat, lng, building_id AS buildingId, utilities,
+					       property_type AS propertyType, market, plot_type AS plotType
 					FROM listings WHERE id = ${id}
 				`);
 				if (!offer) return json({ error: "not found" }, { status: 404 });
 
+				const kind = propertyKindOf({
+					source: offer.source,
+					title: offer.title,
+					propertyType: offer.propertyType,
+					externalId: offer.externalId,
+				});
+				const segment: ValuationSegment =
+					kind === "house" ? "house" : kind === "plot" ? "plot" : "flat";
+
 				const offerM2 = offer.pricePerM2;
 				const ownArea = offer.areaM2 ?? null;
 
-				// ---- 1. Same-building comp ----------------------------------
-				let building: Comp | null = null;
-				if (offer.buildingId != null && offerM2 != null) {
-					const r = await db.get<Comp>(sql`
-						SELECT avg(pricePerM2) AS avg, count(*) AS n
-						FROM listings
-						WHERE building_id = ${offer.buildingId}
-						  AND id != ${offer.id}
-						  AND offer_type = ${offer.offerType}
-						  AND pricePerM2 IS NOT NULL
-					`);
-					if (r && r.n >= 2) building = r;
-				}
-
-				// ---- 2. Area comp (district, else 1 km bbox) ----------------
-				let area: Comp | null = null;
-				if (offerM2 != null) {
-					let r: Comp | null = null;
-					if (offer.district) {
-						r = await db.get<Comp>(sql`
-							SELECT avg(pricePerM2) AS avg, count(*) AS n
-							FROM listings
-							WHERE district = ${offer.district}
-							  AND id != ${offer.id}
-							  AND offer_type = ${offer.offerType}
-							  AND pricePerM2 IS NOT NULL
-						`);
-					}
-					if ((!r || r.n < 3) && offer.lat != null && offer.lng != null) {
-						const b = bbox(offer.lat, offer.lng, 1000);
-						r = await db.get<Comp>(sql`
-							SELECT avg(pricePerM2) AS avg, count(*) AS n
-							FROM listings
-							WHERE id != ${offer.id}
-							  AND offer_type = ${offer.offerType}
-							  AND pricePerM2 IS NOT NULL
-							  AND lat BETWEEN ${b.minLat} AND ${b.maxLat}
-							  AND lng BETWEEN ${b.minLng} AND ${b.maxLng}
-						`);
-					}
-					if (r && r.n >= 3) area = r;
-				}
-
-				// ---- 3. RCN transactions comp (1 km, 24 months) -------------
-				let rcn: Comp | null = null;
-				if (offer.lat != null && offer.lng != null) {
-					const b = bbox(offer.lat, offer.lng, 1000);
-					const r = await db.get<Comp>(sql`
-						SELECT avg(pricePerM2) AS avg, count(*) AS n
-						FROM transactions
-						WHERE pricePerM2 BETWEEN 500 AND 40000
-						  AND lat BETWEEN ${b.minLat} AND ${b.maxLat}
-						  AND lng BETWEEN ${b.minLng} AND ${b.maxLng}
-						  AND date >= ${EPOCH_CUTOFF}
-					`);
-					if (r && r.n >= 3) rcn = r;
-				}
-
-				// ---- Blend (weights renormalize over available sets) --------
-				const parts: Array<[number, number]> = [];
-				if (building) parts.push([building.avg, 0.5]);
-				if (area) parts.push([area.avg, 0.25]);
-				if (rcn) parts.push([rcn.avg, 0.25]);
-				const wSum = parts.reduce((a, [, w]) => a + w, 0);
-				const fairM2 =
-					wSum > 0 ? parts.reduce((a, [v, w]) => a + v * w, 0) / wSum : null;
-				const overUnder =
-					offerM2 != null && fairM2 != null && fairM2 > 0
-						? (offerM2 / fairM2 - 1) * 100
-						: null;
-
 				// ---- 4/5. Rental comps with SIZE-matched bands --------------
-				// Band 1: ±40 % of the offer's area; band 2: ±100 %; band 3:
-				// unfiltered. First band with >= 3 comps wins; the label says
-				// which basis was used so the panel stays honest.
 				const hasGeo =
 					offer.lat != null &&
 					offer.lng != null &&
@@ -244,7 +158,7 @@ export const Route = createFileRoute("/api/valuation/offer")({
 						const ownCzynsz = czynszFromUtilities(offer.utilities);
 						const netMonthly =
 							rentRow.rentAvg - (ownCzynsz || rentRow.czynszAvg);
-						const netYearly = netMonthly * 12 * 0.92; // ~1 mies. vacancji
+						const netYearly = netMonthly * 12 * 0.92;
 						lt = {
 							rentAvg: Math.round(rentRow.rentAvg),
 							czynszAvg: Math.round(rentRow.czynszAvg),
@@ -256,8 +170,6 @@ export const Route = createFileRoute("/api/valuation/offer")({
 						};
 					}
 
-					// STR comps — same banding (area may be missing on STR rows,
-					// so the "all" fallback matters most here).
 					const tryStr = (band: "similar" | "wide" | "all") =>
 						db.get<{ nightlyAvg: number; occ: number | null; n: number }>(sql`
 						SELECT avg(l.price) AS nightlyAvg,
@@ -322,25 +234,53 @@ export const Route = createFileRoute("/api/valuation/offer")({
 					}
 				}
 
+				// ---- Sale valuation via time-adjusted RCN comps -------------
+				const isSale = offer.offerType === "sale";
+				const saleResult =
+					isSale && kind != null
+						? await estimateSaleValue(
+								{
+									id: offer.id,
+									source: offer.source,
+									externalId: offer.externalId,
+									title: offer.title,
+									price: offer.price,
+									pricePerM2: offer.pricePerM2,
+									areaM2: offer.areaM2,
+									rooms: offer.rooms,
+									district: offer.district,
+									lat: offer.lat,
+									lng: offer.lng,
+									buildingId: offer.buildingId,
+									market: offer.market,
+									plotType: offer.plotType,
+									kind: segment,
+								},
+								new Date(),
+							)
+						: {
+								estimate: null,
+								reason: isSale ? "unsupported_kind" : "not_sale",
+							};
+
+				const mode = offer.offerType.includes("rent") ? "rent" : "sale";
+				const eligible =
+					saleResult.estimate != null || lt != null || str != null;
+
 				return json({
+					mode,
+					eligible,
+					reason: saleResult.estimate == null ? saleResult.reason : null,
 					offer: {
 						id: offer.id,
 						price: offer.price,
 						pricePerM2: offerM2,
 						areaM2: offer.areaM2,
 						offerType: offer.offerType,
+						kind: kind as PropertyKind | null,
 					},
-					comps: {
-						building: building
-							? { avgM2: Math.round(building.avg), n: building.n }
-							: null,
-						area: area ? { avgM2: Math.round(area.avg), n: area.n } : null,
-						rcn: rcn ? { avgM2: Math.round(rcn.avg), n: rcn.n } : null,
-						fairM2: fairM2 != null ? Math.round(fairM2) : null,
-					},
-					overUnderPct:
-						overUnder != null ? Math.round(overUnder * 10) / 10 : null,
-					rating: overUnder != null ? rating(overUnder) : null,
+					estimate: saleResult.estimate,
+					rent: null,
 					lt,
 					str,
 				});

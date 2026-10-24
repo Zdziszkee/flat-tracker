@@ -176,23 +176,93 @@ export interface RentalValuation {
 	netYieldPct: number | null;
 }
 
+export type ValuationSegment = "flat" | "house" | "plot";
+export type ValuationConfidenceLevel = "high" | "medium" | "low";
+
+export interface ValuationComparable {
+	id: string;
+	source: "rcn" | "listing";
+	date: string | null;
+	distanceM: number | null;
+	areaM2: number | null;
+	rooms: number | null;
+	address: string | null;
+	originalPrice: number | null;
+	originalPriceM2: number;
+	timeFactor: number;
+	adjustedPriceM2: number;
+	indexSource: string | null;
+	indexGeography: string | null;
+	indexFromPeriod: string | null;
+	indexToPeriod: string | null;
+}
+
+export interface ValuationCompSet {
+	n: number;
+	medianM2: number;
+	p25M2: number;
+	p75M2: number;
+	weight: number;
+}
+
+export interface ValuationEstimate {
+	segment: ValuationSegment;
+	fairM2: number;
+	fairPrice: number;
+	lowM2: number;
+	highM2: number;
+	lowPrice: number;
+	highPrice: number;
+	overUnderPct: number | null;
+	rating: { label: string; tone: string } | null;
+	confidence: {
+		level: ValuationConfidenceLevel;
+		rcnCount: number;
+		listingCount: number;
+		timeAdjustedCount: number;
+		totalCount: number;
+		spreadPct: number;
+		sameBuildingCount: number;
+	};
+	comparables: ValuationComparable[];
+	compSets: {
+		buildingRcn: ValuationCompSet | null;
+		nearbyRcn: ValuationCompSet | null;
+		listing: ValuationCompSet | null;
+	};
+	index: {
+		source: string;
+		segment: string;
+		geographyType: string;
+		geographyKey: string;
+		fromPeriod: string;
+		toPeriod: string;
+	} | null;
+}
+
+export interface RentEstimate {
+	fairMonthly: number;
+	overUnderPct: number | null;
+	n: number;
+	basis: string;
+	confidence: ValuationConfidenceLevel;
+}
+
 /** Shape of `/api/valuation/offer`. */
 export interface OfferValuation {
+	mode: "sale" | "rent";
+	eligible: boolean;
+	reason: string | null;
 	offer: {
 		id: number;
 		price: number | null;
 		pricePerM2: number | null;
 		areaM2: number | null;
 		offerType: string;
+		kind: PropertyKind | null;
 	};
-	comps: {
-		building: ValuationComp | null;
-		area: ValuationComp | null;
-		rcn: ValuationComp | null;
-		fairM2: number | null;
-	};
-	overUnderPct: number | null;
-	rating: { label: string; tone: string } | null;
+	estimate: ValuationEstimate | null;
+	rent: RentEstimate | null;
 	lt:
 		| (RentalValuation & {
 				rentAvg: number;

@@ -863,10 +863,10 @@ export function renderValuationHtml(valuation: OfferValuation): string {
 			: "";
 	return `<div class="mt-2 border-t pt-1 text-xs">
 		<div class="font-medium">Wycena vs rynek</div>
-		${valuation.comps.fairM2 != null ? `<div>godziwa: <b>${pl(valuation.comps.fairM2)} zł/m²</b>${valuation.overUnderPct != null ? ` · <span class="${valuation.rating?.tone ?? ""} font-medium">${valuation.rating?.label} ${valuation.overUnderPct > 0 ? "+" : ""}${valuation.overUnderPct}%</span>` : ""}</div>` : ""}
-		${comp("ten budynek", valuation.comps.building)}
-		${comp("okolica", valuation.comps.area)}
-		${comp("RCN 1 km / 24 mies.", valuation.comps.rcn)}
+		${valuation.estimate?.fairM2 != null ? `<div>godziwa: <b>${pl(valuation.estimate.fairM2)} zł/m²</b>${valuation.estimate.overUnderPct != null ? ` · <span class="${valuation.estimate.rating?.tone ?? ""} font-medium">${valuation.estimate.rating?.label} ${valuation.estimate.overUnderPct > 0 ? "+" : ""}${valuation.estimate.overUnderPct}%</span>` : ""}</div>` : ""}
+		${comp("ten budynek", valuation.estimate?.compSets.buildingRcn ? { avgM2: valuation.estimate.compSets.buildingRcn.medianM2, n: valuation.estimate.compSets.buildingRcn.n } : null)}
+		${comp("okolica", valuation.estimate?.compSets.nearbyRcn ? { avgM2: valuation.estimate.compSets.nearbyRcn.medianM2, n: valuation.estimate.compSets.nearbyRcn.n } : null)}
+		${comp("RCN 1 km / 24 mies.", valuation.estimate?.compSets.listing ? { avgM2: valuation.estimate.compSets.listing.medianM2, n: valuation.estimate.compSets.listing.n } : null)}
 		${valuation.lt ? roi("Najem długoterminowy", valuation.lt, "text-emerald-700") : ""}
 		${valuation.str ? roi("Najem krótkoterminowy (szac.)", valuation.str, "text-rose-700") : ""}
 	</div>`;
