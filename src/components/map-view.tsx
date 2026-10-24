@@ -6,8 +6,11 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import { useListings } from "#/hooks/use-listings";
 import { useOccupancy } from "#/hooks/use-occupancy";
 import { escapeHtml } from "#/lib/html";
-import { filterListings, type ListingFilters } from "#/lib/listing-features";
-import type { PropertyKind } from "#/lib/property-kind";
+import {
+	filterListings,
+	type KindFilter,
+	type ListingFilters,
+} from "#/lib/listing-features";
 import type { OfferValuation } from "#/types/listing";
 import type { OccupancyCell } from "#/types/occupancy";
 import {
@@ -54,7 +57,7 @@ export default function MapView({
 	source: string;
 	days: 0 | 1 | 7 | 30;
 	offerType: "all" | "sale" | "rental";
-	kind: "all" | PropertyKind;
+	kind: KindFilter;
 	showParcels: boolean;
 	showRailways: boolean;
 	showOccupancy: boolean;

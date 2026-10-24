@@ -121,7 +121,14 @@ export interface FilterableListing {
 
 export type DaysFilter = 0 | 1 | 7 | 30;
 export type OfferTypeFilter = "all" | "sale" | "rental";
-export type KindFilter = "all" | PropertyKind;
+/**
+ * "Inwestycje publiczne" is a category of its own, not a listing kind: it
+ * selects the city-project layer instead of offers. Keeping it in the same
+ * filter means the map and table show it next to flats, houses and plots.
+ */
+export const PUBLIC_INVESTMENTS_KIND = "public-investments";
+
+export type KindFilter = "all" | PropertyKind | typeof PUBLIC_INVESTMENTS_KIND;
 
 export interface ListingFilters {
 	source: string;
@@ -168,6 +175,9 @@ export function matchesListingFilters(
 	row: FilterableListing,
 	filters: ListingFilters,
 ): boolean {
+	// A public-investment category is not a listing kind: it swaps the whole
+	// dataset, so no offer can match it.
+	if (filters.kind === PUBLIC_INVESTMENTS_KIND) return false;
 	return (
 		(filters.source === "all" || row.source === filters.source) &&
 		(filters.kind === "all" || row.propertyKind === filters.kind) &&
@@ -226,6 +236,7 @@ const kindSchema = z
 		z.literal("apartment"),
 		z.literal("house"),
 		z.literal("plot"),
+		z.literal(PUBLIC_INVESTMENTS_KIND),
 	])
 	.catch("all")
 	.optional();

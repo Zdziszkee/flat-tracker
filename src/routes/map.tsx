@@ -4,8 +4,13 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { ListingFilters } from "#/components/listing-filters";
 import { useListingFilters } from "#/hooks/use-listing-filters";
 import { useListings } from "#/hooks/use-listings";
+import { usePublicInvestments } from "#/hooks/use-public-investments";
 import { useSources } from "#/hooks/use-sources";
-import { listingFacets, listingSearchSchema } from "#/lib/listing-features";
+import {
+	listingFacets,
+	listingSearchSchema,
+	PUBLIC_INVESTMENTS_KIND,
+} from "#/lib/listing-features";
 import {
 	PUBLIC_INVESTMENT_CATEGORY_COLORS,
 	PUBLIC_INVESTMENT_CATEGORY_LABELS,
@@ -33,6 +38,11 @@ function MapPage() {
 	const { data: sourcesData } = useSources();
 	const sources = sourcesData?.sources ?? [];
 	const facets = listingFacets(data?.listings ?? [], filters.days);
+	const showingPublicInvestments = filters.kind === PUBLIC_INVESTMENTS_KIND;
+	const { data: publicInvestments } = usePublicInvestments(
+		showingPublicInvestments,
+	);
+	const publicInvestmentsCount = publicInvestments?.features.length;
 
 	const [mounted, setMounted] = useState(false);
 	/**
@@ -84,13 +94,16 @@ function MapPage() {
 						Mapa ofert · Małopolska i Śląsk
 					</h1>
 					<p className="text-xs text-gray-500">
-						{facets.total.toLocaleString("pl-PL")} ofert w aktywnym oknie
+						{showingPublicInvestments
+							? `${(publicInvestmentsCount ?? 0).toLocaleString("pl-PL")} inwestycji publicznych`
+							: `${facets.total.toLocaleString("pl-PL")} ofert w aktywnym oknie`}
 					</p>
 				</div>
 				<ListingFilters
 					value={filters}
 					sources={sources}
 					facets={facets}
+					publicInvestmentsCount={publicInvestmentsCount}
 					showOfferType
 					onChange={setFilters}
 				/>
@@ -149,24 +162,26 @@ function MapPage() {
 						/>
 						Obłożenie STR
 					</label>
-					<label className="flex items-center gap-1.5 text-sm text-gray-700">
-						<input
-							type="checkbox"
-							checked={showInvestments}
-							onChange={(e) => {
-								setShowInvestments(e.target.checked);
-								try {
-									window.localStorage.setItem(
-										PUBLIC_INVESTMENTS_STORAGE_KEY,
-										e.target.checked ? "1" : "0",
-									);
-								} catch {
-									// Not fatal: the toggle just won't persist.
-								}
-							}}
-						/>
-						Inwestycje publiczne
-					</label>
+					{!showingPublicInvestments && (
+						<label className="flex items-center gap-1.5 text-sm text-gray-700">
+							<input
+								type="checkbox"
+								checked={showInvestments}
+								onChange={(e) => {
+									setShowInvestments(e.target.checked);
+									try {
+										window.localStorage.setItem(
+											PUBLIC_INVESTMENTS_STORAGE_KEY,
+											e.target.checked ? "1" : "0",
+										);
+									} catch {
+										// Not fatal: the toggle just won't persist.
+									}
+								}}
+							/>
+							Inwestycje publiczne
+						</label>
+					)}
 					{showOccupancy && (
 						<>
 							<select
@@ -222,14 +237,14 @@ function MapPage() {
 							showParcels={showParcels}
 							showRailways={showRailways}
 							showOccupancy={showOccupancy}
-							showInvestments={showInvestments}
+							showInvestments={showInvestments || showingPublicInvestments}
 							occupancySource={occupancySource}
 							occupancyMonth={occupancyMonth}
 						/>
 					</Suspense>
 				)}
 			</div>
-			{showInvestments && (
+			{(showInvestments || showingPublicInvestments) && (
 				<div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t px-4 py-1.5 text-xs text-gray-600">
 					<span className="font-medium text-gray-700">Inwestycje:</span>
 					{Object.entries(PUBLIC_INVESTMENT_CATEGORY_LABELS).map(

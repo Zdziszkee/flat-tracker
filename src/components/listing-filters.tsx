@@ -10,7 +10,7 @@ import type {
 	ListingFilters as Filters,
 	ListingFacets,
 } from "#/lib/listing-features";
-import { DAY_OPTIONS } from "#/lib/listing-features";
+import { DAY_OPTIONS, PUBLIC_INVESTMENTS_KIND } from "#/lib/listing-features";
 import { PROPERTY_KIND_LABELS, type PropertyKind } from "#/lib/property-kind";
 import { SOURCE_COLORS, sourceLabel } from "#/lib/sources";
 
@@ -19,6 +19,8 @@ interface ListingFiltersProps {
 	sources: readonly string[];
 	facets: ListingFacets;
 	showOfferType?: boolean;
+	/** Optional count for the separate "Inwestycje publiczne" category. */
+	publicInvestmentsCount?: number;
 	onChange: (next: Filters) => void;
 }
 
@@ -31,6 +33,7 @@ export function ListingFilters({
 	sources,
 	facets,
 	showOfferType = false,
+	publicInvestmentsCount,
 	onChange,
 }: ListingFiltersProps) {
 	return (
@@ -86,6 +89,12 @@ export function ListingFilters({
 									{PROPERTY_KIND_LABELS[kind]} ({facets.byKind.get(kind) ?? 0})
 								</SelectItem>
 							))}
+						<SelectItem value={PUBLIC_INVESTMENTS_KIND}>
+							Inwestycje publiczne
+							{publicInvestmentsCount != null
+								? ` (${publicInvestmentsCount})`
+								: ""}
+						</SelectItem>
 					</SelectContent>
 				</Select>
 			</div>
