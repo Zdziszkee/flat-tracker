@@ -4,6 +4,7 @@
  */
 import {
 	chainStratifiedIndex,
+	observationsFromMedianRows,
 	timeAdjustment,
 } from "../src/lib/valuation/price-index.ts";
 
@@ -87,6 +88,53 @@ const small = chainStratifiedIndex([
 	},
 ]);
 check(small.length === 0, "small sample rejected");
+
+// Band rows without an overall median must still reach the chain: only the
+// rows at the overall-median positions carry that value, and dropping the
+// rest once left each quarter with a single band.
+const folded = observationsFromMedianRows([
+	{
+		period: "2025-Q1",
+		areaBand: "a<35",
+		bandN: 12,
+		bandMedian: 12000,
+		overallN: 40,
+		overallMedian: null,
+	},
+	{
+		period: "2025-Q1",
+		areaBand: "b35-60",
+		bandN: 20,
+		bandMedian: 10000,
+		overallN: 40,
+		overallMedian: null,
+	},
+	{
+		period: "2025-Q1",
+		areaBand: "c60-90",
+		bandN: 8,
+		bandMedian: 9000,
+		overallN: 40,
+		overallMedian: 10250,
+	},
+]);
+check(folded.length === 1, "median rows fold into one observation per period");
+check(folded[0]?.strata.length === 3, "every area band is kept");
+check(folded[0]?.overallMedian === 10250, "overall median is carried once");
+check(folded[0]?.overallCount === 40, "overall count is the period count");
+check(
+	observationsFromMedianRows([
+		{
+			period: "2025-Q1",
+			areaBand: "a<35",
+			bandN: 5,
+			bandMedian: 11000,
+			overallN: 0,
+			overallMedian: null,
+		},
+	]).length === 0,
+	"a period with no overall median is dropped",
+);
 
 if (failures > 0) {
 	console.error(`\n${failures} price-index check(s) failed.`);

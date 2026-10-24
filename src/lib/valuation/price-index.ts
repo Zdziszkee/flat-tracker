@@ -40,6 +40,60 @@ export interface PeriodObservation {
 	strata: IndexStratum[];
 }
 
+/** One grouped median row as returned by the index-rebuild SQL. */
+export interface MedianPeriodRow {
+	period: string;
+	areaBand: string;
+	bandN: number;
+	bandMedian: number | null;
+	overallN: number;
+	overallMedian: number | null;
+}
+
+/**
+ * Fold grouped median rows into one observation per period. Only the rows at
+ * the overall-median positions carry `overallMedian`; every other area band
+ * has it as NULL. Those band rows are the input to the stratified chain, so
+ * they must be kept even when the overall value is absent.
+ */
+export function observationsFromMedianRows(
+	rows: readonly MedianPeriodRow[],
+): PeriodObservation[] {
+	const byPeriod = new Map<string, PeriodObservation>();
+	for (const row of rows) {
+		let observation = byPeriod.get(row.period);
+		if (!observation) {
+			observation = {
+				period: row.period,
+				overallMedian: 0,
+				overallCount: 0,
+				strata: [],
+			};
+			byPeriod.set(row.period, observation);
+		}
+		if (row.overallN > 0) {
+			observation.overallCount = Math.max(
+				observation.overallCount,
+				row.overallN,
+			);
+		}
+		if (row.overallMedian != null && row.overallMedian > 0) {
+			observation.overallMedian = row.overallMedian;
+		}
+		if (row.bandMedian != null && row.bandMedian > 0 && row.bandN > 0) {
+			observation.strata.push({
+				band: row.areaBand,
+				median: row.bandMedian,
+				count: row.bandN,
+			});
+		}
+	}
+	return [...byPeriod.values()].filter(
+		(observation) =>
+			observation.overallMedian > 0 && observation.overallCount > 0,
+	);
+}
+
 export interface ChainedObservation extends PeriodObservation {
 	indexValue: number;
 }

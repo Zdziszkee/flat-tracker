@@ -7,6 +7,8 @@ import {
 	grid10Key,
 	type IndexGeographyType,
 	type IndexPoint,
+	type MedianPeriodRow,
+	observationsFromMedianRows,
 	type PeriodObservation,
 	type ValuationSegment,
 } from "#/lib/valuation/price-index";
@@ -21,15 +23,9 @@ import {
 const GEOGRAPHIES = ["district", "grid10", "region"] as const;
 type RcnGeography = (typeof GEOGRAPHIES)[number];
 
-interface MedianRow {
+interface MedianRow extends MedianPeriodRow {
 	segment: ValuationSegment;
 	geoKey: string;
-	period: string;
-	areaBand: string;
-	bandN: number;
-	bandMedian: number | null;
-	overallN: number;
-	overallMedian: number | null;
 }
 
 const FLAT_BAND = sql`case
@@ -107,12 +103,21 @@ async function medianRows(geoType: RcnGeography): Promise<MedianRow[]> {
 				count(*) OVER (PARTITION BY segment, geoKey, period, areaBand) AS bandN,
 				row_number() OVER (PARTITION BY segment, geoKey, period, areaBand ORDER BY pricePerM2) AS bandRn
 			FROM segmented
+		), withOverall AS (
+			-- The overall median must be computed over the whole period, not
+			-- per area band: for an even count the two middle rows can sit in
+			-- different bands, and averaging only the rows a band kept would
+			-- return one of them instead of their mean.
+			SELECT *,
+				avg(case when overallRn in ((overallN + 1) / 2, (overallN + 2) / 2) then pricePerM2 end)
+					OVER (PARTITION BY segment, geoKey, period) AS overallMedian
+			FROM ranked
 		)
 		SELECT segment, geoKey, period, areaBand, bandN,
 			avg(case when bandRn in ((bandN + 1) / 2, (bandN + 2) / 2) then pricePerM2 end) AS bandMedian,
 			max(overallN) AS overallN,
-			avg(case when overallRn in ((overallN + 1) / 2, (overallN + 2) / 2) then pricePerM2 end) AS overallMedian
-		FROM ranked
+			max(overallMedian) AS overallMedian
+		FROM withOverall
 		WHERE bandRn in ((bandN + 1) / 2, (bandN + 2) / 2)
 		   OR overallRn in ((overallN + 1) / 2, (overallN + 2) / 2)
 		GROUP BY segment, geoKey, period, areaBand
@@ -120,34 +125,7 @@ async function medianRows(geoType: RcnGeography): Promise<MedianRow[]> {
 }
 
 function observations(rows: readonly MedianRow[]): PeriodObservation[] {
-	const byPeriod = new Map<string, PeriodObservation>();
-	for (const row of rows) {
-		if (
-			row.overallMedian == null ||
-			row.overallMedian <= 0 ||
-			row.overallN <= 0
-		) {
-			continue;
-		}
-		let observation = byPeriod.get(row.period);
-		if (!observation) {
-			observation = {
-				period: row.period,
-				overallMedian: row.overallMedian,
-				overallCount: row.overallN,
-				strata: [],
-			};
-			byPeriod.set(row.period, observation);
-		}
-		if (row.bandMedian != null && row.bandMedian > 0 && row.bandN > 0) {
-			observation.strata.push({
-				band: row.areaBand,
-				median: row.bandMedian,
-				count: row.bandN,
-			});
-		}
-	}
-	return [...byPeriod.values()];
+	return observationsFromMedianRows(rows);
 }
 
 export interface PriceIndexBuildReport {
