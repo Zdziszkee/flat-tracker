@@ -5,7 +5,7 @@ import { firefox } from "playwright-core";
 
 /**
  * One browser stack for every JS-rendered source (booking,
- * licytacje-komornik).
+ * licytacje-komornik, eLicytacje KAS).
  *
  * camoufox — a patched Firefox with an anti-detect fingerprint, installed
  * once with `bunx camoufox-js fetch` (~660 MB) — is preferred, so no
@@ -22,6 +22,7 @@ import { firefox } from "playwright-core";
  */
 
 type AppBrowser = import("playwright").Browser;
+type AppContext = import("playwright").BrowserContext;
 
 /** First line of the deepest cause, for one-line logs. */
 function brief(err: unknown): string {
@@ -72,6 +73,40 @@ export async function launchBrowser(headless = true): Promise<AppBrowser> {
 		}
 	}
 	return chromium.launch({ headless });
+}
+
+/**
+ * Launch a browser with a persistent profile directory.
+ *
+ * Some WAF-protected sources (eLicytacje KAS behind Incapsula) solve their
+ * challenge with cookies and a browser fingerprint that the next run must
+ * reuse. A fresh context each time re-triggers the challenge and can end in
+ * a hard block, so the caller passes a profile directory under `data/`.
+ * The browser context is returned directly (there is no separate Browser
+ * handle for persistent contexts); the caller closes it.
+ */
+export async function launchPersistentBrowserContext(
+	userDataDir: string,
+	headless = true,
+): Promise<AppContext> {
+	const options = await camoufoxOptions();
+	if (options) {
+		try {
+			const { viewport: _viewport, ...rest } = options;
+			return await firefox.launchPersistentContext(userDataDir, {
+				...rest,
+				headless,
+			});
+		} catch (err) {
+			console.warn(
+				`[browser] camoufox persistent launch failed, falling back to chromium: ${brief(err)}`,
+			);
+		}
+	}
+	return chromium.launchPersistentContext(userDataDir, {
+		headless,
+		locale: "pl-PL",
+	});
 }
 
 /**

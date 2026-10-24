@@ -36,6 +36,7 @@
     "validate:regions": "tsx scripts/validate-region-scope.ts",
     "validate:listing-view": "tsx scripts/validate-listing-view.ts",
     "validate:listing-attributes": "tsx scripts/validate-listing-attributes.ts",
+    "validate:elicytacje": "tsx scripts/validate-elicytacje.ts",
     "validate:market-charts": "tsx scripts/validate-market-charts.ts"
   },
   "dependencies": {

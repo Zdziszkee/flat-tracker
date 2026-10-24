@@ -153,7 +153,13 @@ export interface PlaywrightAdapter extends AdapterBase {
  */
 export interface CustomLaunchAdapter extends PlaywrightAdapter {
 	/** Launches the browser used for this adapter's crawl. Caller closes it. */
-	launchBrowser(): Promise<import("playwright").Browser>;
+	launchBrowser?(): Promise<import("playwright").Browser>;
+	/**
+	 * Launches a persistent browser context instead of a fresh browser.
+	 * Needed by sources whose WAF challenge is solved once and remembered in
+	 * a profile directory (eLicytacje KAS). Caller closes it.
+	 */
+	launchContext?(): Promise<import("playwright").BrowserContext>;
 }
 
 export type SiteAdapter =

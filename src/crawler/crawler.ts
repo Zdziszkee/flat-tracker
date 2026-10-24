@@ -116,16 +116,31 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 	if (adapter.kind === "playwright") {
 		// Custom-launch adapters (anti-detect browser) drive their own browser;
 		// the adapter's extractListings() drives pagination/load-more itself.
-		if (typeof (adapter as CustomLaunchAdapter).launchBrowser === "function") {
-			const custom = adapter as CustomLaunchAdapter;
-			const browser = await custom.launchBrowser();
+		const custom = adapter as CustomLaunchAdapter;
+		if (
+			typeof custom.launchContext === "function" ||
+			typeof custom.launchBrowser === "function"
+		) {
+			// A persistent context carries its own browser lifecycle; close the
+			// context, not a browser handle that does not exist.
+			const persistentContext = custom.launchContext
+				? await custom.launchContext()
+				: null;
+			const browser = persistentContext ? null : await custom.launchBrowser?.();
 			try {
 				// viewport:null keeps camoufox's injected fingerprint window size
 				// instead of overriding it (Booking fingerprints viewports).
-				const context = await browser.newContext({
-					viewport: null,
-					locale: "pl-PL",
-				});
+				let context: import("playwright").BrowserContext;
+				if (persistentContext) {
+					context = persistentContext;
+				} else if (browser) {
+					context = await browser.newContext({
+						viewport: null,
+						locale: "pl-PL",
+					});
+				} else {
+					throw new Error(`${adapter.id}: no browser was launched`);
+				}
 				const page = await context.newPage();
 				await page.goto(adapter.startUrls[0], {
 					waitUntil: "domcontentloaded",
@@ -140,7 +155,8 @@ export async function crawlSite(adapter: SiteAdapter): Promise<CrawlResult> {
 				listings.push(...pageListings);
 				await page.close();
 			} finally {
-				await browser.close();
+				if (persistentContext) await persistentContext.close();
+				if (browser) await browser.close();
 			}
 			return { listings, pages: 1 };
 		}

@@ -16,4 +16,5 @@ export const ADDRESS_ONLY_SOURCES = [
 	"adresowo",
 	"sprzedajemy",
 	"mapalicytacji",
+	"elicytacje-mf",
 ] as const;

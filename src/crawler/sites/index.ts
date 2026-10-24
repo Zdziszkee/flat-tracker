@@ -5,6 +5,7 @@ import { bookingAdapter } from "./booking.ts";
 import { booksAdapter } from "./books.ts";
 import { budujesieAdapter } from "./budujesie.ts";
 import { domiportaAdapter } from "./domiporta.ts";
+import { elicytacjeMfAdapter } from "./elicytacje-mf.ts";
 import { gethomeAdapter } from "./gethome.ts";
 import { gratkaAdapter } from "./gratka.ts";
 import { investmapAdapter } from "./investmap.ts";
@@ -38,6 +39,7 @@ export const adapters: SiteAdapter[] = [
 	rynekpierwotnyAdapter,
 	komornikAdapter,
 	mapalicytacjiAdapter,
+	elicytacjeMfAdapter,
 	investmapAdapter,
 	budujesieAdapter,
 	quotesAdapter,

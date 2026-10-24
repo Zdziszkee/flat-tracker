@@ -25,6 +25,7 @@ export const SOURCE_LABELS = {
 	skaleczna: "Skaleczna",
 	"licytacje-komornik": "Licytacje komornicze",
 	mapalicytacji: "Mapa Licytacji",
+	"elicytacje-mf": "eLicytacje KAS",
 	budujesie: "BudujeSie (forum inwestycji)",
 } satisfies Record<string, string>;
 
@@ -47,6 +48,7 @@ export const SOURCE_COLORS = {
 	skaleczna: "#d946ef",
 	"licytacje-komornik": "#be123c",
 	mapalicytacji: "#14532d",
+	"elicytacje-mf": "#86198f",
 	budujesie: "#365314",
 } satisfies Record<string, string>;
 

@@ -114,6 +114,11 @@ const PORTAL_SOURCES: SourceDescriptor[] = [
 		kind: "portal",
 	},
 	{
+		id: "elicytacje-mf",
+		name: "eLicytacje KAS - licytacje skarbowe (Małopolska + Śląsk)",
+		kind: "portal",
+	},
+	{
 		id: "investmap",
 		name: "Investmap - Kraków + Katowice investments (flats + houses)",
 		kind: "portal",

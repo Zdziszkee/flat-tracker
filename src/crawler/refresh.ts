@@ -367,7 +367,7 @@ export async function refreshAll(
 			// Auction notices vanish from their list once the auction closes;
 			// a two-week grace period tolerates one bad list fetch.
 			(await pruneUnseenListings(
-				["mapalicytacji"],
+				["mapalicytacji", "elicytacje-mf"],
 				new Date(now - 14 * 24 * 60 * 60 * 1000),
 			));
 
