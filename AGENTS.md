@@ -454,33 +454,37 @@ deletes only `source = "rcn"`, so the external rows survive a rebuild.
 `src/lib/valuation/external-city.ts` maps a comparable's coordinates to the
 nearest tracked city (100 km) or its voivodeship proxy.
 
-### Upside potential
+### Upside potential (1-5 years)
 
 `ValuationEstimate.upside` (`src/lib/valuation/upside.ts`) is the forward
 half of the valuation: the comp median says what the offer is worth today,
-the upside block says what a 12-month hold is projected to return. It
-combines three research-standard factors instead of extrapolating the
-asking price:
+the upside block projects 1, 2, 3 and 5 year outcomes. It is a statistical
+forecast, not a gradient-boosted hedonic AVM: RCN carries no floor/build-year/
+condition fields to train one on, and deriving them from asking prices would
+bias the model. The forecasting layer those AVMs report around their point
+value is what this implements:
 
-- **Value gap**: `fairM2 / offerM2 - 1`. Mean reversion is slow, so only
-  35% of the gap is assumed to close within the horizon.
-- **Momentum**: the applied index's YoY and 2-year annualized growth (0.6/
-  0.4 blend), damped by half and capped at ±8%. The series is the same one
-  that adjusted the comparables (grid10/region or the finwire external city
-  fallback), so a flat index adds no growth.
-- **Risk**: annualized volatility of quarterly index returns plus the
-  comparable p25-p75 spread. The reported risk-adjusted upside subtracts the
-  full penalty; the 0-100 score subtracts only risk above an 8 p.p. baseline,
-  so a fairly priced flat in a typical-risk market is neutral (50).
+- **Market path**: an AR(1) model of quarterly log returns from the applied
+  index series (grid10/region, or the finwire external city fallback). The
+  long-run mean is shrunk 50/50 toward a 3.5%/yr nominal prior so the
+  2020-2026 boom is not extrapolated for five years; the autocorrelation is
+  clamped to [0, 0.6]. Current deviation decays at φ per quarter.
+- **Value gap**: `ln(fairM2 / offerM2)`, closed with `1 - exp(-h/8 quarters)`
+  (about a 2-year half-life), because mean reversion is slow.
+- **Uncertainty**: forecast variance from the residual volatility under
+  AR(1), turned into p10/p50/p90 bands per horizon. The risk-adjusted return
+  is the mean-variance certainty equivalent on log returns (γ = 2), then
+  annualized for comparability; the 0-100 score maps that against the 3.5%
+  long-run baseline (50 = neutral).
 
-The fields are `expectedGrowthPct`, `expectedFairM2` (fair grown by the
-index expectation), `mispricePct`, `upsidePct` (growth + partial gap
-convergence), `volatilityPct`, `compSpreadPct`, `riskPenaltyPct`,
-`riskAdjustedUpsidePct`, `score`, `label`, `tone` and a `basis` string for
-the popup/panel. It is a projection with explicit assumptions, not a
-forecast; the comparable evidence and confidence band remain the primary
-output. `scripts/validate-upside.ts` pins the annualization, gap handling,
-volatility, damping and score mapping.
+Each `UpsideHorizon` has `months`, `expectedUpsidePct`, `p10UpsidePct`,
+`p90UpsidePct`, `annualizedPct`, `riskAdjustedAnnualPct`, `score`, `label`
+and `tone`. The headline fields (`expectedGrowthPct`, `expectedFairM2`,
+`mispricePct`, `upsidePct`, `riskPenaltyPct`, `riskAdjustedUpsidePct`,
+`score`, `basis`) are the 12-month slice for the existing UI. Nominal,
+pre-tax, no transaction costs; the comparable evidence and confidence band
+remain the primary valuation output. `scripts/validate-upside.ts` pins the
+AR(1) path, gap convergence, variance, quantile bands and score mapping.
 
 ### Public investment layer
 

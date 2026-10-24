@@ -1,13 +1,13 @@
 /**
- * Validate the forward-looking upside math: quarter ordinals, growth
- * annualization, volatility, risk haircut and score. Pure, no DB.
- * Run with `bun run validate:upside`.
+ * Validate the multi-horizon upside math: quarter ordinals, AR(1) market
+ * path, gap convergence, forecast variance, quantile bands and scores.
+ * Pure, no DB. Run with `bun run validate:upside`.
  */
 import type { IndexPoint } from "../src/lib/valuation/price-index.ts";
 import {
+	horizonScore,
 	quarterOrdinal,
 	upsidePotential,
-	upsideScore,
 } from "../src/lib/valuation/upside.ts";
 
 let failures = 0;
@@ -29,10 +29,27 @@ function point(period: string, indexValue: number): IndexPoint {
 	};
 }
 
+function seriesFromReturns(
+	startOrdinal: number,
+	initial: number,
+	returns: readonly number[],
+): IndexPoint[] {
+	const points: IndexPoint[] = [];
+	let value = initial;
+	for (let i = 0; i <= returns.length; i++) {
+		const ordinal = startOrdinal + i;
+		const year = Math.floor(ordinal / 4);
+		const quarter = (ordinal % 4) + 1;
+		points.push(point(`${year}-Q${quarter}`, value));
+		if (i < returns.length) value *= Math.exp(returns[i] ?? 0);
+	}
+	return points;
+}
+
 check(quarterOrdinal("2026-Q3") === 2026 * 4 + 2, "quarter ordinal");
 check(quarterOrdinal("bad") === null, "malformed quarter rejected");
 
-// Steady +1% per quarter: ~4.06% annualized, damped to ~2.03%.
+// Steady +1% per quarter over 3 years.
 const steady = Array.from({ length: 13 }, (_, i) => {
 	const ordinal = 2023 * 4 + i;
 	const year = Math.floor(ordinal / 4);
@@ -46,23 +63,31 @@ const steadyUp = upsidePotential({
 	compSpreadPct: 20,
 });
 check(steadyUp != null, "steady series produces a result");
+check(steadyUp?.horizons.length === 4, "four horizons are produced");
 check(
-	Math.abs((steadyUp?.expectedGrowthPct ?? 0) - 2.0) < 0.2,
-	`steady growth is damped to ~2% (${steadyUp?.expectedGrowthPct})`,
+	steadyUp?.horizons.map((h) => h.months).join(",") === "12,24,36,60",
+	"horizons are 1, 2, 3 and 5 years",
 );
 check(
-	(steadyUp?.expectedFairM2 ?? 0) > 10100 &&
-		(steadyUp?.expectedFairM2 ?? 0) < 10300,
-	"expected fair grows from the fair value",
+	(steadyUp?.expectedGrowthPct ?? 0) > 3 && (steadyUp?.expectedGrowthPct ?? 0) < 4.2,
+	`steady 1y market growth is shrunk toward the 3.5% prior (${steadyUp?.expectedGrowthPct})`,
 );
 check(
-	(steadyUp?.mispricePct ?? 0) > 11 && (steadyUp?.mispricePct ?? 0) < 11.2,
+	Math.abs((steadyUp?.mispricePct ?? 0) - 11.1) < 0.2,
 	"misprice is fair/offer - 1",
 );
-check((steadyUp?.volatilityPct ?? 1) < 0.2, "steady growth has no volatility");
+check(
+	(steadyUp?.upsidePct ?? 0) > 6 && (steadyUp?.upsidePct ?? 0) < 8,
+	`1y upside adds partial gap convergence (${steadyUp?.upsidePct})`,
+);
 check((steadyUp?.score ?? 0) > 55, "below-fair offer scores above neutral");
+check(
+	(steadyUp?.horizons[3]?.expectedUpsidePct ?? 0) >
+		(steadyUp?.horizons[0]?.expectedUpsidePct ?? Number.POSITIVE_INFINITY),
+	"5y expected upside exceeds 1y",
+);
 
-// Same series, offer above fair: upside negative, score below neutral.
+// Same series, offer above fair.
 const overpriced = upsidePotential({
 	fairM2: 10000,
 	offerM2: 12000,
@@ -71,17 +96,16 @@ const overpriced = upsidePotential({
 });
 check(
 	(overpriced?.riskAdjustedUpsidePct ?? 0) < 0,
-	"above-fair offer has negative risk-adjusted upside",
+	"above-fair offer has a negative risk-adjusted return",
 );
 check((overpriced?.score ?? 100) < 45, "above-fair offer scores below neutral");
 
-// Volatile series: alternating +10% / -10% quarters.
-const volatile = Array.from({ length: 9 }, (_, i) => {
-	const ordinal = 2024 * 4 + i;
-	const year = Math.floor(ordinal / 4);
-	const quarter = (ordinal % 4) + 1;
-	return point(`${year}-Q${quarter}`, i % 2 === 0 ? 100 : 110);
-});
+// Volatility and quantile bands on an alternating series.
+const volatile = seriesFromReturns(
+	2024 * 4,
+	100,
+	Array.from({ length: 8 }, (_, i) => (i % 2 === 0 ? 0.1 : -0.1)),
+);
 const volatileUp = upsidePotential({
 	fairM2: 10000,
 	offerM2: 10000,
@@ -89,13 +113,21 @@ const volatileUp = upsidePotential({
 	compSpreadPct: 40,
 });
 check((volatileUp?.volatilityPct ?? 0) > 10, "volatile series raises volatility");
+for (const horizon of volatileUp?.horizons ?? []) {
+	check(
+		horizon.p10UpsidePct < horizon.expectedUpsidePct &&
+			horizon.expectedUpsidePct < horizon.p90UpsidePct,
+		`${horizon.months}m bands bracket the point estimate`,
+	);
+}
 check(
-	(volatileUp?.riskPenaltyPct ?? 0) >
-		(steadyUp?.riskPenaltyPct ?? Number.POSITIVE_INFINITY),
-	"risk penalty grows with volatility and spread",
+	(volatileUp?.horizons[3]?.p10UpsidePct ?? 0) <
+		(volatileUp?.horizons[0]?.p10UpsidePct ?? 0),
+	"the 5y downside band is wider than the 1y band",
 );
 
-// Gap: two points four quarters apart, +8% total => ~8% annualized.
+// Gap: only 4 quarters of history, so the 2-year trend is unavailable and
+// the long-run prior drives the market path.
 const gapped = upsidePotential({
 	fairM2: 10000,
 	offerM2: 10000,
@@ -103,26 +135,46 @@ const gapped = upsidePotential({
 	compSpreadPct: 10,
 });
 check(
-	Math.abs((gapped?.expectedGrowthPct ?? 0) - 4.0) < 0.2,
-	`gapped series annualizes over the gap and damps (${gapped?.expectedGrowthPct})`,
+	(gapped?.expectedGrowthPct ?? 0) > 3.4 && (gapped?.expectedGrowthPct ?? 0) < 3.6,
+	`a short series falls back to the 3.5% prior (${gapped?.expectedGrowthPct})`,
 );
 
-// No index series: no growth, but the value gap still yields a score.
+// No index series: the prior still drives a market path, gap still counts.
 const noSeries = upsidePotential({
 	fairM2: 10000,
 	offerM2: 8000,
 	series: [],
 	compSpreadPct: 20,
 });
-check(noSeries?.expectedGrowthPct === 0, "no series means zero growth");
+check(
+	(noSeries?.expectedGrowthPct ?? 0) > 3 && (noSeries?.expectedGrowthPct ?? 0) < 4,
+	"no series falls back to the long-run prior",
+);
 check(
 	(noSeries?.score ?? 0) > (steadyUp?.score ?? 0),
 	"a larger gap scores higher than a small one",
 );
 
-check(upsideScore(0).score === 50, "zero risk-adjusted upside is neutral");
-check(upsideScore(60).score === 100, "score is capped at 100");
-check(upsideScore(-60).score === 0, "score is floored at 0");
+// Mean reversion: a recent jump must not extrapolate linearly over 5 years.
+const jump = seriesFromReturns(
+	2020 * 4,
+	100,
+	[...Array.from({ length: 20 }, () => 0), 0.10],
+);
+const jumpUp = upsidePotential({
+	fairM2: 10000,
+	offerM2: 10000,
+	series: jump,
+	compSpreadPct: 10,
+});
+check(
+	(jumpUp?.horizons[3]?.expectedUpsidePct ?? 0) < 30,
+	`a one-quarter jump is not extrapolated linearly (${jumpUp?.horizons[3]?.expectedUpsidePct})`,
+);
+
+check(horizonScore(3.5).score === 50, "long-run growth is neutral");
+check(horizonScore(60).score === 100, "score is capped at 100");
+check(horizonScore(-60).score === 0, "score is floored at 0");
 
 if (failures > 0) {
 	console.error(`\n${failures} upside check(s) failed.`);

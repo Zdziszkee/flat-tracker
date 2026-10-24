@@ -1,5 +1,6 @@
 import { useValuation } from "#/hooks/use-valuation";
 import { formatNumber } from "#/lib/format";
+import { horizonLabel } from "#/lib/valuation/upside";
 
 /** Expanded-row valuation panel. The query only runs when the row opens. */
 export function ValuationPanel({ id }: { id: number }) {
@@ -106,6 +107,25 @@ export function ValuationPanel({ id }: { id: number }) {
 						</b>
 					</div>
 					<div className="text-gray-400">{data.estimate.upside.basis}</div>
+					<div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+						{data.estimate.upside.horizons.map((horizon) => (
+							<span key={horizon.months} className={horizon.tone}>
+								{horizonLabel(horizon.months)}:{" "}
+								<b>
+									{horizon.expectedUpsidePct > 0 ? "+" : ""}
+									{horizon.expectedUpsidePct}%
+								</b>
+								<span className="text-gray-400">
+									{" "}
+									(p10 {horizon.p10UpsidePct}% · p90 {horizon.p90UpsidePct}%)
+								</span>
+								<span className="text-gray-500">
+									{" "}
+									· RA {horizon.riskAdjustedAnnualPct}%/rok
+								</span>
+							</span>
+						))}
+					</div>
 				</div>
 			)}
 			<div className="grid grid-cols-2 gap-2 border-t pt-2">

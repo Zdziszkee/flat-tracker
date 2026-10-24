@@ -9,6 +9,7 @@ import { escapeHtml } from "#/lib/html";
 import { parseListingFeatures } from "#/lib/listing-features";
 import { PROPERTY_KIND_LABELS } from "#/lib/property-kind";
 import { sourceLabel } from "#/lib/sources";
+import { horizonLabel } from "#/lib/valuation/upside";
 import type { ListingAttributesDto, OfferValuation } from "#/types/listing";
 import type { ApiListing, BuildingLookup } from "./types";
 
@@ -866,7 +867,7 @@ export function renderValuationHtml(valuation: OfferValuation): string {
 		${valuation.estimate?.fairM2 != null ? `<div>godziwa: <b>${pl(valuation.estimate.fairM2)} zł/m²</b>${valuation.estimate.overUnderPct != null ? ` · <span class="${valuation.estimate.rating?.tone ?? ""} font-medium">${valuation.estimate.rating?.label} ${valuation.estimate.overUnderPct > 0 ? "+" : ""}${valuation.estimate.overUnderPct}%</span>` : ""}</div>` : ""}
 		${
 			valuation.estimate?.upside
-				? `<div class="mt-1">potencjał 12 mies.: <b class="${valuation.estimate.upside.tone}">${valuation.estimate.upside.score}/100</b> ${valuation.estimate.upside.label} · prognoza ${pl(valuation.estimate.upside.expectedFairM2)} zł/m² (${valuation.estimate.upside.expectedGrowthPct > 0 ? "+" : ""}${valuation.estimate.upside.expectedGrowthPct}%) · ryzyko −${valuation.estimate.upside.riskPenaltyPct} p.p. → <b>${valuation.estimate.upside.riskAdjustedUpsidePct != null && valuation.estimate.upside.riskAdjustedUpsidePct > 0 ? "+" : ""}${valuation.estimate.upside.riskAdjustedUpsidePct ?? "—"}%</b></div><div class="text-gray-400 text-xs">${valuation.estimate.upside.basis}</div>`
+				? `<div class="mt-1">potencjał 12 mies.: <b class="${valuation.estimate.upside.tone}">${valuation.estimate.upside.score}/100</b> ${valuation.estimate.upside.label} · prognoza ${pl(valuation.estimate.upside.expectedFairM2)} zł/m² (${valuation.estimate.upside.expectedGrowthPct > 0 ? "+" : ""}${valuation.estimate.upside.expectedGrowthPct}%) · ryzyko −${valuation.estimate.upside.riskPenaltyPct} p.p. → <b>${valuation.estimate.upside.riskAdjustedUpsidePct != null && valuation.estimate.upside.riskAdjustedUpsidePct > 0 ? "+" : ""}${valuation.estimate.upside.riskAdjustedUpsidePct ?? "—"}%</b></div><div class="text-gray-400 text-xs">${valuation.estimate.upside.basis}</div><div class="mt-0.5">${valuation.estimate.upside.horizons.map((h) => `<span class="mr-2 ${h.tone}">${horizonLabel(h.months)}: ${h.expectedUpsidePct > 0 ? "+" : ""}${h.expectedUpsidePct}%</span>`).join("")}</div>`
 				: ""
 		}
 		${comp("ten budynek", valuation.estimate?.compSets.buildingRcn ? { avgM2: valuation.estimate.compSets.buildingRcn.medianM2, n: valuation.estimate.compSets.buildingRcn.n } : null)}
