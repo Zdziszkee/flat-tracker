@@ -29,6 +29,7 @@ export type RefreshPhase =
 	| "rcn"
 	| "building-assign"
 	| "public-investments"
+	| "finwire"
 	| "done";
 
 export interface RefreshProgress {

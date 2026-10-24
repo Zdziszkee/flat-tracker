@@ -14,6 +14,7 @@ import {
 	recordCrawlRun,
 } from "./db-sink.ts";
 import { geocodeUnlocatedListings } from "./geocode-listings.ts";
+import { importFinwire } from "./import-finwire.ts";
 import { importRcn } from "./import-rcn.ts";
 import { runCrawlWithRetry } from "./pipeline.ts";
 import {
@@ -153,6 +154,7 @@ export async function refreshAll(
 		"rcn-import",
 		"building-assign",
 		"public-investments",
+		"finwire",
 	]);
 	// Fresh clone: browser binaries are a separate download, so the
 	// browser-rendered portals would fail with a stack trace each.
@@ -409,6 +411,51 @@ export async function refreshAll(
 				error,
 			});
 			setSourceProgress("public-investments", {
+				state: "failed",
+				finishedAt: new Date().toISOString(),
+				error,
+			});
+		}
+
+		// City-level flat price reference (finwire, RCN-derived): a weekly
+		// external index that only the valuation fallback reads. Cadence is
+		// inside the importer, so the hourly refresh calls it and it skips
+		// inside the 7-day window.
+		setPhase("finwire");
+		const finwireStarted = Date.now();
+		setSourceProgress("finwire", {
+			state: "running",
+			startedAt: new Date(finwireStarted).toISOString(),
+		});
+		try {
+			const finwire = await importFinwire();
+			await recordCrawlRun({
+				source: "finwire",
+				startedAt: new Date(finwireStarted),
+				finishedAt: new Date(),
+				pages: finwire.cities,
+				newCount: finwire.rows,
+				updatedCount: 0,
+			});
+			setSourceProgress("finwire", {
+				state: "ok",
+				finishedAt: new Date().toISOString(),
+				pages: finwire.cities,
+				newCount: finwire.rows,
+			});
+		} catch (err) {
+			const error = causeLine(err);
+			console.error(`[refresh] finwire import failed: ${error}`);
+			await recordCrawlRun({
+				source: "finwire",
+				startedAt: new Date(finwireStarted),
+				finishedAt: new Date(),
+				pages: 0,
+				newCount: 0,
+				updatedCount: 0,
+				error,
+			});
+			setSourceProgress("finwire", {
 				state: "failed",
 				finishedAt: new Date().toISOString(),
 				error,

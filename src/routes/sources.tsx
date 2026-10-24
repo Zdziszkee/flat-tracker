@@ -23,7 +23,13 @@ interface LiveState {
 interface SourceStatus {
 	id: string;
 	name: string;
-	kind: "portal" | "rcn" | "geocode" | "airbnb-calendar" | "public-investments";
+	kind:
+		| "portal"
+		| "rcn"
+		| "geocode"
+		| "airbnb-calendar"
+		| "public-investments"
+		| "price-index";
 	lastRun: LastRun | null;
 	live: LiveState | null;
 }
@@ -134,6 +140,8 @@ function metrics(s: SourceStatus): string {
 			return `${n} listings · ${u} monthly rows`;
 		case "public-investments":
 			return `${n} new · ${u} updated projects`;
+		case "price-index":
+			return `${n} index rows`;
 		default:
 			return `${p} pages · ${n} new · ${u} updated`;
 	}

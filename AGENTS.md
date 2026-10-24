@@ -86,9 +86,11 @@ bun run geocode-addresses # geocode listings that carry only an address
 bun run import:rcn-gugik       # małopolska RCN packages (cadence-gated)
 bun run import:rcn-gugik:all   # every GUGiK powiat in Poland (resumable drain)
 bun run import:public-investments # Kraków planned/completed projects (--force)
+bun run import:finwire         # city flat-price index, Kraków + Katowice (--force)
 bun run discover:rcn-powiats   # refresh the GUGiK package catalogue
 bun run build:powiats     # regenerate src/data/region-powiats.ts (Overpass)
 bun run validate:powiats  # dataset sanity: counts, city centres, overlaps
+bun run validate:finwire  # finwire page parsing + chain-index math
 ```
 
 ### Fresh clone: zero-setup bootstrap
@@ -427,7 +429,29 @@ with the build's peak at ~2 GB. If you touch the loader, watch
 | Kraków My Maps (public investments) | Planned and completed city projects: roads, schools, parks, sport, culture | Two Google My Maps KML exports (`/maps/d/kml?mid=...`), point placemarks with HTML descriptions. Imported by `src/crawler/public-investments.ts` into `public_investments` (7-day gate, `bun run import:public-investments -- --force`), served by `/api/public-investments` as GeoJSON, and drawn by the map's "Inwestycje publiczne" toggle. National GDDKiA road and PKP PLK/KPK rail programmes were checked but publish no georeferenced project records (SVG map/PDF only), so they remain research sources rather than imports |
 | RCN (Rejestr Cen Nieruchomości) | Historical notarial transaction prices, Krakow, free since 2026-02-13 | GML zip: `https://rzeczoznawca.eco.um.krakow.pl/RCN/1261_RCN.zip` (~2 GB) |
 | GUGiK RCN (Usługa Transakcje) | Same, but every powiat in Poland: the tracked voivodeships (małopolskie + śląskie) by default, the rest on demand (per-powiat GeoPackages; parcel/building/lokal transactions) | `https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip` — imported by `import-rcn-gugik.ts` (`bun run import:rcn-gugik`, `bun run import:rcn-gugik:all`) |
+| finwire.pl (city price index) | Quarterly median zł/m² for flats, Kraków + Katowice, RCN-derived | `GET /ceny-mieszkan/<city>` embeds an Angular `ng-state` JSON blob; the key `cm-rcn-city:<slug>` holds `trend` (12 quarters of `medianM2` + `n`), `pierwotnyM2`/`wtornyM2` (latest prim./sec. medians), `latestQuarter` and `firstQuarter`. Imported by `src/crawler/import-finwire.ts` into `price_indices` as `external_city` rows (`source = "finwire"`, `method = "external"`, segments `flat`/`flat_primary`/`flat_secondary`, chain index 100 at the first quarter). Weekly gate `data/crawler/finwire-state.json`; `bun run import:finwire -- --force`. NBP BaRN is the official reference but its pages are WAF-gated, so this RCN mirror fills the same role |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
+
+### Price indices and the external city fallback
+
+`price_indices` holds the chain-linked, area-stratified quarterly medians the
+per-offer valuation model uses to bring an old comparable to today
+(`src/lib/valuation/price-index.ts`, rebuilt by `rebuildPriceIndices()` and
+`bun run rebuild:price-indices`). The local RCN rebuild writes `source =
+"rcn"` rows at `district` / `grid10` / `region` granularity; transactions
+carry no district today, so the district series is empty and the resolver
+effectively works grid10 then region.
+
+`import-finwire.ts` adds `external_city` rows with `source = "finwire"` for
+Kraków and Katowice. They are deliberately the **last resort**: the resolver
+in `src/lib/valuation/offer-model.ts` tries every RCN series (including the
+`flat` relaxation for primary/secondary comps) before touching a city-wide
+external trend, and never uses it for houses or plots. It only changes the
+time factor of a comparable that already passed the location filters; it is
+not a price level and never becomes a comparable itself. `rebuildPriceIndices()`
+deletes only `source = "rcn"`, so the external rows survive a rebuild.
+`src/lib/valuation/external-city.ts` maps a comparable's coordinates to the
+nearest tracked city (100 km) or its voivodeship proxy.
 
 ### Public investment layer
 

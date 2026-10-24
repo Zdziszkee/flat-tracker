@@ -27,6 +27,7 @@
     "import:rcn-gugik": "tsx src/crawler/import-rcn-gugik.ts",
     "import:rcn-gugik:all": "tsx src/crawler/import-rcn-gugik.ts --all",
     "import:public-investments": "tsx scripts/import-public-investments.ts",
+    "import:finwire": "tsx scripts/import-finwire.ts",
     "rebuild:price-indices": "tsx scripts/rebuild-price-indices.ts",
     "discover:rcn-powiats": "tsx scripts/discover-rcn-powiats.ts",
     "estimate-utilities": "tsx src/crawler/estimate-utilities.ts",
@@ -39,7 +40,8 @@
     "validate:listing-attributes": "tsx scripts/validate-listing-attributes.ts",
     "validate:elicytacje": "tsx scripts/validate-elicytacje.ts",
     "validate:market-charts": "tsx scripts/validate-market-charts.ts",
-    "validate:price-index": "tsx scripts/validate-price-index.ts"
+    "validate:price-index": "tsx scripts/validate-price-index.ts",
+    "validate:finwire": "tsx scripts/validate-finwire.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",

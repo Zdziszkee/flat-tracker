@@ -6,6 +6,7 @@ import { priceIndexSeries } from "#/db/queries/price-indices";
 import { regionOf } from "#/db/region";
 import { listings, transactions } from "#/db/schema";
 import { propertyKindOf } from "#/lib/property-kind";
+import { externalCityFor } from "#/lib/valuation/external-city";
 import {
 	currentQuarter,
 	grid10Key,
@@ -295,8 +296,9 @@ class IndexResolver {
 		segment: IndexSegment;
 		geographyType: IndexPoint["geographyType"];
 		geographyKey: string;
+		source?: string;
 	}): Promise<IndexPoint[]> {
-		const key = `${input.segment}|${input.geographyType}|${input.geographyKey}`;
+		const key = `${input.segment}|${input.source ?? "rcn"}|${input.geographyType}|${input.geographyKey}`;
 		const cached = this.cache.get(key);
 		if (cached) return cached;
 		const promise = priceIndexSeries(input);
@@ -313,6 +315,34 @@ class IndexResolver {
 		segment: string;
 	} | null> {
 		if (comp.date == null) return null;
+		const compPeriod = quarterOf(comp.date as Date | number);
+		const trySeries = async (
+			segment: IndexSegment,
+			geographyType: IndexPoint["geographyType"],
+			geographyKey: string,
+			source: string,
+		) => {
+			const series = await this.series({
+				segment,
+				geographyType,
+				geographyKey,
+				source,
+			});
+			// One point is not a trend. Use a wider series before accepting
+			// a no-change adjustment from a single observation.
+			if (series.length < 2) return null;
+			const adjustment = timeAdjustment(series, compPeriod, this.asOfPeriod);
+			if (!adjustment) return null;
+			return {
+				factor: adjustment.factor,
+				source,
+				geography: `${geographyType}:${geographyKey}`,
+				fromPeriod: adjustment.fromPeriod,
+				toPeriod: adjustment.toPeriod,
+				segment,
+			};
+		};
+
 		const geographies: Array<{
 			type: IndexPoint["geographyType"];
 			key: string;
@@ -339,30 +369,36 @@ class IndexResolver {
 			segment === "flat_primary" || segment === "flat_secondary"
 				? [segment, "flat"]
 				: [segment];
+		// RCN first: a district or grid10 series is the closest evidence, and
+		// every local series beats an external city-wide one.
 		for (const indexSegment of segments) {
 			for (const geography of geographies) {
-				const series = await this.series({
-					segment: indexSegment,
-					geographyType: geography.type,
-					geographyKey: geography.key,
-				});
-				// One point is not a trend. Use a wider series before accepting
-				// a no-change adjustment from a single observation.
-				if (series.length < 2) continue;
-				const adjustment = timeAdjustment(
-					series,
-					quarterOf(comp.date as Date | number),
-					this.asOfPeriod,
+				const adjustment = await trySeries(
+					indexSegment,
+					geography.type,
+					geography.key,
+					"rcn",
 				);
-				if (!adjustment) continue;
-				return {
-					factor: adjustment.factor,
-					source: "rcn",
-					geography: `${geography.type}:${geography.key}`,
-					fromPeriod: adjustment.fromPeriod,
-					toPeriod: adjustment.toPeriod,
-					segment: indexSegment,
-				};
+				if (adjustment) return adjustment;
+			}
+		}
+		// Last resort for flats only: the city-level RCN reference (finwire).
+		// It is a trend, not a price level, so it never becomes a comparable
+		// on its own; it only brings an already location-filtered comparable
+		// from its own quarter to today. Houses and plots have no external
+		// series by design.
+		if (comp.kind === "flat") {
+			const externalCity = externalCityFor(comp.lat, comp.lng, region);
+			if (externalCity) {
+				for (const indexSegment of segments) {
+					const adjustment = await trySeries(
+						indexSegment,
+						"external_city",
+						externalCity,
+						"finwire",
+					);
+					if (adjustment) return adjustment;
+				}
 			}
 		}
 		return null;
