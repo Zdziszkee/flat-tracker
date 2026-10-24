@@ -535,6 +535,23 @@ export async function refreshAll(
 			}
 		}
 
+		// Rebuild the quarterly price indices the per-offer valuation model
+		// consumes whenever the registry moved. Cheap relative to the import
+		// above and idempotent.
+		if (opts.includeRcn !== false) {
+			try {
+				const { rebuildPriceIndices } = await import(
+					"../db/queries/price-indices.ts"
+				);
+				const report = await rebuildPriceIndices();
+				console.log(
+					`[refresh] price indices rebuilt: ${report.series} series, ${report.rows} rows`,
+				);
+			} catch (err) {
+				console.error("[refresh] price-index rebuild failed:", err);
+			}
+		}
+
 		return {
 			sites,
 			pruned,
