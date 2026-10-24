@@ -38,7 +38,8 @@
     "validate:listing-view": "tsx scripts/validate-listing-view.ts",
     "validate:listing-attributes": "tsx scripts/validate-listing-attributes.ts",
     "validate:elicytacje": "tsx scripts/validate-elicytacje.ts",
-    "validate:market-charts": "tsx scripts/validate-market-charts.ts"
+    "validate:market-charts": "tsx scripts/validate-market-charts.ts",
+    "validate:price-index": "tsx scripts/validate-price-index.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",
