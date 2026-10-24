@@ -83,6 +83,31 @@ export function ValuationPanel({ id }: { id: number }) {
 						: null,
 				)}
 			</div>
+			{data.estimate?.upside && (
+				<div className="space-y-0.5 border-t pt-2">
+					<div className="flex items-center justify-between">
+						<span className="font-medium">Potencjał 12 mies.:</span>
+						<span className={data.estimate.upside.tone}>
+							<b>{data.estimate.upside.score}/100</b> ·{" "}
+							{data.estimate.upside.label}
+						</span>
+					</div>
+					<div className="text-gray-600">
+						prognoza {formatNumber(data.estimate.upside.expectedFairM2)} zł/m² (
+						{data.estimate.upside.expectedGrowthPct > 0 ? "+" : ""}
+						{data.estimate.upside.expectedGrowthPct}%) · ryzyko −
+						{data.estimate.upside.riskPenaltyPct} p.p. → skorygowane{" "}
+						<b>
+							{data.estimate.upside.riskAdjustedUpsidePct != null &&
+							data.estimate.upside.riskAdjustedUpsidePct > 0
+								? "+"
+								: ""}
+							{data.estimate.upside.riskAdjustedUpsidePct ?? "—"}%
+						</b>
+					</div>
+					<div className="text-gray-400">{data.estimate.upside.basis}</div>
+				</div>
+			)}
 			<div className="grid grid-cols-2 gap-2 border-t pt-2">
 				{data.lt && (
 					<div>

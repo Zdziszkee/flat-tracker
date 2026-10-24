@@ -24,6 +24,7 @@ import type {
 	ValuationEstimate,
 	ValuationSegment,
 } from "#/types/listing";
+import { upsidePotential } from "./upside";
 
 /** Input required by the sales-comparison model. */
 export interface OfferForValuation {
@@ -806,6 +807,37 @@ function indexSummary(
 }
 
 /**
+ * The index series behind the applied time adjustment, so the forward
+ * expectation uses the same market the comparables were adjusted with. Falls
+ * back to the regional flat series when no comparable carried an index.
+ */
+async function momentumSeries(
+	index: ValuationEstimate["index"],
+	offer: OfferForValuation,
+): Promise<IndexPoint[]> {
+	if (index) {
+		const series = await priceIndexSeries({
+			segment: index.segment as IndexSegment,
+			geographyType: index.geographyType as IndexPoint["geographyType"],
+			geographyKey: index.geographyKey,
+			source: index.source,
+		});
+		if (series.length >= 2) return series;
+	}
+	const region =
+		offer.lat != null && offer.lng != null
+			? regionOf(offer.lat, offer.lng)
+			: null;
+	if (!region) return [];
+	const segment: IndexSegment = offer.kind === "flat" ? "flat" : offer.kind;
+	return priceIndexSeries({
+		segment,
+		geographyType: "region",
+		geographyKey: region,
+	});
+}
+
+/**
  * Estimate today's fair value from time-adjusted RCN comparables. Active
  * asking offers are only a fallback when fewer than three RCN comps survive.
  */
@@ -854,6 +886,13 @@ export async function estimateSaleValue(
 	const spreadPct = fairM2 > 0 ? ((highM2 - lowM2) / fairM2) * 100 : 100;
 	const confidence = confidenceFor(comps, spreadPct, nowSeconds);
 	const area = offer.areaM2;
+	const index = indexSummary(comps);
+	const upside = upsidePotential({
+		fairM2,
+		offerM2,
+		series: await momentumSeries(index, offer),
+		compSpreadPct: spreadPct,
+	});
 	const estimate: ValuationEstimate = {
 		segment: offer.kind,
 		fairM2: Math.round(fairM2),
@@ -872,7 +911,8 @@ export async function estimateSaleValue(
 			nearbyRcn: stats(comps.filter((comp) => comp.set === "nearbyRcn")),
 			listing: stats(comps.filter((comp) => comp.set === "listing")),
 		},
-		index: indexSummary(comps),
+		index,
+		upside,
 	};
 	return { estimate, reason: null };
 }

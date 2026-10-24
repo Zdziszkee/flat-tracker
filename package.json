@@ -41,7 +41,8 @@
     "validate:elicytacje": "tsx scripts/validate-elicytacje.ts",
     "validate:market-charts": "tsx scripts/validate-market-charts.ts",
     "validate:price-index": "tsx scripts/validate-price-index.ts",
-    "validate:finwire": "tsx scripts/validate-finwire.ts"
+    "validate:finwire": "tsx scripts/validate-finwire.ts",
+    "validate:upside": "tsx scripts/validate-upside.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",

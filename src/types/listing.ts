@@ -1,4 +1,5 @@
 import type { PropertyKind } from "#/lib/property-kind";
+import type { UpsidePotential } from "#/lib/valuation/upside";
 
 /** Per-building RCN summary attached to a listing by `/api/listings`. */
 export interface TransactionStats {
@@ -238,6 +239,8 @@ export interface ValuationEstimate {
 		fromPeriod: string;
 		toPeriod: string;
 	} | null;
+	/** Forward-looking 12-month expectation; null when fair value is unusable. */
+	upside: UpsidePotential | null;
 }
 
 export interface RentEstimate {

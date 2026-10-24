@@ -864,6 +864,11 @@ export function renderValuationHtml(valuation: OfferValuation): string {
 	return `<div class="mt-2 border-t pt-1 text-xs">
 		<div class="font-medium">Wycena vs rynek</div>
 		${valuation.estimate?.fairM2 != null ? `<div>godziwa: <b>${pl(valuation.estimate.fairM2)} zł/m²</b>${valuation.estimate.overUnderPct != null ? ` · <span class="${valuation.estimate.rating?.tone ?? ""} font-medium">${valuation.estimate.rating?.label} ${valuation.estimate.overUnderPct > 0 ? "+" : ""}${valuation.estimate.overUnderPct}%</span>` : ""}</div>` : ""}
+		${
+			valuation.estimate?.upside
+				? `<div class="mt-1">potencjał 12 mies.: <b class="${valuation.estimate.upside.tone}">${valuation.estimate.upside.score}/100</b> ${valuation.estimate.upside.label} · prognoza ${pl(valuation.estimate.upside.expectedFairM2)} zł/m² (${valuation.estimate.upside.expectedGrowthPct > 0 ? "+" : ""}${valuation.estimate.upside.expectedGrowthPct}%) · ryzyko −${valuation.estimate.upside.riskPenaltyPct} p.p. → <b>${valuation.estimate.upside.riskAdjustedUpsidePct != null && valuation.estimate.upside.riskAdjustedUpsidePct > 0 ? "+" : ""}${valuation.estimate.upside.riskAdjustedUpsidePct ?? "—"}%</b></div><div class="text-gray-400 text-xs">${valuation.estimate.upside.basis}</div>`
+				: ""
+		}
 		${comp("ten budynek", valuation.estimate?.compSets.buildingRcn ? { avgM2: valuation.estimate.compSets.buildingRcn.medianM2, n: valuation.estimate.compSets.buildingRcn.n } : null)}
 		${comp("okolica", valuation.estimate?.compSets.nearbyRcn ? { avgM2: valuation.estimate.compSets.nearbyRcn.medianM2, n: valuation.estimate.compSets.nearbyRcn.n } : null)}
 		${comp("RCN 1 km / 24 mies.", valuation.estimate?.compSets.listing ? { avgM2: valuation.estimate.compSets.listing.medianM2, n: valuation.estimate.compSets.listing.n } : null)}

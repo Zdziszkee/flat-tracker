@@ -91,6 +91,7 @@ bun run discover:rcn-powiats   # refresh the GUGiK package catalogue
 bun run build:powiats     # regenerate src/data/region-powiats.ts (Overpass)
 bun run validate:powiats  # dataset sanity: counts, city centres, overlaps
 bun run validate:finwire  # finwire page parsing + chain-index math
+bun run validate:upside   # forward-looking upside/risk math
 ```
 
 ### Fresh clone: zero-setup bootstrap
@@ -452,6 +453,34 @@ not a price level and never becomes a comparable itself. `rebuildPriceIndices()`
 deletes only `source = "rcn"`, so the external rows survive a rebuild.
 `src/lib/valuation/external-city.ts` maps a comparable's coordinates to the
 nearest tracked city (100 km) or its voivodeship proxy.
+
+### Upside potential
+
+`ValuationEstimate.upside` (`src/lib/valuation/upside.ts`) is the forward
+half of the valuation: the comp median says what the offer is worth today,
+the upside block says what a 12-month hold is projected to return. It
+combines three research-standard factors instead of extrapolating the
+asking price:
+
+- **Value gap**: `fairM2 / offerM2 - 1`. Mean reversion is slow, so only
+  35% of the gap is assumed to close within the horizon.
+- **Momentum**: the applied index's YoY and 2-year annualized growth (0.6/
+  0.4 blend), damped by half and capped at ±8%. The series is the same one
+  that adjusted the comparables (grid10/region or the finwire external city
+  fallback), so a flat index adds no growth.
+- **Risk**: annualized volatility of quarterly index returns plus the
+  comparable p25-p75 spread. The reported risk-adjusted upside subtracts the
+  full penalty; the 0-100 score subtracts only risk above an 8 p.p. baseline,
+  so a fairly priced flat in a typical-risk market is neutral (50).
+
+The fields are `expectedGrowthPct`, `expectedFairM2` (fair grown by the
+index expectation), `mispricePct`, `upsidePct` (growth + partial gap
+convergence), `volatilityPct`, `compSpreadPct`, `riskPenaltyPct`,
+`riskAdjustedUpsidePct`, `score`, `label`, `tone` and a `basis` string for
+the popup/panel. It is a projection with explicit assumptions, not a
+forecast; the comparable evidence and confidence band remain the primary
+output. `scripts/validate-upside.ts` pins the annualization, gap handling,
+volatility, damping and score mapping.
 
 ### Public investment layer
 
