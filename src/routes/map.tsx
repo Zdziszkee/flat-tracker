@@ -58,6 +58,16 @@ function MapPage() {
 	const [showOccupancy, setShowOccupancy] = useState(false);
 	/** Planned/completed city projects (roads, schools, parks, ...). */
 	const [showInvestments, setShowInvestments] = useState(false);
+	/**
+	 * Flats and plots are dense categories on their own; the city-project
+	 * layer would just clutter them, so it is suppressed while either is
+	 * selected. The toggle keeps its stored value, which comes back when the
+	 * user returns to "Wszystkie" or "Dom".
+	 */
+	const hideInvestmentPoints =
+		filters.kind === "apartment" || filters.kind === "plot";
+	const showInvestmentPoints =
+		showingPublicInvestments || (showInvestments && !hideInvestmentPoints);
 	const [occupancySource, setOccupancySource] = useState<
 		"airbnb" | "booking" | "all"
 	>("all");
@@ -162,7 +172,7 @@ function MapPage() {
 						/>
 						Obłożenie STR
 					</label>
-					{!showingPublicInvestments && (
+					{!showingPublicInvestments && !hideInvestmentPoints && (
 						<label className="flex items-center gap-1.5 text-sm text-gray-700">
 							<input
 								type="checkbox"
@@ -237,14 +247,14 @@ function MapPage() {
 							showParcels={showParcels}
 							showRailways={showRailways}
 							showOccupancy={showOccupancy}
-							showInvestments={showInvestments || showingPublicInvestments}
+							showInvestments={showInvestmentPoints}
 							occupancySource={occupancySource}
 							occupancyMonth={occupancyMonth}
 						/>
 					</Suspense>
 				)}
 			</div>
-			{(showInvestments || showingPublicInvestments) && (
+			{showInvestmentPoints && (
 				<div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t px-4 py-1.5 text-xs text-gray-600">
 					<span className="font-medium text-gray-700">Inwestycje:</span>
 					{Object.entries(PUBLIC_INVESTMENT_CATEGORY_LABELS).map(
