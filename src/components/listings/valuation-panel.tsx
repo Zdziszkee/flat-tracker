@@ -54,6 +54,13 @@ export function ValuationPanel({ id }: { id: number }) {
 							` ${data.estimate.overUnderPct > 0 ? "+" : ""}${data.estimate.overUnderPct}%`}
 					</span>
 				)}
+				{data.buyPrice && (
+					<span className="text-gray-500">
+						ROI od ceny zakupu <b>{formatNumber(data.buyPrice.price)} zł</b>
+						{data.buyPrice.source === "estimated" &&
+							` (szacunek${data.buyPrice.fairM2 != null ? ` · ${formatNumber(data.buyPrice.fairM2)} zł/m²` : ""})`}
+					</span>
+				)}
 			</div>
 			<div className="space-y-0.5">
 				{compRow(

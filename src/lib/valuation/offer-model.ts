@@ -844,15 +844,27 @@ async function momentumSeries(
 export async function estimateSaleValue(
 	offer: OfferForValuation,
 	asOf = new Date(),
-	options: { includeListings?: boolean } = {},
+	options: {
+		includeListings?: boolean;
+		/**
+		 * When false the estimate is a pure market value: the offer's own
+		 * price is not required and is not used for the over/under rating or
+		 * the upside model. Rentals need this because their `price` is a
+		 * monthly rent, not a purchase price.
+		 */
+		compareToOffer?: boolean;
+	} = {},
 ): Promise<SaleValuationResult> {
+	const compareToOffer = options.compareToOffer !== false;
+	if (offer.areaM2 == null || offer.areaM2 <= 0) {
+		return { estimate: null, reason: "missing_price_or_area" };
+	}
 	if (
-		offer.price == null ||
-		offer.price <= 0 ||
-		offer.areaM2 == null ||
-		offer.areaM2 <= 0 ||
-		offer.pricePerM2 == null ||
-		offer.pricePerM2 <= 0
+		compareToOffer &&
+		(offer.price == null ||
+			offer.price <= 0 ||
+			offer.pricePerM2 == null ||
+			offer.pricePerM2 <= 0)
 	) {
 		return { estimate: null, reason: "missing_price_or_area" };
 	}
@@ -880,19 +892,23 @@ export async function estimateSaleValue(
 	const fairM2 = overall.medianM2;
 	const lowM2 = Math.min(overall.p25M2, fairM2);
 	const highM2 = Math.max(overall.p75M2, fairM2);
-	const offerM2 = offer.pricePerM2;
+	const offerM2 = compareToOffer ? offer.pricePerM2 : null;
 	const overUnderPct =
-		offerM2 != null && fairM2 > 0 ? (offerM2 / fairM2 - 1) * 100 : null;
+		compareToOffer && offerM2 != null && fairM2 > 0
+			? (offerM2 / fairM2 - 1) * 100
+			: null;
 	const spreadPct = fairM2 > 0 ? ((highM2 - lowM2) / fairM2) * 100 : 100;
 	const confidence = confidenceFor(comps, spreadPct, nowSeconds);
 	const area = offer.areaM2;
 	const index = indexSummary(comps);
-	const upside = upsidePotential({
-		fairM2,
-		offerM2,
-		series: await momentumSeries(index, offer),
-		compSpreadPct: spreadPct,
-	});
+	const upside = compareToOffer
+		? upsidePotential({
+				fairM2,
+				offerM2,
+				series: await momentumSeries(index, offer),
+				compSpreadPct: spreadPct,
+			})
+		: null;
 	const estimate: ValuationEstimate = {
 		segment: offer.kind,
 		fairM2: Math.round(fairM2),
@@ -903,7 +919,7 @@ export async function estimateSaleValue(
 		highPrice: Math.round(highM2 * area),
 		overUnderPct:
 			overUnderPct == null ? null : Math.round(overUnderPct * 10) / 10,
-		rating: ratingFor(offerM2, lowM2, highM2),
+		rating: compareToOffer ? ratingFor(offerM2, lowM2, highM2) : null,
 		confidence,
 		comparables: comps.slice(0, 6).map(toComparable),
 		compSets: {

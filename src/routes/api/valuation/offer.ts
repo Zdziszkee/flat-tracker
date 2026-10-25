@@ -80,11 +80,7 @@ export const Route = createFileRoute("/api/valuation/offer")({
 				const ownArea = offer.areaM2 ?? null;
 
 				// ---- 4/5. Rental comps with SIZE-matched bands --------------
-				const hasGeo =
-					offer.lat != null &&
-					offer.lng != null &&
-					offer.price != null &&
-					offer.price > 0;
+				const hasGeo = offer.lat != null && offer.lng != null;
 				const b = hasGeo
 					? bbox(offer.lat as number, offer.lng as number, 1000)
 					: null;
@@ -154,7 +150,7 @@ export const Route = createFileRoute("/api/valuation/offer")({
 							break;
 						}
 					}
-					if (rentRow && picked && offer.price != null && offer.price > 0) {
+					if (rentRow && picked) {
 						const ownCzynsz = czynszFromUtilities(offer.utilities);
 						const netMonthly =
 							rentRow.rentAvg - (ownCzynsz || rentRow.czynszAvg);
@@ -166,7 +162,7 @@ export const Route = createFileRoute("/api/valuation/offer")({
 							basis: picked.basis,
 							netMonthly: Math.round(netMonthly),
 							netYearly: Math.round(netYearly),
-							netYieldPct: (netYearly / offer.price) * 100,
+							netYieldPct: null,
 						};
 					}
 
@@ -217,7 +213,7 @@ export const Route = createFileRoute("/api/valuation/offer")({
 							break;
 						}
 					}
-					if (strRow && strPicked && offer.price != null && offer.price > 0) {
+					if (strRow && strPicked) {
 						const occ = strRow.occ ?? null;
 						const netMonthly =
 							strRow.nightlyAvg * 30.4 * (occ != null ? occ : 0.55);
@@ -229,39 +225,72 @@ export const Route = createFileRoute("/api/valuation/offer")({
 							basis: strPicked.basis,
 							netMonthly: Math.round(netMonthly),
 							netYearly: Math.round(netYearly),
-							netYieldPct: (netYearly / offer.price) * 100,
+							netYieldPct: null,
 						};
 					}
 				}
 
 				// ---- Sale valuation via time-adjusted RCN comps -------------
 				const isSale = offer.offerType === "sale";
+				const valuationOffer = {
+					id: offer.id,
+					source: offer.source,
+					externalId: offer.externalId,
+					title: offer.title,
+					price: offer.price,
+					pricePerM2: offer.pricePerM2,
+					areaM2: offer.areaM2,
+					rooms: offer.rooms,
+					district: offer.district,
+					lat: offer.lat,
+					lng: offer.lng,
+					buildingId: offer.buildingId,
+					market: offer.market,
+					plotType: offer.plotType,
+					kind: segment,
+				};
 				const saleResult =
 					isSale && kind != null
-						? await estimateSaleValue(
-								{
-									id: offer.id,
-									source: offer.source,
-									externalId: offer.externalId,
-									title: offer.title,
-									price: offer.price,
-									pricePerM2: offer.pricePerM2,
-									areaM2: offer.areaM2,
-									rooms: offer.rooms,
-									district: offer.district,
-									lat: offer.lat,
-									lng: offer.lng,
-									buildingId: offer.buildingId,
-									market: offer.market,
-									plotType: offer.plotType,
-									kind: segment,
-								},
-								new Date(),
-							)
+						? await estimateSaleValue(valuationOffer, new Date())
 						: {
 								estimate: null,
 								reason: isSale ? "unsupported_kind" : "not_sale",
 							};
+
+				// A rental's `price` is monthly rent, so it can never be the
+				// ROI denominator. Use the asking price for sales and a
+				// market-value estimate (same RCN model, without comparing
+				// the estimate back to the offer price) for rentals.
+				const askingPrice =
+					isSale && offer.price != null && offer.price > 0 ? offer.price : null;
+				const capitalEstimate =
+					askingPrice == null && kind != null && ownArea != null
+						? await estimateSaleValue(valuationOffer, new Date(), {
+								compareToOffer: false,
+							})
+						: null;
+				const buyPrice =
+					askingPrice != null
+						? {
+								price: askingPrice,
+								source: "asking" as const,
+								fairM2: null,
+							}
+						: capitalEstimate?.estimate != null
+							? {
+									price: capitalEstimate.estimate.fairPrice,
+									source: "estimated" as const,
+									fairM2: capitalEstimate.estimate.fairM2,
+								}
+							: null;
+				if (lt) {
+					lt.netYieldPct =
+						buyPrice != null ? (lt.netYearly / buyPrice.price) * 100 : null;
+				}
+				if (str) {
+					str.netYieldPct =
+						buyPrice != null ? (str.netYearly / buyPrice.price) * 100 : null;
+				}
 
 				const mode = offer.offerType.includes("rent") ? "rent" : "sale";
 				const eligible =
@@ -281,6 +310,7 @@ export const Route = createFileRoute("/api/valuation/offer")({
 					},
 					estimate: saleResult.estimate,
 					rent: null,
+					buyPrice,
 					lt,
 					str,
 				});

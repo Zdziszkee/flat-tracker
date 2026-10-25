@@ -266,6 +266,16 @@ export interface OfferValuation {
 	};
 	estimate: ValuationEstimate | null;
 	rent: RentEstimate | null;
+	/**
+	 * Purchase price used as the ROI denominator. Sales use the asking price;
+	 * rentals and price-less offers use an estimated market value.
+	 */
+	buyPrice: {
+		price: number;
+		source: "asking" | "estimated";
+		/** Median RCN zł/m² behind an estimated purchase price. */
+		fairM2: number | null;
+	} | null;
 	lt:
 		| (RentalValuation & {
 				rentAvg: number;

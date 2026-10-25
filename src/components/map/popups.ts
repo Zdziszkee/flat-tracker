@@ -854,14 +854,28 @@ export function renderValuationHtml(valuation: OfferValuation): string {
 		label: string,
 		value: { n: number; netMonthly: number; netYieldPct: number | null },
 		color: string,
-	) =>
-		value.netYieldPct != null
-			? `<div class="mt-1 border-t pt-1">
-					<div class="font-medium ${color}">${label} (netto)</div>
-					<div class="text-gray-600">${pl(value.netMonthly)} zł/mies. netto → ROI <b>${value.netYieldPct.toFixed(1)}%</b>/rok</div>
-					<div class="text-gray-400 text-xs">${value.n} porównań w okolicy</div>
-				</div>`
+	) => {
+		const capital = valuation.buyPrice;
+		const capitalBasis = capital
+			? capital.source === "estimated" && capital.fairM2 != null
+				? ` (szacunek · ${pl(capital.fairM2)} zł/m²)`
+				: capital.source === "estimated"
+					? " (szacunek)"
+					: ""
 			: "";
+		const roi =
+			value.netYieldPct != null
+				? `<b>${value.netYieldPct.toFixed(1)}%</b>`
+				: "<b>n/d</b>";
+		const capitalLine = capital
+			? `cena zakupu ${pl(capital.price)} zł${capitalBasis}`
+			: "brak wyceny ceny zakupu";
+		return `<div class="mt-1 border-t pt-1">
+					<div class="font-medium ${color}">${label} (netto)</div>
+					<div class="text-gray-600">${pl(value.netMonthly)} zł/mies. netto → ROI ${roi}/rok</div>
+					<div class="text-gray-400 text-xs">${capitalLine} · ${value.n} porównań w okolicy</div>
+				</div>`;
+	};
 	return `<div class="mt-2 border-t pt-1 text-xs">
 		<div class="font-medium">Wycena vs rynek</div>
 		${valuation.estimate?.fairM2 != null ? `<div>godziwa: <b>${pl(valuation.estimate.fairM2)} zł/m²</b>${valuation.estimate.overUnderPct != null ? ` · <span class="${valuation.estimate.rating?.tone ?? ""} font-medium">${valuation.estimate.rating?.label} ${valuation.estimate.overUnderPct > 0 ? "+" : ""}${valuation.estimate.overUnderPct}%</span>` : ""}</div>` : ""}
