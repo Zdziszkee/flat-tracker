@@ -6,6 +6,7 @@ import { db } from "#/db/index";
 import type { PropertyKind } from "#/lib/property-kind";
 import { propertyKindOf } from "#/lib/property-kind";
 import { estimateSaleValue } from "#/lib/valuation/offer-model";
+import { buildOfferForecast } from "#/lib/valuation/forecast-service";
 import type { ValuationSegment } from "#/types/listing";
 
 /**
@@ -295,6 +296,17 @@ export const Route = createFileRoute("/api/valuation/offer")({
 				const mode = offer.offerType.includes("rent") ? "rent" : "sale";
 				const eligible =
 					saleResult.estimate != null || lt != null || str != null;
+				const forecast = await buildOfferForecast({
+					offerId: offer.id,
+					segment,
+					lat: offer.lat,
+					lng: offer.lng,
+					buyPrice: buyPrice?.price ?? null,
+					currentValue:
+						saleResult.estimate?.fairPrice ?? buyPrice?.price ?? null,
+					ltNetYearly: lt?.netYearly ?? null,
+					strGrossYearly: str?.netYearly ?? null,
+				});
 
 				return json({
 					mode,
@@ -311,6 +323,7 @@ export const Route = createFileRoute("/api/valuation/offer")({
 					estimate: saleResult.estimate,
 					rent: null,
 					buyPrice,
+					forecast,
 					lt,
 					str,
 				});

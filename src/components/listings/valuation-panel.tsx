@@ -30,6 +30,48 @@ export function ValuationPanel({ id }: { id: number }) {
 				</span>
 			</div>
 		) : null;
+	const qualityLabel = (quality: string) =>
+		quality === "high" ? "wysoka" : quality === "medium" ? "średnia" : "niska";
+	const pct = (value: number | null | undefined) =>
+		value == null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+	const strategyBlock = (
+		label: string,
+		className: string,
+		horizons:
+			| Array<{
+					years: number;
+					irr: { p10: number; p50: number; p90: number } | null;
+					probabilityLossPct: number;
+			  }>
+			| undefined,
+		year1NetIncome: number | undefined,
+	) => {
+		if (!horizons || horizons.length === 0) return null;
+		const final = horizons.find((horizon) => horizon.years === 5);
+		return (
+			<div>
+				<div className={`font-medium ${className}`}>{label}</div>
+				<div className="text-gray-600">
+					IRR{" "}
+					{horizons
+						.map(
+							(horizon) =>
+								`${horizon.years}l ${horizon.irr?.p50.toFixed(1) ?? "—"}%`,
+						)
+						.join(" · ")}
+				</div>
+				<div className="text-gray-500">
+					80% (5 lat):{" "}
+					{final?.irr ? `${pct(final.irr.p10)} … ${pct(final.irr.p90)}` : "—"} ·
+					P(straty) {final ? `${final.probabilityLossPct.toFixed(1)}%` : "—"}
+				</div>
+				<div className="text-gray-400">
+					dochód netto/rok:{" "}
+					{year1NetIncome == null ? "—" : `${formatNumber(year1NetIncome)} zł`}
+				</div>
+			</div>
+		);
+	};
 	return (
 		<div className="space-y-2 bg-gray-50 px-6 py-3 text-xs">
 			<div className="flex items-center gap-2">
@@ -176,6 +218,51 @@ export function ValuationPanel({ id }: { id: number }) {
 					</div>
 				)}
 			</div>
+			{data.forecast && (
+				<div className="space-y-1 border-t pt-2">
+					<div className="flex flex-wrap items-center justify-between gap-2">
+						<span className="font-medium">Prognoza inwestycyjna</span>
+						<span className="text-gray-400">
+							jakość: ceny {qualityLabel(data.forecast.quality.price)} · czynsz{" "}
+							{qualityLabel(data.forecast.quality.rent)} · STR{" "}
+							{qualityLabel(data.forecast.quality.str)}
+						</span>
+					</div>
+					<div className="text-gray-600">
+						Ceny{" "}
+						{data.forecast.appreciation
+							.map(
+								(horizon) =>
+									`${horizon.years}l ${pct(horizon.meanPct)} (${pct(horizon.p10Pct)}…${pct(horizon.p90Pct)})`,
+							)
+							.join(" · ")}
+					</div>
+					<div className="grid grid-cols-2 gap-2">
+						{strategyBlock(
+							"Najem długoterminowy",
+							"text-emerald-700",
+							data.forecast.strategies.ltr?.horizons,
+							data.forecast.strategies.ltr?.year1NetIncome,
+						)}
+						{strategyBlock(
+							"Najem krótkoterminowy",
+							"text-rose-700",
+							data.forecast.strategies.str?.horizons,
+							data.forecast.strategies.str?.year1NetIncome,
+						)}
+					</div>
+					<details className="text-gray-500">
+						<summary className="cursor-pointer">
+							Założenia i jakość modeli
+						</summary>
+						<ul className="mt-1 list-disc pl-4 text-gray-500">
+							{data.forecast.notes.map((note) => (
+								<li key={note}>{note}</li>
+							))}
+						</ul>
+					</details>
+				</div>
+			)}
 		</div>
 	);
 }

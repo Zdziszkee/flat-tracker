@@ -92,6 +92,8 @@ bun run build:powiats     # regenerate src/data/region-powiats.ts (Overpass)
 bun run validate:powiats  # dataset sanity: counts, city centres, overlaps
 bun run validate:finwire  # finwire page parsing + chain-index math
 bun run validate:upside   # forward-looking upside/risk math
+bun run build:forecasts   # refresh data/forecasts/models.json (price/rent/STR paths + calibrated bands)
+bun run validate:forecast # deterministic forecast, conformal calibration and IRR math
 ```
 
 ### Fresh clone: zero-setup bootstrap

@@ -42,7 +42,9 @@
     "validate:market-charts": "tsx scripts/validate-market-charts.ts",
     "validate:price-index": "tsx scripts/validate-price-index.ts",
     "validate:finwire": "tsx scripts/validate-finwire.ts",
-    "validate:upside": "tsx scripts/validate-upside.ts"
+    "validate:upside": "tsx scripts/validate-upside.ts",
+    "build:forecasts": "tsx scripts/build-forecast-models.ts",
+    "validate:forecast": "tsx scripts/validate-forecast.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",

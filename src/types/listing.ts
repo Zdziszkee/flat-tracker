@@ -1,5 +1,6 @@
 import type { PropertyKind } from "#/lib/property-kind";
 import type { UpsidePotential } from "#/lib/valuation/upside";
+import type { OfferForecastDto } from "#/types/forecast";
 
 /** Per-building RCN summary attached to a listing by `/api/listings`. */
 export interface TransactionStats {
@@ -276,6 +277,8 @@ export interface OfferValuation {
 		/** Median RCN zł/m² behind an estimated purchase price. */
 		fairM2: number | null;
 	} | null;
+	/** Probabilistic LTR/STR/appreciation forecast from the market models. */
+	forecast: OfferForecastDto;
 	lt:
 		| (RentalValuation & {
 				rentAvg: number;

@@ -846,6 +846,8 @@ export function buildingPopupHtml(data: BuildingLookup): string {
 
 export function renderValuationHtml(valuation: OfferValuation): string {
 	const pl = (value: number) => Math.round(value).toLocaleString("pl-PL");
+	const pct = (value: number | null | undefined) =>
+		value == null ? "—" : `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
 	const comp = (label: string, value: { avgM2: number; n: number } | null) =>
 		value
 			? `<div class="flex justify-between"><span class="text-gray-500">${label}</span><span>${pl(value.avgM2)} zł/m² <span class="text-gray-400">(${value.n})</span></span></div>`
@@ -876,6 +878,39 @@ export function renderValuationHtml(valuation: OfferValuation): string {
 					<div class="text-gray-400 text-xs">${capitalLine} · ${value.n} porównań w okolicy</div>
 				</div>`;
 	};
+	const forecast = valuation.forecast;
+	const qualityLabel = (quality: string) =>
+		quality === "high" ? "wysoka" : quality === "medium" ? "średnia" : "niska";
+	const medianSeries = (
+		horizons:
+			| readonly { years: number; irr: { p50: number } | null }[]
+			| undefined,
+	) =>
+		(horizons ?? [])
+			.map(
+				(horizon) => `${horizon.years}l ${horizon.irr?.p50.toFixed(1) ?? "—"}%`,
+			)
+			.join(" · ");
+	const ltr5 = forecast?.strategies.ltr?.horizons.find(
+		(horizon) => horizon.years === 5,
+	);
+	const str5 = forecast?.strategies.str?.horizons.find(
+		(horizon) => horizon.years === 5,
+	);
+	const price5 = forecast?.appreciation.find((horizon) => horizon.years === 5);
+	const forecastBlock = forecast
+		? `<div class="mt-2 border-t pt-1 text-xs">
+				<div class="font-medium">Prognoza inwestycyjna</div>
+				<div class="text-gray-400">jakość: ceny ${qualityLabel(forecast.quality.price)} · czynsz ${qualityLabel(forecast.quality.rent)} · STR ${qualityLabel(forecast.quality.str)}</div>
+				<div class="mt-1">Ceny ${medianSeries(forecast.appreciation.map((horizon) => ({ years: horizon.years, irr: { p50: horizon.meanPct } })))}</div>
+				${ltr5 ? `<div>LTR IRR ${medianSeries(forecast.strategies.ltr?.horizons)}</div>` : ""}
+				${str5 ? `<div>STR IRR ${medianSeries(forecast.strategies.str?.horizons)}</div>` : ""}
+				${price5 ? `<div class="text-gray-500">Ceny 5 lat: 80% ${pct(price5.p10Pct)} … ${pct(price5.p90Pct)}</div>` : ""}
+				<div class="text-gray-500">IRR 5 lat (80%): LTR ${ltr5?.irr ? `${pct(ltr5.irr.p10)} … ${pct(ltr5.irr.p90)}` : "—"} · STR ${str5?.irr ? `${pct(str5.irr.p10)} … ${pct(str5.irr.p90)}` : "—"}</div>
+				<div class="text-gray-500">P(straty) 5 lat: LTR ${ltr5 ? `${ltr5.probabilityLossPct.toFixed(1)}%` : "—"} · STR ${str5 ? `${str5.probabilityLossPct.toFixed(1)}%` : "—"}</div>
+				<details class="mt-1"><summary class="cursor-pointer text-gray-400">Założenia i jakość modeli</summary><ul class="mt-1 list-disc pl-4 text-gray-400">${forecast.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul></details>
+			</div>`
+		: "";
 	return `<div class="mt-2 border-t pt-1 text-xs">
 		<div class="font-medium">Wycena vs rynek</div>
 		${valuation.estimate?.fairM2 != null ? `<div>godziwa: <b>${pl(valuation.estimate.fairM2)} zł/m²</b>${valuation.estimate.overUnderPct != null ? ` · <span class="${valuation.estimate.rating?.tone ?? ""} font-medium">${valuation.estimate.rating?.label} ${valuation.estimate.overUnderPct > 0 ? "+" : ""}${valuation.estimate.overUnderPct}%</span>` : ""}</div>` : ""}
@@ -889,5 +924,6 @@ export function renderValuationHtml(valuation: OfferValuation): string {
 		${comp("RCN 1 km / 24 mies.", valuation.estimate?.compSets.listing ? { avgM2: valuation.estimate.compSets.listing.medianM2, n: valuation.estimate.compSets.listing.n } : null)}
 		${valuation.lt ? roi("Najem długoterminowy", valuation.lt, "text-emerald-700") : ""}
 		${valuation.str ? roi("Najem krótkoterminowy (szac.)", valuation.str, "text-rose-700") : ""}
+		${forecastBlock}
 	</div>`;
 }
