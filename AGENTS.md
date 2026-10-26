@@ -483,7 +483,9 @@ Each `UpsideHorizon` has `months`, `expectedUpsidePct`, `p10UpsidePct`,
 `p90UpsidePct`, `annualizedPct`, `riskAdjustedAnnualPct`, `score`, `label`
 and `tone`. The headline fields (`expectedGrowthPct`, `expectedFairM2`,
 `mispricePct`, `upsidePct`, `riskPenaltyPct`, `riskAdjustedUpsidePct`,
-`score`, `basis`) are the 12-month slice for the existing UI. Nominal,
+`score`, `basis`) are the five-year slice for the existing UI; the score and
+risk-adjusted percentage stay annualized so they remain comparable across
+assets. Nominal,
 pre-tax, no transaction costs; the comparable evidence and confidence band
 remain the primary valuation output. `scripts/validate-upside.ts` pins the
 AR(1) path, gap convergence, variance, quantile bands and score mapping.

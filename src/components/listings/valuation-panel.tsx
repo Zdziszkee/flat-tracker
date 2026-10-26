@@ -136,7 +136,9 @@ export function ValuationPanel({ id }: { id: number }) {
 			{data.estimate?.upside && (
 				<div className="space-y-0.5 border-t pt-2">
 					<div className="flex items-center justify-between">
-						<span className="font-medium">Potencjał 12 mies.:</span>
+						<span className="font-medium">
+							Potencjał {horizonLabel(data.estimate.upside.horizonMonths)}:
+						</span>
 						<span className={data.estimate.upside.tone}>
 							<b>{data.estimate.upside.score}/100</b> ·{" "}
 							{data.estimate.upside.label}
@@ -152,7 +154,7 @@ export function ValuationPanel({ id }: { id: number }) {
 							data.estimate.upside.riskAdjustedUpsidePct > 0
 								? "+"
 								: ""}
-							{data.estimate.upside.riskAdjustedUpsidePct ?? "—"}%
+							{data.estimate.upside.riskAdjustedUpsidePct ?? "—"}%/rok
 						</b>
 					</div>
 					<div className="text-gray-400">{data.estimate.upside.basis}</div>

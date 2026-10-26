@@ -61,7 +61,8 @@ export interface UpsidePotential {
 	horizons: UpsideHorizon[];
 }
 
-const HEADLINE_MONTHS = 12;
+/** The headline potential is the five-year view. */
+const HEADLINE_MONTHS = 60;
 const HORIZONS_QUARTERS = [4, 8, 12, 20] as const;
 /** Long-run nominal growth prior (income growth + inflation), annualized. */
 const LONG_RUN_GROWTH = 0.035;
@@ -344,13 +345,13 @@ export function upsidePotential(input: {
 		compSpreadPct: Math.round(input.compSpreadPct * 10) / 10,
 		riskPenaltyPct:
 			Math.round(
-				(headline.expectedUpsidePct - headline.riskAdjustedAnnualPct) * 10,
+				(headline.annualizedPct - headline.riskAdjustedAnnualPct) * 10,
 			) / 10,
 		riskAdjustedUpsidePct: headline.riskAdjustedAnnualPct,
 		score: headline.score,
 		label: headline.label,
 		tone: headline.tone,
-		basis: `12 mies.: ${basisParts.join(" · ")}`,
+		basis: `${horizonLabel(HEADLINE_MONTHS)}: ${basisParts.join(" · ")}`,
 		horizons,
 	};
 }

@@ -69,16 +69,21 @@ check(
 	"horizons are 1, 2, 3 and 5 years",
 );
 check(
-	(steadyUp?.expectedGrowthPct ?? 0) > 3 && (steadyUp?.expectedGrowthPct ?? 0) < 4.2,
-	`steady 1y market growth is shrunk toward the 3.5% prior (${steadyUp?.expectedGrowthPct})`,
+	(steadyUp?.expectedGrowthPct ?? 0) > 18 &&
+		(steadyUp?.expectedGrowthPct ?? 0) < 22,
+	`steady 5y market growth is shrunk toward the 3.5% prior (${steadyUp?.expectedGrowthPct})`,
+);
+check(
+	steadyUp?.horizonMonths === 60,
+	"headline potential is the five-year horizon",
 );
 check(
 	Math.abs((steadyUp?.mispricePct ?? 0) - 11.1) < 0.2,
 	"misprice is fair/offer - 1",
 );
 check(
-	(steadyUp?.upsidePct ?? 0) > 6 && (steadyUp?.upsidePct ?? 0) < 8,
-	`1y upside adds partial gap convergence (${steadyUp?.upsidePct})`,
+	(steadyUp?.upsidePct ?? 0) > 28 && (steadyUp?.upsidePct ?? 0) < 34,
+	`5y upside includes market growth and gap convergence (${steadyUp?.upsidePct})`,
 );
 check((steadyUp?.score ?? 0) > 55, "below-fair offer scores above neutral");
 check(
@@ -90,7 +95,7 @@ check(
 // Same series, offer above fair.
 const overpriced = upsidePotential({
 	fairM2: 10000,
-	offerM2: 12000,
+	offerM2: 16000,
 	series: steady,
 	compSpreadPct: 20,
 });
@@ -135,8 +140,8 @@ const gapped = upsidePotential({
 	compSpreadPct: 10,
 });
 check(
-	(gapped?.expectedGrowthPct ?? 0) > 3.4 && (gapped?.expectedGrowthPct ?? 0) < 3.6,
-	`a short series falls back to the 3.5% prior (${gapped?.expectedGrowthPct})`,
+	(gapped?.expectedGrowthPct ?? 0) > 17 && (gapped?.expectedGrowthPct ?? 0) < 21,
+	`a short series compounds the 3.5% prior over five years (${gapped?.expectedGrowthPct})`,
 );
 
 // No index series: the prior still drives a market path, gap still counts.
@@ -147,8 +152,9 @@ const noSeries = upsidePotential({
 	compSpreadPct: 20,
 });
 check(
-	(noSeries?.expectedGrowthPct ?? 0) > 3 && (noSeries?.expectedGrowthPct ?? 0) < 4,
-	"no series falls back to the long-run prior",
+	(noSeries?.expectedGrowthPct ?? 0) > 17 &&
+		(noSeries?.expectedGrowthPct ?? 0) < 21,
+	"no series compounds the long-run prior over five years",
 );
 check(
 	(noSeries?.score ?? 0) > (steadyUp?.score ?? 0),
