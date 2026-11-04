@@ -44,7 +44,8 @@
     "validate:finwire": "tsx scripts/validate-finwire.ts",
     "validate:upside": "tsx scripts/validate-upside.ts",
     "build:forecasts": "tsx scripts/build-forecast-models.ts",
-    "validate:forecast": "tsx scripts/validate-forecast.ts"
+    "validate:forecast": "tsx scripts/validate-forecast.ts",
+    "validate:tailwind-scan": "tsx scripts/validate-tailwind-scan.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",

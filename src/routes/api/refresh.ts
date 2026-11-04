@@ -48,6 +48,8 @@ export const Route = createFileRoute("/api/refresh")({
 				if (canSpawnRefreshProcess()) {
 					const pid = spawnRefreshProcess({ label: "manual" });
 					if (!pid) {
+						// Another run took the lock between the check and the spawn.
+						if (remoteRefreshRunning()) return busy();
 						return json(
 							{ started: false, alreadyRunning: false },
 							{ status: 500 },

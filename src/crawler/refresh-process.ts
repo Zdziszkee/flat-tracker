@@ -18,7 +18,11 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 
-import { clearRefreshLock, writeRefreshLock } from "./refresh-lock.ts";
+import {
+	clearRefreshLock,
+	remoteRefreshRunning,
+	writeRefreshLock,
+} from "./refresh-lock.ts";
 
 export interface SpawnRefreshOptions {
 	/** Shown in log lines and in the published run id ("manual", "dev-boot"). */
@@ -52,6 +56,18 @@ export function canSpawnRefreshProcess(): boolean {
 export function spawnRefreshProcess(
 	options: SpawnRefreshOptions,
 ): number | undefined {
+	// The callers check this too, but the check lives here as well so a
+	// future caller cannot overwrite a live run's lock with its own child's
+	// pid (which would defeat the cross-process guard).
+	const existing = remoteRefreshRunning();
+	if (existing) {
+		console.log(
+			`[refresh] ${existing.pid} is already crawling (${existing.phase}); ` +
+				`not starting ${options.label}`,
+		);
+		return undefined;
+	}
+
 	const args = [
 		"--import",
 		"tsx",

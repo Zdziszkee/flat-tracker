@@ -10,12 +10,11 @@ import { dirname } from "node:path";
 import type { RefreshPhase, SourceProgress } from "./progress.ts";
 
 /**
- * Cross-process refresh state for the dev-start crawl.
+ * Cross-process refresh state for out-of-process crawls.
  *
- * The dev server must stay responsive, so its boot refresh runs in a child
- * process (`server/boot-refresh.ts`, spawned by
- * `server/plugins/refresh-on-start.ts`). This module is the only thing the
- * two processes share:
+ * Every refresh runs in a child process (`server/refresh-child.ts`) so the
+ * HTTP server never loads the crawler graph or blocks on synchronous SQLite
+ * work. This module is the only thing the two processes share:
  *
  * - the child publishes its live progress here, so /api/crawl-status can show
  *   it even though the in-memory registry lives in the other process;

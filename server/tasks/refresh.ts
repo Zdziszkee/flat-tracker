@@ -44,8 +44,16 @@ export default defineTask({
 				diffOnly: dev,
 				sinceDays: dev ? DEV_SINCE_DAYS : undefined,
 			});
+			if (pid == null) {
+				return {
+					result: {
+						started: false,
+						alreadyRunning: remoteRefreshRunning() != null,
+					},
+				};
+			}
 			return {
-				result: { started: pid != null, alreadyRunning: false, pid },
+				result: { started: true, alreadyRunning: false, pid },
 			};
 		}
 

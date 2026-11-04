@@ -38,10 +38,11 @@ export { DEV_SINCE_DAYS };
  * otodom/olx offers, then apply the incremental RCN diff (a HEAD check
  * skips the 2 GB download when the registry hasn't changed).
  *
- * This is the only crawl entry point: it runs inside the Nitro server on
- * dev startup, on an hourly schedule, and when the /sources page triggers
- * a manual refresh via /api/refresh. Portal failures are isolated per
- * site: one blocked portal does not abort the rest of the run.
+ * This is the only crawl entry point. The HTTP server never calls it
+ * directly: the dev boot, the hourly task and the /sources manual refresh all
+ * run it through `server/refresh-child.ts`/`refresh-runner.ts` in their own
+ * process, so the server never loads the crawler graph. Portal failures are
+ * isolated per site: one blocked portal does not abort the rest of the run.
  *
  * Server runs are first-page-only by default (`firstPageOnly: true`): each
  * site fetches only its first, newest-sorted page and skips pagination and

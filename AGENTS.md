@@ -94,6 +94,7 @@ bun run validate:finwire  # finwire page parsing + chain-index math
 bun run validate:upside   # forward-looking upside/risk math
 bun run build:forecasts   # refresh data/forecasts/models.json (price/rent/STR paths + calibrated bands)
 bun run validate:forecast # deterministic forecast, conformal calibration and IRR math
+bun run validate:tailwind-scan # Tailwind scanner stays out of src/data (timeout-guarded)
 ```
 
 ### Fresh clone: zero-setup bootstrap
@@ -742,7 +743,10 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   generated directory with `@source not './data/**'`. Both traps have the
   same symptom: the first `styles.css` request hangs (the scanner grows to
   tens of GB) and every other request queues behind it. Any new dataset
-  written under `src/data/` is covered by that directory-level exclusion.
+  written under `src/data/` is covered by that directory-level exclusion;
+  `bun run validate:tailwind-scan` reproduces the plugin's scan with a
+  synthetic multi-MB trap file and fails (timeout-guarded) if the exclusion
+  stops working.
 - **Heavy read endpoints are cached and yield**: `/api/market-charts` is a
   sequence of multi-second synchronous better-sqlite3 aggregations.
   `src/lib/server-cache.ts` holds its result for five minutes with
