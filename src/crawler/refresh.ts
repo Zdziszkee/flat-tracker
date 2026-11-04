@@ -26,8 +26,12 @@ import {
 } from "./progress.ts";
 import { importPublicInvestments } from "./public-investments.ts";
 import { refreshLockedByOther } from "./refresh-lock.ts";
+import { DEFAULT_SINCE_DAYS, DEV_SINCE_DAYS } from "./refresh-options.ts";
 import { adapters } from "./sites/index.ts";
 import type { SiteAdapter } from "./types.ts";
+
+// Re-exported for callers that already import it from here.
+export { DEV_SINCE_DAYS };
 
 /**
  * Full data refresh: crawl every real listing portal, prune stale
@@ -52,10 +56,6 @@ import type { SiteAdapter } from "./types.ts";
 
 /** Demo adapters that must never hit real portal traffic. */
 const DEMO_SITES = new Set(["quotes", "books"]);
-
-const DEFAULT_SINCE_DAYS = 90;
-/** Dev-start diff window: never go further back than this. */
-export const DEV_SINCE_DAYS = 7;
 
 const STATE_PATH = "data/crawler/state.json";
 

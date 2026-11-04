@@ -5,13 +5,13 @@
 /**
  * Generated data modules are not UI sources: they hold coordinates and
  * boundary rings, never class names. They must stay out of the scanner
- * explicitly — `region-railways.ts` is a 2.7 MB single-line payload, and
- * Tailwind v4's oxide scanner never returns from it (the whole dev server
- * then hangs on the first styles.css request, which is what made startup
- * look frozen for minutes).
+ * explicitly — `region-railways.ts` (2.7 MB) and `region-uniqueness.ts`
+ * (19 MB, one 10.9M-character line) are single-line payloads, and Tailwind
+ * v4's oxide scanner never returns from them (multiple GB of RAM, whole dev
+ * server hung on the first styles.css request). Exclude the whole directory
+ * so the next generated dataset cannot reintroduce this.
  */
-@source not './data/region-railways.ts';
-@source not './data/region-powiats.ts';
+@source not './data/**';
 
 @import 'tw-animate-css';
 

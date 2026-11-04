@@ -171,7 +171,9 @@ cause); `CRAWL_DEBUG=1` prints the raw error, and the same line is what
 
 Crawling is triggered from the UI, not the terminal: the **/sources** page
 ("Refresh now" → `POST /api/refresh`) runs the same `refreshAll()` as the
-hourly task. The old `crawl:*` / `import-rcn` CLI scripts were removed.
+hourly task, but in a **child process** (`server/refresh-child.ts`) so the
+HTTP server never loads the crawler graph or blocks on its synchronous SQLite
+phases. The old `crawl:*` / `import-rcn` CLI scripts were removed.
 
 `geocode-addresses` fills the coordinate gap for portals that hide
 lat/lng (morizon, gratka, domiporta, nieruchomosci-online,
@@ -227,20 +229,23 @@ instance throttles).
 ## Scheduled (hourly) refresh
 
 Crawls are incremental and idempotent, designed for a once-per-hour cron.
-The server itself runs the refresh: a Nitro scheduled task `refresh`
-(cron `0 * * * *`, wired in `vite.config.ts` -> `scheduledTasks`,
-`experimental.tasks`) executes `refreshAll()` from `src/crawler/refresh.ts`.
-It runs in dev AND prod node servers, and the dev server additionally fires
-one refresh on startup (`server/plugins/refresh-on-start.ts`, gated on
-`import.meta.dev`). That boot crawl runs in a **child process**
-(`server/boot-refresh.ts`, launched as `node --import tsx`), not through
-`runTask`: Vite's dev module runner would otherwise load the whole crawler
-graph inside the server process, and that first load blocked every request
-for minutes on a cold start. Live progress and the cross-process
-single-flight guard travel through `data/crawler/refresh.json`
+The server runs the refresh, but never the crawl itself: a Nitro scheduled
+task `refresh` (cron `0 * * * *`, wired in `vite.config.ts` ->
+`scheduledTasks`, `experimental.tasks`) and `POST /api/refresh` both spawn
+`server/refresh-child.ts` (`node --import tsx`), which calls `refreshAll()`
+from `src/crawler/refresh.ts` in its own process
+(`spawnRefreshProcess()` in `src/crawler/refresh-process.ts`). Loading the
+crawler graph through Vite's dev module runner blocked every request for
+minutes on a cold start, and the synchronous prune/RCN/building-assignment
+phases would stall the UI mid-crawl. The task runs in dev AND prod; the dev
+server additionally fires one refresh on startup
+(`server/plugins/refresh-on-start.ts`, gated on `import.meta.dev`), through
+the same runner (`server/boot-refresh.ts`). Live progress and the
+cross-process single-flight guard travel through `data/crawler/refresh.json`
 (`src/crawler/refresh-lock.ts`): `/api/crawl-status` merges it, `/api/refresh`
 reports it as already running, and `refreshAll()` refuses to start while a
-live child holds it.
+live child holds it. A deployment without `server/` or `tsx` (built
+`.output/` only) falls back to running `refreshAll()` in-process.
 
 Manual equivalents:
 
@@ -333,7 +338,7 @@ list; budujesie: the forum list is sorted by last-post activity, so the
 deep pages hold the corpus and every run re-syncs all ~52 topic pages).
 
 **Dev-start runs are diff-only** (`server/boot-refresh.ts` calls
-`refreshAll({ sinceDays: DEV_SINCE_DAYS, diffOnly: true })`): each site's
+`runRefreshChild({ diffOnly: true, sinceDays: DEV_SINCE_DAYS })`): each site's
 `since` window is `max(now - 7 days, last successful crawl)` — per-site
 last-run timestamps live in `data/crawler/state.json` — so a boot only
 loads what the portals added since the previous load, and otodom/olx
@@ -731,10 +736,13 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   browser never requests them). `optimizeDeps` in `vite.config.ts` now sets
   `noDiscovery: true` with an explicit list of the packages the client
   actually imports — add a client dependency there when introducing one.
-  (2) Tailwind v4's oxide scanner never returns from the 2.7 MB single-line
-  `src/data/region-railways.ts`; `src/styles.css` excludes the generated data
-  modules with `@source not`. Both have the same symptom: the first
-  `styles.css` request hangs and every other request queues behind it.
+  (2) Tailwind v4's oxide scanner never returns from the single-line
+  generated datasets (2.7 MB `src/data/region-railways.ts`, 19 MB
+  `src/data/region-uniqueness.ts`); `src/styles.css` excludes the whole
+  generated directory with `@source not './data/**'`. Both traps have the
+  same symptom: the first `styles.css` request hangs (the scanner grows to
+  tens of GB) and every other request queues behind it. Any new dataset
+  written under `src/data/` is covered by that directory-level exclusion.
 - **Heavy read endpoints are cached and yield**: `/api/market-charts` is a
   sequence of multi-second synchronous better-sqlite3 aggregations.
   `src/lib/server-cache.ts` holds its result for five minutes with
