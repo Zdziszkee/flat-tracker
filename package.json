@@ -14,7 +14,7 @@
     "lint": "biome lint",
     "check": "biome check",
     "typecheck": "tsc --noEmit",
-    "intent": "node node_modules/@tanstack/intent/dist/cli.mjs",
+    "intent": "bun node_modules/@tanstack/intent/dist/cli.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -45,7 +45,7 @@
     "validate:upside": "tsx scripts/validate-upside.ts",
     "build:forecasts": "tsx scripts/build-forecast-models.ts",
     "validate:forecast": "tsx scripts/validate-forecast.ts",
-    "validate:tailwind-scan": "tsx scripts/validate-tailwind-scan.ts"
+    "validate:tailwind-scan": "bun scripts/validate-tailwind-scan.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",

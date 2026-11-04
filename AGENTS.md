@@ -55,18 +55,23 @@ override a documented project convention.
   `pk.` token — restrict it to the app domain in the Mapbox dashboard).
   Free tier: 50k map loads/month.
 - **Runtime note**: `better-sqlite3` crashes under Bun's own runtime
-  (verified on Bun 1.4.0), so a TS entry point must never be executed *by*
-  bun (`bun src/crawler/...`, `bun file.ts`). Run it through tsx, which the
-  package scripts already do (`bun run assign-buildings`).
+  (`ERR_DLOPEN_FAILED: 'better-sqlite3' is not yet supported in Bun`,
+  re-verified on Bun 1.4.0), so a DB-touching TS entry point must never be
+  executed *by* bun (`bun src/crawler/...`, `bun file.ts`). Run it through
+  tsx, which the package scripts already do (`bun run assign-buildings`).
+  This is the one hard exception to bun-first: pure tooling (for example
+  `validate:tailwind-scan`) runs as `bun <script>`; the crawler/RCN/server
+  entry points stay on Node because they open the SQLite database.
 
 ## Toolchain: bun first
 
 Use **bun** for everything it can do: `bun install` (the lockfile is
 `bun.lock`), `bunx <tool>` instead of `npx <tool>`, and `bun run <script>` to
-run package scripts — including scripts that open SQLite, because
-`bun run assign-buildings` executes `tsx` (Node) rather than the file itself.
-The single exception is above: never hand a DB-touching entry point straight
-to bun's runtime. `bun run dev` is fine — Vite/Nitro run under Node either way.
+run package scripts. Pure tooling runs directly under bun
+(`bun scripts/validate-tailwind-scan.ts`); scripts that open SQLite go through
+`tsx` (Node) because of the runtime note above — `bun run assign-buildings`
+executes `tsx` rather than the file itself. `bun run dev` is fine —
+Vite/Nitro run under Node either way.
 
 Do not write `npx` anywhere (docs, comments, log messages). Where a tool has
 to come from the project's own dependency tree, name its bin explicitly, e.g.

@@ -7,8 +7,10 @@
  * assignment, price indices) stall every request. The child publishes live
  * progress to `data/crawler/refresh.json`, which `/api/crawl-status` reads.
  *
- * The child is `node --import tsx <script>`; `tsx` and the script both live in
- * the repo. When either is missing (a deployment that ships only the built
+ * The child is `node --import tsx <script>` because it imports better-sqlite3,
+ * which Bun 1.4.0 does not support (`ERR_DLOPEN_FAILED`); tooling that does
+ * not open the database runs under bun. `tsx` and the script both live in the
+ * repo. When either is missing (a deployment that ships only the built
  * `.output/`), `canSpawnRefreshProcess()` is false and callers fall back to
  * running `refreshAll()` in-process.
  */

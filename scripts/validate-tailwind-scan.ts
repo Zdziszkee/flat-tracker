@@ -104,13 +104,7 @@ async function main(): Promise<void> {
 		const sources = await scannerSources();
 		const child = spawnSync(
 			process.execPath,
-			[
-				"--import",
-				"tsx",
-				fileURLToPath(import.meta.url),
-				"--scan",
-				JSON.stringify(sources),
-			],
+			[fileURLToPath(import.meta.url), "--scan", JSON.stringify(sources)],
 			{
 				cwd: ROOT,
 				encoding: "utf8",
