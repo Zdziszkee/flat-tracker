@@ -30,7 +30,6 @@ const PARCELS_STORAGE_KEY = "flat-tracker:show-parcels";
 /** localStorage key for the "Kolej" overlay toggle. */
 const RAILWAYS_STORAGE_KEY = "flat-tracker:show-railways";
 const OCCUPANCY_STORAGE_KEY = "flat-tracker:show-occupancy";
-const PUBLIC_INVESTMENTS_STORAGE_KEY = "flat-tracker:show-public-investments";
 
 function MapPage() {
 	const { filters, setFilters } = useListingFilters("/map");
@@ -56,18 +55,11 @@ function MapPage() {
 	const [showRailways, setShowRailways] = useState(true);
 	/** Short-term rental occupancy heatmap layer. */
 	const [showOccupancy, setShowOccupancy] = useState(false);
-	/** Planned/completed city projects (roads, schools, parks, ...). */
-	const [showInvestments, setShowInvestments] = useState(false);
 	/**
-	 * Flats and plots are dense categories on their own; the city-project
-	 * layer would just clutter them, so it is suppressed while either is
-	 * selected. The toggle keeps its stored value, which comes back when the
-	 * user returns to "Wszystkie" or "Dom".
+	 * Planned/completed city projects are their own kind in the "Rodzaj"
+	 * dropdown; the layer is drawn only while that kind is selected, so it
+	 * never clutters the offer categories and is hidden by default.
 	 */
-	const hideInvestmentPoints =
-		filters.kind === "apartment" || filters.kind === "plot";
-	const showInvestmentPoints =
-		showingPublicInvestments || (showInvestments && !hideInvestmentPoints);
 	const [occupancySource, setOccupancySource] = useState<
 		"airbnb" | "booking" | "all"
 	>("all");
@@ -85,12 +77,6 @@ function MapPage() {
 			if (railStored !== null) setShowRailways(railStored === "1");
 			const occStored = window.localStorage.getItem(OCCUPANCY_STORAGE_KEY);
 			if (occStored !== null) setShowOccupancy(occStored === "1");
-			const investmentsStored = window.localStorage.getItem(
-				PUBLIC_INVESTMENTS_STORAGE_KEY,
-			);
-			if (investmentsStored !== null) {
-				setShowInvestments(investmentsStored === "1");
-			}
 		} catch {
 			// Private mode / storage disabled: keep the default.
 		}
@@ -172,26 +158,6 @@ function MapPage() {
 						/>
 						Obłożenie STR
 					</label>
-					{!showingPublicInvestments && !hideInvestmentPoints && (
-						<label className="flex items-center gap-1.5 text-sm text-gray-700">
-							<input
-								type="checkbox"
-								checked={showInvestments}
-								onChange={(e) => {
-									setShowInvestments(e.target.checked);
-									try {
-										window.localStorage.setItem(
-											PUBLIC_INVESTMENTS_STORAGE_KEY,
-											e.target.checked ? "1" : "0",
-										);
-									} catch {
-										// Not fatal: the toggle just won't persist.
-									}
-								}}
-							/>
-							Inwestycje publiczne
-						</label>
-					)}
 					{showOccupancy && (
 						<>
 							<select
@@ -247,14 +213,14 @@ function MapPage() {
 							showParcels={showParcels}
 							showRailways={showRailways}
 							showOccupancy={showOccupancy}
-							showInvestments={showInvestmentPoints}
+							showInvestments={showingPublicInvestments}
 							occupancySource={occupancySource}
 							occupancyMonth={occupancyMonth}
 						/>
 					</Suspense>
 				)}
 			</div>
-			{showInvestmentPoints && (
+			{showingPublicInvestments && (
 				<div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t px-4 py-1.5 text-xs text-gray-600">
 					<span className="font-medium text-gray-700">Inwestycje:</span>
 					{Object.entries(PUBLIC_INVESTMENT_CATEGORY_LABELS).map(
