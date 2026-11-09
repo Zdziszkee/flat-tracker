@@ -272,7 +272,8 @@ region-wide GUGiK per-powiat GeoPackages — małopolska scope by default
 `RCN_GUGIK_SCOPE=poland` to make the server refresh cover the whole country
 instead. When either import inserts new rows, building assignment
 (`assign-buildings`) re-runs automatically so new price history shows up
-colored on the map.
+colored on the map. The run ends with the `listing-derived` phase, which
+recomputes `is_visible`/`property_kind`/map anchors for the map and table.
 Portal failures are isolated per site (one blocked portal does not abort
 the rest of the run). The task and plugin are registered explicitly in
 `vite.config.ts` (no Nitro directory scanning — TanStack Start owns
