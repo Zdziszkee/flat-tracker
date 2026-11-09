@@ -51,7 +51,10 @@ export function recomputeListingDerived(): DerivedReport {
 		})
 		.from(listings)
 		.leftJoin(buildings, eq(listings.buildingId, buildings.id))
-		.orderBy(desc(listings.scrapedAt))
+		// Id is the tie-breaker: morizon/gratka dedupe keeps the first row it
+		// sees, so equal scrape timestamps must still produce the same winner
+		// on every pass.
+		.orderBy(desc(listings.scrapedAt), desc(listings.id))
 		.all();
 
 	if (rows.length === 0) {

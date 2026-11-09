@@ -55,7 +55,7 @@ const rows = await db
 	// Same order as `recomputeListingDerived`: the morizon/gratka dedupe keeps
 	// the first row it sees, so an unordered read would compare a different
 	// rule than the one that wrote the stored values.
-	.orderBy(desc(listings.scrapedAt));
+	.orderBy(desc(listings.scrapedAt), desc(listings.id));
 
 check(rows.length > 0, "listings table is not empty");
 check(
