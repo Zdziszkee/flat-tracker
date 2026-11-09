@@ -19,7 +19,15 @@ import {
 
 // mapbox-gl touches `window` at module load, so it must never be imported
 // during SSR. The lazy import is only triggered after mount on the client.
-const MapView = lazy(() => import("../components/map-view"));
+const mapViewImport = () => import("../components/map-view");
+const MapView = lazy(mapViewImport);
+// Start fetching the mapbox chunk as soon as this route is evaluated on the
+// client, instead of waiting for the first post-hydration effect. The chunk is
+// by far the largest client dependency, so this removes a visible beat between
+// the page shell and the map.
+if (typeof window !== "undefined") {
+	void mapViewImport();
+}
 
 export const Route = createFileRoute("/map")({
 	validateSearch: (search) => listingSearchSchema.parse(search),
@@ -92,7 +100,7 @@ function MapPage() {
 	}, []);
 
 	return (
-		<div className="flex h-[calc(100vh-4rem)] flex-col">
+		<div className="flex h-dvh flex-col">
 			<header className="flex flex-wrap items-end justify-between gap-3 border-b px-4 py-2">
 				<div>
 					<h1 className="text-lg font-semibold">

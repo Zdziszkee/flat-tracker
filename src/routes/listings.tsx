@@ -74,6 +74,7 @@ function ListingsPage() {
 					<Link
 						to="/map"
 						search={searchFromFilters(filters)}
+						preload="intent"
 						className="text-blue-600 underline"
 					>
 						Mapa

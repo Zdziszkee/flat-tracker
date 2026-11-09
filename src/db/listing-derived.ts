@@ -1,3 +1,8 @@
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+
 import { desc, eq } from "drizzle-orm";
 import { visibleListingIds } from "#/lib/listing-visibility";
 import { propertyKindOf } from "#/lib/property-kind";
@@ -108,13 +113,49 @@ export function recomputeListingDerived(): DerivedReport {
 /**
  * Lazy guard for deployments that already hold listings when this schema
  * lands: the first read after a migration (or after a crawl inserted rows but
- * the refresh's final phase failed) recomputes once. Single-flight per process
- * so concurrent requests do not each pay for the pass.
+ * the refresh's final phase failed) schedules one background rebuild.
  */
-let ensurePromise: Promise<DerivedReport | null> | null = null;
+let derivedChildRunning = false;
+
+/**
+ * Rebuild the stale columns in a child process. The pass takes ~1.3 s on the
+ * 47k-row table, and better-sqlite3 is synchronous: running it in the HTTP
+ * process blocked `/api/sources` and the facet request for that whole time on
+ * the first visit after an interrupted crawl. A child keeps the server
+ * responsive; the map serves the current (slightly stale) flags until it
+ * finishes, then the next request sees the rebuilt rows.
+ */
+function spawnDerivedChild(): boolean {
+	if (derivedChildRunning) return true;
+	const script = resolve(process.cwd(), "scripts/rebuild-listing-derived.ts");
+	if (!existsSync(script)) return false;
+	try {
+		createRequire(import.meta.url).resolve("tsx");
+	} catch {
+		// A deployment that ships only `.output/` has no tsx runner; leave the
+		// refresh's final phase to rebuild the columns instead of blocking.
+		return false;
+	}
+	const child = spawn(process.execPath, ["--import", "tsx", script], {
+		cwd: process.cwd(),
+		stdio: "ignore",
+		detached: true,
+	});
+	derivedChildRunning = true;
+	child.once("exit", () => {
+		derivedChildRunning = false;
+	});
+	child.once("error", () => {
+		derivedChildRunning = false;
+	});
+	child.unref();
+	console.log(
+		"[listing-derived] stale rows found; rebuilding in the background",
+	);
+	return true;
+}
 
 export function ensureListingDerived(): Promise<DerivedReport | null> {
-	if (ensurePromise) return ensurePromise;
 	const pending = sqlite
 		.prepare("select 1 from listings where derived_at is null limit 1")
 		.get();
@@ -123,12 +164,7 @@ export function ensureListingDerived(): Promise<DerivedReport | null> {
 	// Recomputing here mid-crawl would race the crawl and stall requests for
 	// no benefit; after a crash the lock clears and the next read repairs it.
 	if (isRunning() || refreshLockedByOther()) return Promise.resolve(null);
-	ensurePromise = Promise.resolve().then(() => {
-		try {
-			return recomputeListingDerived();
-		} finally {
-			ensurePromise = null;
-		}
-	});
-	return ensurePromise;
+	// Never pay the synchronous pass in the request path.
+	spawnDerivedChild();
+	return Promise.resolve(null);
 }

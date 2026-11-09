@@ -7,7 +7,12 @@
  * manual `assign-buildings` run that moved building centroids.
  */
 import { recomputeListingDerived } from "../src/db/listing-derived.ts";
+import { refreshLockedByOther } from "../src/crawler/refresh-lock.ts";
 
+if (refreshLockedByOther()) {
+	console.log("[listing-derived] a crawl is running; skipping the rebuild");
+	process.exit(0);
+}
 const report = recomputeListingDerived();
 console.log(
 	`[listing-derived] ${report.rows} rows scanned, ${report.visible} visible, ` +
