@@ -7,22 +7,17 @@ import { definePlugin } from "nitro";
 /**
  * A boot crawl saturates CPU/SQLite at exactly the moment the first page is
  * compiled and opened, which made `bun run dev` feel like the app was broken.
- * Let the first visit land first; skip entirely when a crawl finished in the
- * last 30 minutes.
+ * A fresh clone still needs its first fill; after that the hourly task and the
+ * /sources button own refreshes, and a dev restart should stay quiet.
  */
 const BOOT_CRAWL_DELAY_MS = 20_000;
-const RECENT_CRAWL_WINDOW_MS = 30 * 60_000;
 
-function crawledRecently(): boolean {
+function hasCrawledBefore(): boolean {
 	try {
 		const state = JSON.parse(
 			readFileSync(resolve(process.cwd(), "data/crawler/state.json"), "utf8"),
 		) as Record<string, string>;
-		const newest = Math.max(
-			0,
-			...Object.values(state).map((value) => new Date(value).getTime() || 0),
-		);
-		return Date.now() - newest < RECENT_CRAWL_WINDOW_MS;
+		return Object.keys(state).length > 0;
 	} catch {
 		return false;
 	}
@@ -44,15 +39,19 @@ function crawledRecently(): boolean {
  */
 export default definePlugin(() => {
 	if (!import.meta.dev) return;
+	const force = process.env.DEV_CRAWL === "1";
+	if (!force && hasCrawledBefore()) {
+		console.log(
+			"[refresh] data already loaded; skipping the dev-boot crawl " +
+				"(set DEV_CRAWL=1 to force one, or use the /sources page)",
+		);
+		return;
+	}
 	console.log(
-		`[refresh] dev server started; incremental crawl in ${BOOT_CRAWL_DELAY_MS / 1000}s unless one just ran...`,
+		`[refresh] dev server started; first-fill crawl in ${BOOT_CRAWL_DELAY_MS / 1000}s...`,
 	);
 	let child: ReturnType<typeof spawn> | null = null;
 	const timer = setTimeout(() => {
-		if (crawledRecently()) {
-			console.log("[refresh] a crawl ran recently; skipping the dev-boot crawl");
-			return;
-		}
 		const script = resolve(process.cwd(), "server/boot-refresh.ts");
 		child = spawn(process.execPath, ["--import", "tsx", script], {
 			cwd: process.cwd(),

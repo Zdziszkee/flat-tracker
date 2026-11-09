@@ -117,9 +117,10 @@ database:
   scripts — gets a working schema. Re-runs are no-ops via drizzle's
   `__drizzle_migrations` journal. A DB that has tables but no journal (made
   with `db:push`) is skipped with a warning instead of failing mid-migration.
-- The dev-start refresh then crawls every portal and fills the DB gradually;
-  it waits 20 s and is skipped entirely when a crawl finished in the last
-  30 minutes, so the first page visit never competes with a cold crawl.
+- The dev-start refresh fills an empty database: it waits 20 s, then crawls
+  every portal. Once `data/crawler/state.json` exists, later dev boots skip
+  the crawl entirely so opening the app never competes with a refresh; use
+  the /sources page or `DEV_CRAWL=1 bun run dev` when a boot crawl is wanted.
   Reference layers (RCN zip, Geofabrik PBF, GUGiK powiat packages) download
   into `data/` on first run.
 
