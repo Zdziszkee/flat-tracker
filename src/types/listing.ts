@@ -114,8 +114,69 @@ export interface ListingDto {
 	transactionStats: TransactionStats | null;
 }
 
-export interface ListingsResponse {
-	listings: ListingDto[];
+/**
+ * One point the map actually draws. The full popup payload (`attributes`,
+ * `features`, `transactionStats`) is fetched on demand by `view=detail`;
+ * shipping it for all ~45k rows was the original 64 MB feed and the main
+ * source of client freezes.
+ */
+export interface MapListingDto {
+	id: number;
+	source: string;
+	externalId: string;
+	title: string;
+	url: string;
+	price: number | null;
+	pricePerM2: number | null;
+	areaM2: number | null;
+	rooms: number | null;
+	floor: string | null;
+	district: string | null;
+	city: string | null;
+	address: string | null;
+	lat: number | null;
+	lng: number | null;
+	mapLat: number;
+	mapLng: number;
+	listedAt: string | null;
+	firstSeenAt: string | null;
+	offerType: string;
+	propertyType: string | null;
+	propertyKind: PropertyKind | null;
+	buildingId: number | null;
+	buildingAddress: string | null;
+	constructionEndLabel: string | null;
+	constructionEndDate: string | null;
+}
+
+/** Aggregated cell at overview zooms. */
+export interface MapClusterDto {
+	kind: "cluster";
+	lng: number;
+	lat: number;
+	count: number;
+	/** Source with the most rows in the cell; drives the cluster color. */
+	source: string;
+}
+
+export interface MapPointDto extends MapListingDto {
+	kind: "listing";
+}
+
+export type MapFeedPoint = MapPointDto | MapClusterDto;
+
+export interface MapFeedResponse {
+	mode: "clusters" | "points";
+	points: MapFeedPoint[];
+	/** True when the exact-point query hit its safety cap. */
+	capped?: boolean;
+	generatedAt: string;
+}
+
+export interface ListingFacetsResponse {
+	total: number;
+	bySource: Record<string, number>;
+	byKind: Partial<Record<PropertyKind, number>>;
 	generatedAt: string;
 }
 

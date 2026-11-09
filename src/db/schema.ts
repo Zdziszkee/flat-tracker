@@ -227,6 +227,26 @@ export const listings = sqliteTable(
 		 * there are no start/status columns - never guessed values.
 		 */
 		constructionEndDate: text("construction_end_date"),
+		/**
+		 * Derived, denormalized map/filter fields. They are recomputed in one
+		 * pass after every crawl (`recomputeListingDerived`) instead of being
+		 * classified and de-duplicated in JS on every `/api/listings` request:
+		 *
+		 * - `propertyKind`: `propertyKindOf` result (null = no evidence).
+		 * - `isVisible`: false for hidden/deduped rows, so SQL can filter the
+		 *   visible set directly.
+		 * - `mapLat`/`mapLng`: the building centroid when the row is anchored
+		 *   to one, otherwise its own coordinates.
+		 * - `derivedAt`: marker for the pass; new crawl rows stay null until
+		 *   the next recompute.
+		 */
+		propertyKind: text("property_kind"),
+		isVisible: integer("is_visible", { mode: "boolean" })
+			.notNull()
+			.default(true),
+		mapLat: real("map_lat"),
+		mapLng: real("map_lng"),
+		derivedAt: integer("derived_at", { mode: "timestamp" }),
 	},
 	(t) => [
 		uniqueIndex("listings_source_external_idx").on(t.source, t.externalId),
@@ -239,6 +259,13 @@ export const listings = sqliteTable(
 		index("listings_investment_idx").on(t.investmentId),
 		index("listings_auction_date_idx").on(t.auctionDate),
 		index("listings_active_idx").on(t.isActive),
+		index("listings_derived_idx").on(t.derivedAt),
+		index("listings_map_idx").on(t.mapLat, t.mapLng),
+		index("listings_visible_source_kind_idx").on(
+			t.isVisible,
+			t.source,
+			t.propertyKind,
+		),
 	],
 );
 

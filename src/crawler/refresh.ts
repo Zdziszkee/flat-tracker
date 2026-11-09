@@ -600,6 +600,25 @@ export async function refreshAll(
 			}
 		}
 
+		// Classify every listing once, after all crawl/geocode/assignment
+		// changes: the map and table read `isVisible`, `propertyKind` and the
+		// map anchor straight from SQL instead of replaying the dedupe in JS
+		// on every request.
+		setPhase("listing-derived");
+		try {
+			const { recomputeListingDerived } = await import(
+				"../db/listing-derived.ts"
+			);
+			const derived = recomputeListingDerived();
+			console.log(
+				`[refresh] listing-derived: ${derived.rows} rows, ` +
+					`${derived.visible} visible, ${derived.changed} changed ` +
+					`(${derived.elapsedMs} ms)`,
+			);
+		} catch (err) {
+			console.error("[refresh] listing-derived recompute failed:", err);
+		}
+
 		return {
 			sites,
 			pruned,

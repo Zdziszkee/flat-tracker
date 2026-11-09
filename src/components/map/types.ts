@@ -1,4 +1,4 @@
-import type { ListingDto } from "#/types/listing";
+import type { ListingDto, MapFeedPoint } from "#/types/listing";
 
 export type ApiListing = ListingDto;
 
@@ -53,12 +53,13 @@ export interface ParcelFeatureCollection {
 	}>;
 }
 
-export interface GeoJsonFeatureCollection {
+/** Viewport feed from `/api/listings?view=map`: clusters or compact points. */
+export interface MapFeedFeatureCollection {
 	type: "FeatureCollection";
 	features: Array<{
 		type: "Feature";
-		geometry: { type: "Point"; coordinates: number[] };
-		properties: ApiListing;
+		geometry: { type: "Point"; coordinates: [number, number] };
+		properties: MapFeedPoint;
 	}>;
 }
 

@@ -169,6 +169,13 @@
       "when": 1792843824998,
       "tag": "0023_loud_big_bertha",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1794247006690,
+      "tag": "0024_strong_lord_hawal",
+      "breakpoints": true
     }
   ]
 }

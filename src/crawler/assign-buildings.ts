@@ -69,6 +69,16 @@ export async function assignBuildings(): Promise<{
 	const buildYears = await updateBuildingYears();
 	console.log(`  ${buildYears} buildings now have a construction year`);
 
+	// Building assignment moves rows onto new centroids, so refresh the
+	// denormalized map coordinates and the visibility/kind flags in the same
+	// pass. Manual `assign-buildings` runs otherwise leave stale map anchors.
+	const { recomputeListingDerived } = await import("../db/listing-derived.ts");
+	const derived = recomputeListingDerived();
+	console.log(
+		`  listing-derived: ${derived.rows} rows, ${derived.visible} visible ` +
+			`(${derived.elapsedMs} ms)`,
+	);
+
 	return { listings, transactions, addressBackfilled, buildYears };
 }
 

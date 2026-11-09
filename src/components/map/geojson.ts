@@ -1,25 +1,5 @@
 import type { OccupancyCell } from "#/types/occupancy";
-import type {
-	ApiListing,
-	GeoJsonFeatureCollection,
-	OccupancyGeoJsonFeatureCollection,
-} from "./types";
-
-export function toGeoJson(listings: ApiListing[]): GeoJsonFeatureCollection {
-	return {
-		type: "FeatureCollection",
-		features: listings
-			.filter((listing) => listing.mapLat !== null && listing.mapLng !== null)
-			.map((listing) => ({
-				type: "Feature",
-				geometry: {
-					type: "Point",
-					coordinates: [listing.mapLng as number, listing.mapLat as number],
-				},
-				properties: listing,
-			})),
-	};
-}
+import type { OccupancyGeoJsonFeatureCollection } from "./types";
 
 export function occupancyToGeoJson(
 	cells: OccupancyCell[],

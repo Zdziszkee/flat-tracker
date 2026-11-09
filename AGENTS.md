@@ -82,8 +82,8 @@ unrelated package).
 
 ```bash
 bun install               # dependencies (bun.lock is the lockfile)
-bun run dev               # start dev server (vite, port 3000); kicks off a background
-                          # data refresh on boot (see `server/plugins/refresh-on-start.ts`)
+bun run dev               # start dev server (vite, port 3000); a background refresh
+                          # starts 20 s later (see `server/plugins/refresh-on-start.ts`)
 bun run db:generate       # new migration from schema changes
 bun run db:migrate        # apply migrations
 bun run assign-buildings  # match listings/transactions to OSM buildings
@@ -92,6 +92,8 @@ bun run import:rcn-gugik       # małopolska RCN packages (cadence-gated)
 bun run import:rcn-gugik:all   # every GUGiK powiat in Poland (resumable drain)
 bun run import:public-investments # Kraków planned/completed projects (--force)
 bun run import:finwire         # city flat-price index, Kraków + Katowice (--force)
+bun run rebuild:listing-derived # recompute is_visible/property_kind/map anchor
+bun run validate:listing-derived # stored derived columns match the pure rules
 bun run discover:rcn-powiats   # refresh the GUGiK package catalogue
 bun run build:powiats     # regenerate src/data/region-powiats.ts (Overpass)
 bun run validate:powiats  # dataset sanity: counts, city centres, overlaps
@@ -116,7 +118,9 @@ database:
   `__drizzle_migrations` journal. A DB that has tables but no journal (made
   with `db:push`) is skipped with a warning instead of failing mid-migration.
 - The dev-start refresh then crawls every portal and fills the DB gradually;
-  reference layers (RCN zip, Geofabrik PBF, GUGiK powiat packages) download
+  it waits 20 s and is skipped entirely when a crawl finished in the last
+  30 minutes, so the first page visit never competes with a cold crawl.
+  Reference layers (RCN zip, Geofabrik PBF, GUGiK powiat packages) download
   into `data/` on first run.
 
 Keep it that way: nothing user-facing may require an `.env.local` or a manual
@@ -613,18 +617,33 @@ posting date, so their rows fall back to `firstSeenAt`.
 
 ### Listing feeds: map vs table
 
-`/api/listings` has two shapes. The default `view=map` returns every
-surviving row with the map anchor, per-building `transactionStats`, and the
-compact feature payload the popups read. `view=table&page=N&pageSize=100`
-returns only the columns the table renders, plus `total` and the
-source/kind facets; `/listings` uses it so opening the table does not
-download the map feed. Both shapes share the same dedupe pipeline
-(`loadVisibleRows`) and the same `filterListings` classifier.
-The map shape is ~46 MB raw (~37k rows today), so `src/lib/server-response.ts`
-gzips it to ~4.7 MB (`Vary: Accept-Encoding`) and `withCache` holds the
-serialized/gzipped body for 60 s; non-gzip clients still get the raw body.
-The promoted listing attributes travel as one `attributes` object per row
-(only non-null, non-false, non-zero values) rather than ~40 mostly-null
+`/api/listings` is view-based and viewport-limited:
+
+- `view=map&minLng=…&minLat=…&maxLng=…&maxLat=…&zoom=…` is the map feed.
+  Below zoom 13 the server aggregates `(cell, source)` counts in SQL and
+  returns one circle per cell with its count (about 1-3k features and
+  ~100-150 KB gzipped for both voivodeships). From zoom 13 it returns compact
+  exact rows for the viewport, capped at 8k; court-auction and construction
+  threads stay exact points at every zoom so their symbols survive. The old
+  full feed was ~64 MB raw / 6.6 MB gzipped and blocked the main thread.
+- `view=detail&id=…` returns one full popup row, including `attributes`,
+  `features` and per-building `transactionStats`. Clicking a pin paints a
+  small shell from the compact row and hydrates it with this request.
+- `view=facets&days=…` returns source/kind counts for the filter bar.
+- `view=table&page=N&pageSize=100` filters, counts and paginates in SQL; the
+  table no longer loads the full feed.
+
+Every view relies on the denormalized columns `listings.isVisible`,
+`propertyKind`, `mapLat` and `mapLng`, recomputed once after each crawl by
+`recomputeListingDerived` (`src/db/listing-derived.ts`, phase
+`listing-derived`). The pure rules stay in `src/lib/listing-visibility.ts`
+(cross-source dedupe) and `src/lib/property-kind.ts`; a crawl upsert sets
+`derivedAt = null`, so a request repairs stale rows unless a live crawl is
+going to run its own final pass. `bun run validate:listing-derived` compares
+every stored value with the pure rules.
+
+The promoted listing attributes travel as one `attributes` object per detail
+row (only non-null, non-false, non-zero values) rather than ~40 mostly-null
 columns; the popup renders them as a parameter grid, cost/auction blocks and
 amenity badges, and falls back to the raw `features` keys for rows crawled
 before the columns existed.
@@ -681,6 +700,8 @@ price, pricePerM2, areaM2, rooms, floor, district, lat, lng, listedAt).
   `coalesce(excluded.X, listings.X)` so a list-only re-crawl cannot wipe a
   detail-enriched value. `bun run validate:listing-attributes` pins the
   alias, unit, negation and coercion cases.
+  The map also reads the derived columns `propertyKind`, `isVisible`,
+  `mapLat`, `mapLng` and `derivedAt` (see "Listing feeds").
 - `buildings` — OSM buildings referenced by listings/transactions
   (osmId unique, address, tags, geometry)
 - `osm_buildings` — local OSM footprint index for małopolska (bbox, centroid,

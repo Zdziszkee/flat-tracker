@@ -1,17 +1,18 @@
 import mapboxgl from "mapbox-gl";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import "mapbox-gl/dist/mapbox-gl.css";
 
-import { useListings } from "#/hooks/use-listings";
 import { useOccupancy } from "#/hooks/use-occupancy";
 import { escapeHtml } from "#/lib/html";
-import {
-	filterListings,
-	type KindFilter,
-	type ListingFilters,
-} from "#/lib/listing-features";
-import type { OfferValuation } from "#/types/listing";
+import type { KindFilter } from "#/lib/listing-features";
+import type {
+	ListingDto,
+	MapFeedPoint,
+	MapFeedResponse,
+	MapListingDto,
+	OfferValuation,
+} from "#/types/listing";
 import type { OccupancyCell } from "#/types/occupancy";
 import {
 	BUILDING_LAYERS_MINZOOM,
@@ -21,7 +22,7 @@ import {
 	TRACKED_REGION_BOUNDS,
 	TRACKED_REGION_CENTER,
 } from "./map/constants";
-import { occupancyToGeoJson, toGeoJson } from "./map/geojson";
+import { occupancyToGeoJson } from "./map/geojson";
 import {
 	makeBudujesieIcon,
 	makeKomornikIcon,
@@ -30,17 +31,41 @@ import {
 } from "./map/icons";
 import {
 	buildingPopupHtml,
+	mapListingPopupHtml,
 	popupHtml,
 	publicInvestmentPopupHtml,
 	renderValuationHtml,
 } from "./map/popups";
 import { pruneBadTileCache, resetTileCache } from "./map/tile-cache";
 import type {
-	ApiListing,
 	BuildingLookup,
+	MapFeedFeatureCollection,
 	ParcelFeatureCollection,
 } from "./map/types";
 import { apiUrl } from "./map/url";
+
+/**
+ * The map source only needs geometry plus the compact feed properties. The
+ * old feed put the whole listing DTO (attributes, features, transaction
+ * stats) into every feature, which made Mapbox serialize ~66 MB twice on the
+ * first load.
+ */
+function feedToGeoJson(points: MapFeedPoint[]): MapFeedFeatureCollection {
+	return {
+		type: "FeatureCollection",
+		features: points.map((point) => ({
+			type: "Feature",
+			geometry: {
+				type: "Point",
+				coordinates:
+					point.kind === "cluster"
+						? [point.lng, point.lat]
+						: [point.mapLng, point.mapLat],
+			},
+			properties: point,
+		})),
+	};
+}
 
 export default function MapView({
 	source,
@@ -65,31 +90,15 @@ export default function MapView({
 	occupancySource: "airbnb" | "booking" | "all";
 	occupancyMonth: string;
 }) {
-	const { data, isLoading, error } = useListings();
 	const { data: occupancyData } = useOccupancy(
 		occupancySource,
 		occupancyMonth,
 		showOccupancy,
 	);
-
-	const filters: ListingFilters = useMemo(
-		() => ({ source, days, offerType, kind }),
-		[source, days, offerType, kind],
-	);
-	// Memoized so MapCanvas's data-sync effects only re-run on real changes
-	// (a fresh array identity every render used to re-serialize + re-push the
-	// whole GeoJSON payload into mapbox on every parent render).
-	const listings = useMemo(
-		() => filterListings(data?.listings ?? [], filters),
-		[data, filters],
-	);
 	const occupancyCells = useMemo(
 		() => occupancyData?.cells ?? [],
 		[occupancyData],
 	);
-	// The map renders in stages (style, tiles, then data): without this the
-	// first seconds look like an empty map with zero records on it.
-	const [mapReady, setMapReady] = useState(false);
 
 	if (!TOKEN) {
 		return (
@@ -102,30 +111,17 @@ export default function MapView({
 
 	return (
 		<div className="relative h-full w-full">
-			{isLoading && (
-				<div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 text-sm text-gray-600">
-					Ładowanie ofert...
-				</div>
-			)}
-			{error && (
-				<div className="absolute inset-0 z-10 flex items-center justify-center bg-red-50 p-4 text-sm text-red-700">
-					Nie udało się pobrać danych: {String(error)}
-				</div>
-			)}
 			<MapCanvas
-				listings={listings}
+				source={source}
+				days={days}
+				offerType={offerType}
+				kind={kind}
 				showParcels={showParcels}
 				showRailways={showRailways}
 				showOccupancy={showOccupancy}
 				showInvestments={showInvestments}
 				occupancy={occupancyCells}
-				onReady={() => setMapReady(true)}
 			/>
-			{!mapReady && (
-				<div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-white/60 text-sm text-gray-600">
-					Ładowanie mapy i ofert…
-				</div>
-			)}
 
 			<footer className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-4 rounded-lg bg-white/90 px-4 py-1.5 text-xs text-gray-600 shadow">
 				<span className="flex items-center gap-1">
@@ -177,47 +173,42 @@ export default function MapView({
 				)}
 				<span className="mx-1 h-3 w-px bg-gray-300" />
 				<span className="flex items-center gap-1">
-					<span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" />{" "}
-					&lt;12k zł/m²
+					<span className="inline-block h-2.5 w-2.5 rounded-full bg-sky-600 ring-2 ring-white" />{" "}
+					liczba ofert w kółku (od zbliżenia 13 pojedyncze oferty)
 				</span>
-				<span className="flex items-center gap-1">
-					<span className="inline-block h-2.5 w-2.5 rounded-full bg-yellow-500" />{" "}
-					12-15k
-				</span>
-				<span className="flex items-center gap-1">
-					<span className="inline-block h-2.5 w-2.5 rounded-full bg-orange-500" />{" "}
-					15-18k
-				</span>
-				<span className="flex items-center gap-1">
-					<span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500" />{" "}
-					&gt;18k zł/m²
-				</span>
+				<span className="text-gray-500">kolor kropki = źródło</span>
 			</footer>
 		</div>
 	);
 }
 
 function MapCanvas({
-	listings,
+	source,
+	days,
+	offerType,
+	kind,
 	showParcels,
 	showRailways,
 	showOccupancy,
 	showInvestments,
 	occupancy,
-	onReady,
 }: {
-	listings: ApiListing[];
+	source: string;
+	days: 0 | 1 | 7 | 30;
+	offerType: "all" | "sale" | "rental";
+	kind: KindFilter;
 	showParcels: boolean;
 	showRailways: boolean;
 	showOccupancy: boolean;
 	showInvestments: boolean;
 	occupancy: OccupancyCell[];
-	/** Fires once the first full render settles (map "idle"). */
-	onReady?: () => void;
 }) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const mapRef = useRef<mapboxgl.Map | null>(null);
 	const popupRef = useRef<mapboxgl.Popup | null>(null);
+	/** Latest filters, read from the map callbacks that outlive renders. */
+	const filtersRef = useRef({ source, days, offerType, kind });
+	filtersRef.current = { source, days, offerType, kind };
 	// Read by the parcel sync inside the map callbacks, which outlive renders.
 	const showParcelsRef = useRef(showParcels);
 	// Same for the "Kolej" overlay.
@@ -228,14 +219,13 @@ function MapCanvas({
 	const showInvestmentsRef = useRef(showInvestments);
 	// Set by the mount effect: re-reads the viewport and refetches if needed.
 	const syncParcelsRef = useRef<(() => void) | null>(null);
-	// Latest listings snapshot, readable from the async map-load callback
-	// no matter whether the API resolves before or after "load" fires.
-	const listingsRef = useRef(listings);
+	// Same for the viewport-limited listing feed.
+	const syncListingsRef = useRef<(() => void) | null>(null);
+	const feedAbortRef = useRef<AbortController | null>(null);
+	const feedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const feedSeqRef = useRef(0);
 	// Latest occupancy snapshot, set by the effect below.
 	const occupancyRef = useRef(occupancy);
-	// Read from the one-shot map callbacks, which outlive renders.
-	const onReadyRef = useRef(onReady);
-	onReadyRef.current = onReady;
 
 	// Create the map once. The listings snapshot at init is only used for
 	// the initial source data; the effect below pushes updates on changes,
@@ -300,62 +290,6 @@ function MapCanvas({
 				}
 			}
 		};
-		// "Ready" means RECORDS ARE VISIBLE, not merely "idle": on slow
-		// clients (software GL) the map goes idle on an empty canvas long
-		// before the data paints, and users read that as "0 entries". Poll
-		// until listing pins actually render; 30 s fallback keeps the
-		// overlay from sticking on a filtered-empty map.
-		const readyDeadline = Date.now() + 30_000;
-		// Hidden tabs: Firefox suspends requestAnimationFrame and mapbox
-		// paints only on rAF, so a background tab shows a blank canvas
-		// although everything is loaded (users read that as "0 entries").
-		// Drive a frame from this timer loop (best-effort internals, guarded:
-		// v3.x has no public redraw()).
-		const paintFrame = () => {
-			const m = map as unknown as { redraw?: () => void; _render?: () => void };
-			try {
-				if (typeof m.redraw === "function") m.redraw();
-				else m._render?.();
-			} catch {
-				// Internals moved: the rAF path still paints when the tab is
-				// visible, so a failure here is non-fatal.
-			}
-		};
-		const checkReady = () => {
-			// Stop when this map instance was replaced/removed (React dev
-			// mounts effects twice; an orphan loop would otherwise poll a
-			// destroyed map forever).
-			if (mapRef.current !== map) return;
-			paintFrame();
-			let rendered = 0;
-			// queryRenderedFeatures THROWS for a layer that does not exist yet
-			// (it is created later in the load handler): ask first, never query
-			// blindly — the throw escaped to the client console even when caught.
-			if (map.getLayer("listings-circle")) {
-				try {
-					const canvas = map.getCanvas();
-					rendered = map.queryRenderedFeatures(
-						[
-							[0, 0],
-							[canvas.clientWidth, canvas.clientHeight],
-						],
-						{ layers: ["listings-circle"] },
-					).length;
-				} catch {
-					// Mid-teardown frame: treat as not-rendered and retry.
-				}
-			}
-			if (rendered > 0 || Date.now() > readyDeadline) {
-				onReadyRef.current?.();
-				return;
-			}
-			setTimeout(checkReady, 400);
-		};
-		map.on("load", () => checkReady());
-		// Backstop: whatever happens to the poll, the overlay must clear
-		// once the first full frame lands.
-		map.once("idle", () => onReadyRef.current?.());
-
 		map.addControl(
 			new mapboxgl.NavigationControl({ visualizePitch: true }),
 			"top-right",
@@ -373,6 +307,76 @@ function MapCanvas({
 				resetTileCache();
 			}
 		});
+
+		/**
+		 * Fetch only what the current camera shows. The server returns grid
+		 * cells below zoom 13 and exact compact points above it, so no request
+		 * ever downloads the full ~47k-offer dataset.
+		 */
+		const syncListings = () => {
+			const sourceLayer = map.getSource("listings");
+			if (!sourceLayer || !("setData" in sourceLayer)) return;
+			// Flat-camera viewport with 10% padding. `map.getBounds()` shrinks
+			// to the ground footprint when terrain is on, which would silently
+			// drop pins in hilly, tilted views (the parcel layer avoids it the
+			// same way).
+			const center = map.getCenter();
+			const zoom = map.getZoom();
+			const canvas = map.getCanvas();
+			const width = canvas.clientWidth || canvas.width || 1200;
+			const height = canvas.clientHeight || canvas.height || 800;
+			const worldSpan = 360 / 2 ** zoom;
+			const spanLng = worldSpan * (width / 512);
+			const spanLat =
+				(spanLng * (height / width)) /
+				Math.max(0.3, Math.cos((center.lat * Math.PI) / 180));
+			const padLng = spanLng * 0.1;
+			const padLat = spanLat * 0.1;
+			const f = filtersRef.current;
+			const params = new URLSearchParams({
+				view: "map",
+				minLng: String(center.lng - spanLng / 2 - padLng),
+				minLat: String(center.lat - spanLat / 2 - padLat),
+				maxLng: String(center.lng + spanLng / 2 + padLng),
+				maxLat: String(center.lat + spanLat / 2 + padLat),
+				zoom: map.getZoom().toFixed(2),
+				source: f.source,
+				days: String(f.days),
+				kind: f.kind,
+				offerType: f.offerType,
+			});
+			const seq = ++feedSeqRef.current;
+			feedAbortRef.current?.abort();
+			const controller = new AbortController();
+			feedAbortRef.current = controller;
+			void fetch(`/api/listings?${params.toString()}`, {
+				signal: controller.signal,
+			})
+				.then((response) => {
+					if (!response.ok) {
+						throw new Error(`map feed ${response.status}`);
+					}
+					return response.json() as Promise<MapFeedResponse>;
+				})
+				.then((feed) => {
+					if (seq !== feedSeqRef.current) return;
+					const current = map.getSource("listings");
+					if (current && "setData" in current) {
+						(current as mapboxgl.GeoJSONSource).setData(
+							feedToGeoJson(feed.points),
+						);
+					}
+				})
+				.catch(() => {
+					// Aborted or offline: keep the previous pins on screen.
+				});
+		};
+		const scheduleListings = () => {
+			if (feedTimerRef.current) clearTimeout(feedTimerRef.current);
+			feedTimerRef.current = setTimeout(syncListings, 250);
+		};
+		syncListingsRef.current = syncListings;
+		map.on("moveend", scheduleListings);
 
 		// Terrain + hillshade, per docs.mapbox.com/mapbox-gl-js/example/add-terrain
 		// and /example/hillshade: add the DEM source(s) and setTerrain in
@@ -715,7 +719,50 @@ function MapCanvas({
 			// Listings as a GeoJSON circle layer (fast with thousands of points).
 			map.addSource("listings", {
 				type: "geojson",
-				data: toGeoJson(listingsRef.current),
+				data: { type: "FeatureCollection", features: [] },
+			});
+			// Overview cells: one circle per aggregated cell, sized by count.
+			map.addLayer({
+				id: "listings-cluster",
+				type: "circle",
+				source: "listings",
+				filter: ["==", ["get", "kind"], "cluster"],
+				paint: {
+					"circle-color": sourceColorExpr(),
+					"circle-radius": [
+						"interpolate",
+						["linear"],
+						["get", "count"],
+						1,
+						6,
+						10,
+						11,
+						100,
+						17,
+						1000,
+						25,
+					],
+					"circle-opacity": 0.9,
+					"circle-stroke-color": "#ffffff",
+					"circle-stroke-width": 1.5,
+				},
+			});
+			map.addLayer({
+				id: "listings-cluster-count",
+				type: "symbol",
+				source: "listings",
+				filter: ["==", ["get", "kind"], "cluster"],
+				layout: {
+					"text-field": ["to-string", ["get", "count"]],
+					"text-font": ["DIN Pro Medium", "Noto Sans Regular"],
+					"text-size": 11,
+					"text-allow-overlap": true,
+				},
+				paint: {
+					"text-color": "#ffffff",
+					"text-halo-color": "rgba(0,0,0,0.35)",
+					"text-halo-width": 1,
+				},
 			});
 			map.addLayer({
 				id: "listings-circle",
@@ -725,6 +772,7 @@ function MapCanvas({
 				// layers below.
 				filter: [
 					"all",
+					["==", ["get", "kind"], "listing"],
 					["!=", ["get", "source"], "licytacje-komornik"],
 					["!=", ["get", "source"], "budujesie"],
 				],
@@ -745,7 +793,11 @@ function MapCanvas({
 					id: "komornik-listings",
 					type: "symbol",
 					source: "listings",
-					filter: ["==", ["get", "source"], "licytacje-komornik"],
+					filter: [
+						"all",
+						["==", ["get", "kind"], "listing"],
+						["==", ["get", "source"], "licytacje-komornik"],
+					],
 					layout: {
 						"icon-image": "komornik-icon",
 						"icon-size": 0.65,
@@ -763,7 +815,11 @@ function MapCanvas({
 					id: "budujesie-listings",
 					type: "symbol",
 					source: "listings",
-					filter: ["==", ["get", "source"], "budujesie"],
+					filter: [
+						"all",
+						["==", ["get", "kind"], "listing"],
+						["==", ["get", "source"], "budujesie"],
+					],
 					layout: {
 						"icon-image": "budujesie-icon",
 						"icon-size": 0.75,
@@ -771,6 +827,8 @@ function MapCanvas({
 					},
 				});
 			}
+			// First viewport request; moveend keeps it current afterwards.
+			syncListingsRef.current?.();
 
 			// Stations belong ABOVE the dense price circles (a station under ten
 			// pins is invisible) but below the komornik/budujesie symbols.
@@ -888,7 +946,12 @@ function MapCanvas({
 				// If a listing marker is under the cursor, the listing popup wins.
 				if (
 					map.queryRenderedFeatures(e.point, {
-						layers: ["listings-circle", "komornik-listings"],
+						layers: [
+							"listings-circle",
+							"listings-cluster",
+							"listings-cluster-count",
+							"komornik-listings",
+						],
 					}).length > 0
 				) {
 					return;
@@ -1183,6 +1246,8 @@ function MapCanvas({
 						// yet; queryRenderedFeatures throws for unknown layers.
 						const covering = [
 							"listings-circle",
+							"listings-cluster",
+							"listings-cluster-count",
 							"komornik-listings",
 							"3d-building",
 						].filter((id) => map.getLayer(id));
@@ -1309,28 +1374,18 @@ function MapCanvas({
 				const feature = e.features?.[0] as { properties?: unknown } | undefined;
 				const props = feature?.properties;
 				if (!props) return;
-				// mapbox strips nested objects out of queryRenderedFeatures
-				// properties (transactionStats comes back as an empty shell),
-				// which silently killed the popup's RCN history block for every
-				// source. Hydrate the full row from the source data.
-				const source = map.getSource("listings") as unknown as {
-					getData?: () => { features: Array<{ properties?: unknown }> };
-					_data?: { features: Array<{ properties?: unknown }> };
-				};
-				const data = source?.getData?.() ?? source?._data;
-				const id = (props as ApiListing).id;
-				const hydrated = data?.features.find(
-					(f) => (f.properties as ApiListing | undefined)?.id === id,
-				)?.properties;
-				const listing = (hydrated ?? props) as ApiListing;
-				// Sale + LT-rental offers get a live valuation/ROI section
-				// (fetched after the popup opens; STR popups stay as-is).
-				// Price-less rows (budujesie construction threads) have nothing
-				// to value.
-				const wantValuation =
-					listing.price != null &&
-					(listing.offerType === "sale" ||
-						listing.offerType === "long_term_rental");
+				const point = props as MapFeedPoint;
+				// Overview cells zoom instead of opening a popup; the count is
+				// already printed on the circle.
+				if (point.kind === "cluster") {
+					map.easeTo({
+						center: [point.lng, point.lat],
+						zoom: Math.min(map.getZoom() + 2, 17),
+						duration: 450,
+					});
+					return;
+				}
+				const listing = point as MapListingDto;
 				popupRef.current?.remove();
 				const popup = new mapboxgl.Popup({
 					offset: 16,
@@ -1338,41 +1393,70 @@ function MapCanvas({
 					maxWidth: "360px",
 				})
 					.setLngLat(e.lngLat)
-					.setHTML(
-						wantValuation
-							? `${popupHtml(listing)}<div id="popup-valuation" class="text-gray-400 text-xs">Liczenie wyceny…</div>`
-							: popupHtml(listing),
-					)
+					.setHTML(mapListingPopupHtml(listing))
 					.addTo(map);
-				// The popup now carries a parameter grid, costs, amenities and
-				// the valuation slot; let tall popups scroll instead of
-				// running off the viewport.
-				const content = popup
-					.getElement()
-					?.querySelector<HTMLElement>(".mapboxgl-popup-content");
-				if (content) {
-					content.style.maxHeight = "70vh";
-					content.style.overflowY = "auto";
-				}
 				popupRef.current = popup;
-				if (wantValuation) {
-					void fetch(`/api/valuation/offer?id=${listing.id}`)
-						.then((r) => r.json())
-						.then((v: OfferValuation) => {
-							if (popupRef.current !== popup) return; // stale popup
-							const slot = document.getElementById("popup-valuation");
-							if (slot) slot.outerHTML = renderValuationHtml(v);
-						})
-						.catch(() => {
-							const slot = document.getElementById("popup-valuation");
-							if (slot && popupRef.current === popup) {
-								slot.textContent = "Wycena niedostępna.";
-							}
-						});
-				}
+				const fitPopup = () => {
+					// The popup now carries a parameter grid, costs, amenities and
+					// the valuation slot; let tall popups scroll instead of
+					// running off the viewport.
+					const content = popup
+						.getElement()
+						?.querySelector<HTMLElement>(".mapboxgl-popup-content");
+					if (content) {
+						content.style.maxHeight = "70vh";
+						content.style.overflowY = "auto";
+					}
+				};
+				fitPopup();
+				// The compact map row is enough to paint the popup shell; the
+				// full attributes/journal/transaction payload arrives in one
+				// small request for just this offer.
+				void fetch(`/api/listings?view=detail&id=${listing.id}`)
+					.then((response) => {
+						if (!response.ok) throw new Error(`detail ${response.status}`);
+						return response.json() as Promise<{ listing: ListingDto }>;
+					})
+					.then(({ listing: detail }) => {
+						if (popupRef.current !== popup) return;
+						const wantValuation =
+							detail.price != null &&
+							(detail.offerType === "sale" ||
+								detail.offerType === "long_term_rental");
+						popup.setHTML(
+							wantValuation
+								? `${popupHtml(detail)}<div id="popup-valuation" class="text-gray-400 text-xs">Liczenie wyceny…</div>`
+								: popupHtml(detail),
+						);
+						fitPopup();
+						if (!wantValuation) return;
+						void fetch(`/api/valuation/offer?id=${detail.id}`)
+							.then((r) => r.json())
+							.then((v: OfferValuation) => {
+								if (popupRef.current !== popup) return; // stale popup
+								const slot = document.getElementById("popup-valuation");
+								if (slot) slot.outerHTML = renderValuationHtml(v);
+							})
+							.catch(() => {
+								const slot = document.getElementById("popup-valuation");
+								if (slot && popupRef.current === popup) {
+									slot.textContent = "Wycena niedostępna.";
+								}
+							});
+					})
+					.catch(() => {
+						if (popupRef.current === popup) {
+							popup.setHTML(
+								`${mapListingPopupHtml(listing)}<div class="text-xs text-red-600">Nie udało się pobrać szczegółów.</div>`,
+							);
+							fitPopup();
+						}
+					});
 			};
 
 			for (const layer of [
+				"listings-cluster",
+				"listings-cluster-count",
 				"listings-circle",
 				"komornik-listings",
 				"budujesie-listings",
@@ -1388,6 +1472,9 @@ function MapCanvas({
 		});
 
 		return () => {
+			feedAbortRef.current?.abort();
+			if (feedTimerRef.current) clearTimeout(feedTimerRef.current);
+			syncListingsRef.current = null;
 			map.remove();
 			mapRef.current = null;
 			popupRef.current = null;
@@ -1395,10 +1482,6 @@ function MapCanvas({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	// GeoJSON serialized once per data change (not per render / visibility
-	// toggle) — the stringify of the big payloads is what used to block the
-	// map, so effects below only push it into the source.
-	const listingsGeoJson = useMemo(() => toGeoJson(listings), [listings]);
 	const occupancyGeoJson = useMemo(
 		() => occupancyToGeoJson(occupancy),
 		[occupancy],
@@ -1476,20 +1559,17 @@ function MapCanvas({
 		}
 	}, [occupancy, occupancyGeoJson]);
 
-	// Push updated listings into the source whenever the filter changes.
-	// setData is safe even while the style is still streaming, so apply it
-	// unconditionally. The old isStyleLoaded()/once("load") guard dead-locked
-	// when the API resolved after "load" had already fired: the queued
-	// callback never ran and the source stayed empty (no dots on the map).
+	// Filter changes refetch the current viewport immediately, bypassing the
+	// move-end debounce. The old full feed filtered 45k rows and re-serialized
+	// the whole GeoJSON on the main thread for every filter change.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the filter props are the trigger; map callbacks read them from filtersRef.
 	useEffect(() => {
-		listingsRef.current = listings;
-		const map = mapRef.current;
-		if (!map) return;
-		const src = map.getSource("listings");
-		if (src && "setData" in src) {
-			(src as mapboxgl.GeoJSONSource).setData(listingsGeoJson);
+		if (feedTimerRef.current) {
+			clearTimeout(feedTimerRef.current);
+			feedTimerRef.current = null;
 		}
-	}, [listings, listingsGeoJson]);
+		syncListingsRef.current?.();
+	}, [source, days, offerType, kind]);
 
 	return <div ref={containerRef} className="h-full w-full" />;
 }

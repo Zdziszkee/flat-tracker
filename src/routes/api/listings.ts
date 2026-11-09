@@ -1,350 +1,206 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
+import {
+	and,
+	desc,
+	eq,
+	gte,
+	inArray,
+	isNotNull,
+	lte,
+	ne,
+	type SQL,
+	sql,
+} from "drizzle-orm";
 
-import { eq, sql } from "drizzle-orm";
-import { HIDDEN_SOURCES } from "#/crawler/hidden-sources";
+import { REGIONS } from "#/crawler/regions";
 import { db } from "#/db/index";
+import { ensureListingDerived } from "#/db/listing-derived";
 import { transactionSummaryByBuilding } from "#/db/queries/transaction-history";
 import { buildings, listings } from "#/db/schema";
 import {
-	filterListings,
+	ATTRIBUTE_KEYS,
+	clientFeatures,
+	iso,
+	popupAttributes,
+} from "#/lib/listing-dto";
+import {
+	type DaysFilter,
 	filtersFromSearch,
-	listingFacets,
+	type ListingFilters,
 	listingSearchSchema,
-	parseListingFeatures,
+	PUBLIC_INVESTMENTS_KIND,
 } from "#/lib/listing-features";
-import { propertyKindOf } from "#/lib/property-kind";
+import type { PropertyKind } from "#/lib/property-kind";
 import { withCache } from "#/lib/server-cache";
 import { gzipJson, jsonResponse } from "#/lib/server-response";
-import type { ListingAttributesDto } from "#/types/listing";
-
-/** Normalize a string for cross-source matching: lowercase, no
- * diacritics, alphanumerics only, single spaces. */
-function normKey(value: string): string {
-	return value
-		.toLowerCase()
-		.normalize("NFD")
-		.replace(/[\u0300-\u036f]/g, "")
-		.replace(/[^a-z0-9 ]/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
-}
-
-const STREET_PREFIXES = /^(ul|al|pl|os|skr|bulw|aleja|bulwar|osiedle)\s+/;
-
-/** Split "Meiera 70, Prądnik Biały" into normalized street + housenumber
- * ("meiera", "70"). Returns null when no street is present. */
-function parseStreetNumber(address: string | null): {
-	street: string;
-	number: string | null;
-} | null {
-	if (!address) return null;
-	const first = address.split(",")[0] ?? "";
-	const keyed = normKey(first);
-	const street = keyed
-		.replace(STREET_PREFIXES, "")
-		.replace(/\s*\d+[a-z]?(?:\s+[a-z]?\d+[a-z]?)*$/, "")
-		.trim();
-	if (!street) return null;
-	const numMatch = keyed.match(/\d+[a-z]?(?:\s+[a-z]?\d+[a-z]?)*$/);
-	// Number key collapses separators: "6a, 6b" -> "6a6b".
-	const number = numMatch
-		? numMatch[0].replace(/[\s/,]/g, "").toLowerCase()
-		: null;
-	return { street, number };
-}
+import type {
+	ListingDto,
+	ListingFacetsResponse,
+	ListingsTableResponse,
+	MapFeedPoint,
+	MapFeedResponse,
+	MapListingDto,
+} from "#/types/listing";
 
 /**
- * `features` is a full scraper payload, but the client only reads the
- * amenities preview for Airbnb and the forum posts for Budujesie. Investmap
- * features are only needed server-side (investment-id dedupe), so dropping
- * them here removes several MB from the map/table feed without changing a
- * popup.
+ * `/api/listings` is view-based:
+ *
+ * - `view=map` (default): viewport-limited map feed. Below `MAP_EXACT_MIN_ZOOM`
+ *   it returns aggregated cells (a few hundred KB region-wide instead of the
+ *   old 64 MB); above it returns compact points, and popup details are fetched
+ *   separately with `view=detail`.
+ * - `view=detail&id=...`: the one full popup row.
+ * - `view=facets`: source/kind counts for the filter bar, in SQL.
+ * - `view=table`: paginated table rows, filtered and counted in SQL.
+ *
+ * All views read the derived columns (`isVisible`, `propertyKind`, `mapLat`,
+ * `mapLng`) maintained by `recomputeListingDerived`, so no request replays the
+ * 47k-row dedupe/classification in JavaScript.
  */
-function clientFeatures(row: {
+
+/** Exact points from this zoom; below it the server aggregates into cells. */
+const MAP_EXACT_MIN_ZOOM = 13;
+/** Safety cap for an exact viewport query. */
+const MAP_MAX_POINTS = 8000;
+/** Sources that keep their own symbol layer and are never aggregated. */
+const SPECIAL_SOURCES = ["licytacje-komornik", "budujesie"] as const;
+const MAP_CACHE_TTL_MS = 30_000;
+const FACETS_CACHE_TTL_MS = 30_000;
+
+interface Bbox {
+	minLng: number;
+	minLat: number;
+	maxLng: number;
+	maxLat: number;
+}
+
+const DEFAULT_BBOX: Bbox = {
+	minLng: Math.min(...REGIONS.map((region) => region.bbox.minLng)),
+	minLat: Math.min(...REGIONS.map((region) => region.bbox.minLat)),
+	maxLng: Math.max(...REGIONS.map((region) => region.bbox.maxLng)),
+	maxLat: Math.max(...REGIONS.map((region) => region.bbox.maxLat)),
+};
+
+function parseBbox(params: URLSearchParams): Bbox | null {
+	const values = ["minLng", "minLat", "maxLng", "maxLat"].map((key) =>
+		Number(params.get(key)),
+	);
+	if (!values.every(Number.isFinite)) return null;
+	const [minLng, minLat, maxLng, maxLat] = values;
+	if (minLng >= maxLng || minLat >= maxLat) return null;
+	return { minLng, minLat, maxLng, maxLat };
+}
+
+function hasBboxParams(params: URLSearchParams): boolean {
+	return ["minLng", "minLat", "maxLng", "maxLat"].some((key) =>
+		params.has(key),
+	);
+}
+
+/** The shared time-window predicate (`listedAt ?? firstSeenAt`). */
+function daysFilterSql(days: DaysFilter): SQL | undefined {
+	if (days === 0) return undefined;
+	const cutoff = Math.floor((Date.now() - days * 86_400_000) / 1000);
+	return sql`coalesce(${listings.listedAt}, ${listings.firstSeenAt}) >= ${cutoff}`;
+}
+
+/** Source/kind/offer-type/time filters, always scoped to visible rows. */
+function listingFilterSql(filters: ListingFilters): SQL {
+	if (filters.kind === PUBLIC_INVESTMENTS_KIND) return sql`0`;
+	const parts: Array<SQL | undefined> = [eq(listings.isVisible, true)];
+	if (filters.source !== "all") {
+		parts.push(eq(listings.source, filters.source));
+	}
+	if (filters.kind !== "all") {
+		parts.push(eq(listings.propertyKind, filters.kind));
+	}
+	if (filters.offerType === "sale") {
+		parts.push(eq(listings.offerType, "sale"));
+	} else if (filters.offerType === "rental") {
+		parts.push(ne(listings.offerType, "sale"));
+	}
+	parts.push(daysFilterSql(filters.days));
+	return and(...parts) ?? sql`1`;
+}
+
+function bboxSql(bbox: Bbox): SQL {
+	return and(
+		isNotNull(listings.mapLat),
+		isNotNull(listings.mapLng),
+		gte(listings.mapLat, bbox.minLat),
+		lte(listings.mapLat, bbox.maxLat),
+		gte(listings.mapLng, bbox.minLng),
+		lte(listings.mapLng, bbox.maxLng),
+	) as SQL;
+}
+
+const mapColumns = {
+	id: listings.id,
+	source: listings.source,
+	externalId: listings.externalId,
+	title: listings.title,
+	url: listings.url,
+	price: listings.price,
+	pricePerM2: listings.pricePerM2,
+	areaM2: listings.areaM2,
+	rooms: listings.rooms,
+	floor: listings.floor,
+	district: listings.district,
+	city: listings.city,
+	address: listings.address,
+	lat: listings.lat,
+	lng: listings.lng,
+	mapLat: listings.mapLat,
+	mapLng: listings.mapLng,
+	listedAt: listings.listedAt,
+	firstSeenAt: listings.firstSeenAt,
+	offerType: listings.offerType,
+	propertyType: listings.propertyType,
+	propertyKind: listings.propertyKind,
+	buildingId: listings.buildingId,
+	buildingAddress: buildings.address,
+	constructionEndLabel: listings.constructionEndLabel,
+	constructionEndDate: listings.constructionEndDate,
+};
+
+type MapRow = {
+	id: number;
 	source: string;
-	features: string | null;
-}): string | null {
-	if (row.source === "investmap") return null;
-	if (row.source === "airbnb") {
-		const parsed = parseListingFeatures(row.features);
-		return parsed.airbnb
-			? JSON.stringify({ amenities: parsed.airbnb.amenities })
-			: null;
-	}
-	return row.features;
-}
-
-function iso(value: Date | string | null): string | null {
-	if (value == null) return null;
-	const date = value instanceof Date ? value : new Date(value);
-	return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-async function loadRawRows() {
-	return (
-		db
-			.select({
-				id: listings.id,
-				source: listings.source,
-				externalId: listings.externalId,
-				url: listings.url,
-				title: listings.title,
-				price: listings.price,
-				pricePerM2: listings.pricePerM2,
-				areaM2: listings.areaM2,
-				rooms: listings.rooms,
-				floor: listings.floor,
-				district: listings.district,
-				address: listings.address,
-				city: listings.city,
-				voivodeship: listings.voivodeship,
-				postalCode: listings.postalCode,
-				street: listings.street,
-				streetNumber: listings.streetNumber,
-				plotAreaM2: listings.plotAreaM2,
-				plotType: listings.plotType,
-				buildingType: listings.buildingType,
-				market: listings.market,
-				buildYear: listings.buildYear,
-				buildingMaterial: listings.buildingMaterial,
-				floorCount: listings.floorCount,
-				condition: listings.condition,
-				ownership: listings.ownership,
-				hasBalcony: listings.hasBalcony,
-				hasTerrace: listings.hasTerrace,
-				hasGarden: listings.hasGarden,
-				hasElevator: listings.hasElevator,
-				hasParking: listings.hasParking,
-				hasGarage: listings.hasGarage,
-				hasBasement: listings.hasBasement,
-				isFurnished: listings.isFurnished,
-				petsAllowed: listings.petsAllowed,
-				adminFee: listings.adminFee,
-				deposit: listings.deposit,
-				priceNegotiable: listings.priceNegotiable,
-				priceOnRequest: listings.priceOnRequest,
-				advertiserType: listings.advertiserType,
-				agencyName: listings.agencyName,
-				portalStatus: listings.portalStatus,
-				sourceUpdatedAt: listings.sourceUpdatedAt,
-				investmentId: listings.investmentId,
-				investmentTitle: listings.investmentTitle,
-				developer: listings.developer,
-				auctionType: listings.auctionType,
-				auctionDate: listings.auctionDate,
-				wadium: listings.wadium,
-				seller: listings.seller,
-				lat: listings.lat,
-				lng: listings.lng,
-				listedAt: listings.listedAt,
-				firstSeenAt: listings.firstSeenAt,
-				heatingType: listings.heatingType,
-				propertyType: listings.propertyType,
-				features: listings.features,
-				buildingId: listings.buildingId,
-				buildingAddress: buildings.address,
-				buildingLat: buildings.lat,
-				buildingLng: buildings.lng,
-				offerType: listings.offerType,
-				pricePeriod: listings.pricePeriod,
-				minimumStayNights: listings.minimumStayNights,
-				rating: listings.rating,
-				reviewsCount: listings.reviewsCount,
-				availabilityCount: listings.availabilityCount,
-				maxGuests: listings.maxGuests,
-				bedrooms: listings.bedrooms,
-				beds: listings.beds,
-				bathrooms: listings.bathrooms,
-				utilities: listings.utilities,
-				// Investment construction timeline (investmap `finish`
-				// "realizacja"): label as published ("I kw. 2026") plus
-				// its quarter-start date ("2026-01-01").
-				constructionEndLabel: listings.constructionEndLabel,
-				constructionEndDate: listings.constructionEndDate,
-			})
-			.from(listings)
-			.leftJoin(buildings, eq(listings.buildingId, buildings.id))
-			// All rows: the map filters coordinate-less offers client-side,
-			// the listings table shows them regardless.
-			.orderBy(sql`${listings.scrapedAt} desc`)
-	);
-}
-
-type RawListing = Omit<
-	Awaited<ReturnType<typeof loadRawRows>>[number],
-	"listedAt" | "firstSeenAt"
-> & {
-	listedAt: string | null;
-	firstSeenAt: string | null;
+	externalId: string;
+	title: string;
+	url: string;
+	price: number | null;
+	pricePerM2: number | null;
+	areaM2: number | null;
+	rooms: number | null;
+	floor: string | null;
+	district: string | null;
+	city: string | null;
+	address: string | null;
+	lat: number | null;
+	lng: number | null;
+	mapLat: number | null;
+	mapLng: number | null;
+	listedAt: Date | null;
+	firstSeenAt: Date | null;
+	offerType: string;
+	propertyType: string | null;
+	propertyKind: string | null;
+	buildingId: number | null;
+	buildingAddress: string | null;
+	constructionEndLabel: string | null;
+	constructionEndDate: string | null;
 };
 
-/**
- * Columns promoted from `features` for the popup. The map feed has no use
- * for them as top-level row fields, so it ships a compact `attributes`
- * object with only the present values instead of 35 mostly-null columns on
- * every one of ~30k rows.
- */
-const ATTRIBUTE_KEYS = [
-	"city",
-	"postalCode",
-	"street",
-	"streetNumber",
-	"plotAreaM2",
-	"plotType",
-	"buildingType",
-	"market",
-	"buildYear",
-	"buildingMaterial",
-	"floorCount",
-	"condition",
-	"ownership",
-	"hasBalcony",
-	"hasTerrace",
-	"hasGarden",
-	"hasElevator",
-	"hasParking",
-	"hasGarage",
-	"hasBasement",
-	"isFurnished",
-	"petsAllowed",
-	"adminFee",
-	"deposit",
-	"priceNegotiable",
-	"priceOnRequest",
-	"advertiserType",
-	"agencyName",
-	"portalStatus",
-	"sourceUpdatedAt",
-	"investmentTitle",
-	"developer",
-	"auctionType",
-	"auctionDate",
-	"wadium",
-	"seller",
-] as const;
-
-function popupAttributes(row: RawListing): ListingAttributesDto {
-	const out: ListingAttributesDto = {};
-	for (const key of ATTRIBUTE_KEYS) {
-		const value = row[key];
-		if (value == null || value === false || value === 0) continue;
-		Object.assign(out, {
-			[key]: value instanceof Date ? value.toISOString() : value,
-		});
-	}
-	return out;
-}
-
-type KindedListing = RawListing & {
-	propertyKind: ReturnType<typeof propertyKindOf>;
-};
-
-function kindOf(row: RawListing): KindedListing {
+function toMapPoint(row: MapRow): MapListingDto & { kind: "listing" } {
 	return {
-		...row,
-		propertyKind: propertyKindOf({
-			source: row.source,
-			title: row.title,
-			propertyType: row.propertyType,
-			externalId: row.externalId,
-		}),
-	};
-}
-
-/**
- * Shared dedupe pipeline for both feeds. `view=table` still needs the same
- * visible set; the branch only changes which columns are shipped.
- */
-async function loadVisibleRows(): Promise<RawListing[]> {
-	const raw = await loadRawRows();
-	const rows: RawListing[] = raw.map((row) => ({
-		...row,
-		listedAt: iso(row.listedAt),
-		firstSeenAt: iso(row.firstSeenAt),
-	}));
-	const notHidden = rows.filter((row) => !HIDDEN_SOURCES.has(row.source));
-
-	// Investmap investment-level rows (`inv-<id>`) stand in for the
-	// investment until its flats appear: once any flat row carries the same
-	// features.investment_id, the flat rows are the representation and the
-	// stand-in goes away.
-	const investmapFlatIds = new Set<string>();
-	const investmapFlatTitles = new Set<string>();
-	for (const row of notHidden) {
-		if (row.source !== "investmap" || row.externalId.startsWith("inv-")) {
-			continue;
-		}
-		// The adapter prefixes every flat title with the investment name and
-		// an em dash; the title link also covers legacy rows whose features
-		// predate the investment_id marker.
-		investmapFlatTitles.add(row.title.split(" — ")[0] ?? "");
-		const features = parseListingFeatures(row.features);
-		const investmentId = features.investmap?.investmentId;
-		if (investmentId) investmapFlatIds.add(investmentId);
-	}
-	const visibleRows = notHidden.filter(
-		(row) =>
-			!(
-				row.source === "investmap" &&
-				row.externalId.startsWith("inv-") &&
-				(investmapFlatIds.has(row.externalId.slice("inv-".length)) ||
-					investmapFlatTitles.has(row.title))
-			),
-	);
-
-	// Investmap covers rynekpierwotny investments with per-flat detail.
-	const investmapRows = visibleRows.filter((row) => row.source === "investmap");
-	const rpStreetsWithNumber = new Set<string>();
-	const rpStreetsOnly = new Set<string>();
-	const rpTitles = new Set<string>();
-	for (const row of investmapRows) {
-		const address = parseStreetNumber(row.address);
-		if (address?.street && address.number) {
-			rpStreetsWithNumber.add(`${address.street}|${address.number}`);
-			rpStreetsOnly.add(address.street);
-		} else if (address?.street) {
-			rpStreetsOnly.add(address.street);
-		}
-		const title = normKey(row.title.split("—")[0] ?? "");
-		if (title) rpTitles.add(title);
-	}
-	const coveredByInvestmap = (row: RawListing): boolean => {
-		if (row.source !== "rynekpierwotny") return false;
-		const address = parseStreetNumber(row.address);
-		if (address?.street && address.number) {
-			if (rpStreetsWithNumber.has(`${address.street}|${address.number}`)) {
-				return true;
-			}
-		} else if (address?.street && rpStreetsOnly.has(address.street)) {
-			return true;
-		}
-		return rpTitles.has(normKey(row.title));
-	};
-
-	// Morizon and Gratka share the same feed; keep morizon, drop its gratka
-	// duplicate.
-	const seen = new Set<string>();
-	return visibleRows.filter((row) => {
-		if (coveredByInvestmap(row)) return false;
-		const key = [row.price, row.areaM2, row.rooms, row.district].join("|");
-		if (row.source === "morizon") {
-			seen.add(key);
-			return true;
-		}
-		if (row.source === "gratka" && seen.has(key)) return false;
-		seen.add(key);
-		return true;
-	});
-}
-
-function tableRow(row: KindedListing) {
-	return {
+		kind: "listing",
 		id: row.id,
 		source: row.source,
 		externalId: row.externalId,
-		url: row.url,
 		title: row.title,
+		url: row.url,
 		price: row.price,
 		pricePerM2: row.pricePerM2,
 		areaM2: row.areaM2,
@@ -352,22 +208,367 @@ function tableRow(row: KindedListing) {
 		floor: row.floor,
 		district: row.district,
 		city: row.city,
-		plotAreaM2: row.plotAreaM2,
-		buildingType: row.buildingType,
-		adminFee: row.adminFee,
-		deposit: row.deposit,
-		advertiserType: row.advertiserType,
-		auctionType: row.auctionType,
-		auctionDate: iso(row.auctionDate),
-		listedAt: row.listedAt,
-		firstSeenAt: row.firstSeenAt,
-		heatingType: row.heatingType,
+		address: row.address,
+		lat: row.lat,
+		lng: row.lng,
+		mapLat: row.mapLat ?? 0,
+		mapLng: row.mapLng ?? 0,
+		listedAt: iso(row.listedAt),
+		firstSeenAt: iso(row.firstSeenAt),
+		offerType: row.offerType,
 		propertyType: row.propertyType,
-		propertyKind: row.propertyKind,
-		features: clientFeatures(row),
+		propertyKind: row.propertyKind as PropertyKind | null,
+		buildingId: row.buildingId,
+		buildingAddress: row.buildingAddress,
 		constructionEndLabel: row.constructionEndLabel,
 		constructionEndDate: row.constructionEndDate,
-		offerType: row.offerType,
+	};
+}
+
+async function loadExactPoints(
+	filters: ListingFilters,
+	bbox: Bbox,
+): Promise<{
+	points: Array<MapListingDto & { kind: "listing" }>;
+	capped: boolean;
+}> {
+	const rows = await db
+		.select(mapColumns)
+		.from(listings)
+		.leftJoin(buildings, eq(listings.buildingId, buildings.id))
+		.where(and(listingFilterSql(filters), bboxSql(bbox)))
+		.limit(MAP_MAX_POINTS + 1);
+	if (rows.length > MAP_MAX_POINTS) {
+		return { points: [], capped: true };
+	}
+	return { points: rows.map(toMapPoint), capped: false };
+}
+
+interface ClusterRow {
+	cy: number;
+	cx: number;
+	source: string;
+	count: number;
+	lat: number;
+	lng: number;
+}
+
+/**
+ * One feature per `(cell, source)` from SQL, merged per cell in JS. Cell size
+ * follows the zoom (~64 px at the current scale) so the overview stays around
+ * a thousand circles instead of 45k.
+ */
+async function loadClusters(
+	filters: ListingFilters,
+	bbox: Bbox,
+	zoom: number,
+): Promise<MapFeedPoint[]> {
+	const cell = Math.max((360 / 2 ** zoom) * (64 / 512), 0.001);
+	const rows = await db.all<ClusterRow>(sql`
+		select
+			cast(map_lat / ${cell} as integer) as cy,
+			cast(map_lng / ${cell} as integer) as cx,
+			source,
+			count(*) as count,
+			avg(map_lat) as lat,
+			avg(map_lng) as lng
+		from listings
+		where ${listingFilterSql(filters)}
+			and map_lat is not null and map_lng is not null
+			and map_lat between ${bbox.minLat} and ${bbox.maxLat}
+			and map_lng between ${bbox.minLng} and ${bbox.maxLng}
+			and source not in ('licytacje-komornik', 'budujesie')
+		group by cy, cx, source
+	`);
+
+	const cells = new Map<
+		string,
+		{
+			lat: number;
+			lng: number;
+			count: number;
+			bySource: Record<string, number>;
+		}
+	>();
+	for (const row of rows) {
+		const key = `${row.cy}|${row.cx}`;
+		const cellEntry = cells.get(key) ?? {
+			lat: 0,
+			lng: 0,
+			count: 0,
+			bySource: {},
+		};
+		cellEntry.lat += Number(row.lat) * Number(row.count);
+		cellEntry.lng += Number(row.lng) * Number(row.count);
+		cellEntry.count += Number(row.count);
+		cellEntry.bySource[row.source] =
+			(cellEntry.bySource[row.source] ?? 0) + Number(row.count);
+		cells.set(key, cellEntry);
+	}
+
+	return [...cells.values()].map((cellEntry) => {
+		let source = "";
+		let max = -1;
+		for (const [name, count] of Object.entries(cellEntry.bySource)) {
+			if (count > max) {
+				max = count;
+				source = name;
+			}
+		}
+		return {
+			kind: "cluster",
+			lat: Number((cellEntry.lat / cellEntry.count).toFixed(5)),
+			lng: Number((cellEntry.lng / cellEntry.count).toFixed(5)),
+			count: cellEntry.count,
+			source,
+		};
+	});
+}
+
+/** Special-symbol sources are small and never aggregated. */
+async function loadSpecialPoints(
+	filters: ListingFilters,
+	bbox: Bbox,
+): Promise<Array<MapListingDto & { kind: "listing" }>> {
+	if (filters.source !== "all") {
+		if (!(SPECIAL_SOURCES as readonly string[]).includes(filters.source)) {
+			return [];
+		}
+	}
+	const rows = await db
+		.select(mapColumns)
+		.from(listings)
+		.leftJoin(buildings, eq(listings.buildingId, buildings.id))
+		.where(
+			and(
+				listingFilterSql(filters),
+				bboxSql(bbox),
+				inArray(listings.source, [...SPECIAL_SOURCES]),
+			),
+		)
+		.limit(3000);
+	return rows.map(toMapPoint);
+}
+
+async function listingFacets(days: DaysFilter): Promise<ListingFacetsResponse> {
+	const where = and(eq(listings.isVisible, true), daysFilterSql(days));
+	const rows = await db
+		.select({
+			source: listings.source,
+			kind: listings.propertyKind,
+			count: sql<number>`count(*)`,
+		})
+		.from(listings)
+		.where(where)
+		.groupBy(listings.source, listings.propertyKind);
+	const bySource: Record<string, number> = {};
+	const byKind: Partial<Record<PropertyKind, number>> = {};
+	let total = 0;
+	for (const row of rows) {
+		const count = Number(row.count);
+		total += count;
+		bySource[row.source] = (bySource[row.source] ?? 0) + count;
+		if (
+			row.kind === "apartment" ||
+			row.kind === "house" ||
+			row.kind === "plot"
+		) {
+			byKind[row.kind] = (byKind[row.kind] ?? 0) + count;
+		}
+	}
+	return { total, bySource, byKind, generatedAt: new Date().toISOString() };
+}
+
+async function cachedFacets(days: DaysFilter): Promise<ListingFacetsResponse> {
+	return withCache(`listings-facets-v2:${days}`, FACETS_CACHE_TTL_MS, () =>
+		listingFacets(days),
+	);
+}
+
+const detailColumns = {
+	id: listings.id,
+	source: listings.source,
+	externalId: listings.externalId,
+	url: listings.url,
+	title: listings.title,
+	price: listings.price,
+	pricePerM2: listings.pricePerM2,
+	areaM2: listings.areaM2,
+	rooms: listings.rooms,
+	floor: listings.floor,
+	district: listings.district,
+	address: listings.address,
+	city: listings.city,
+	voivodeship: listings.voivodeship,
+	postalCode: listings.postalCode,
+	street: listings.street,
+	streetNumber: listings.streetNumber,
+	plotAreaM2: listings.plotAreaM2,
+	plotType: listings.plotType,
+	buildingType: listings.buildingType,
+	market: listings.market,
+	buildYear: listings.buildYear,
+	buildingMaterial: listings.buildingMaterial,
+	floorCount: listings.floorCount,
+	condition: listings.condition,
+	ownership: listings.ownership,
+	hasBalcony: listings.hasBalcony,
+	hasTerrace: listings.hasTerrace,
+	hasGarden: listings.hasGarden,
+	hasElevator: listings.hasElevator,
+	hasParking: listings.hasParking,
+	hasGarage: listings.hasGarage,
+	hasBasement: listings.hasBasement,
+	isFurnished: listings.isFurnished,
+	petsAllowed: listings.petsAllowed,
+	adminFee: listings.adminFee,
+	deposit: listings.deposit,
+	priceNegotiable: listings.priceNegotiable,
+	priceOnRequest: listings.priceOnRequest,
+	advertiserType: listings.advertiserType,
+	agencyName: listings.agencyName,
+	portalStatus: listings.portalStatus,
+	sourceUpdatedAt: listings.sourceUpdatedAt,
+	investmentId: listings.investmentId,
+	investmentTitle: listings.investmentTitle,
+	developer: listings.developer,
+	auctionType: listings.auctionType,
+	auctionDate: listings.auctionDate,
+	wadium: listings.wadium,
+	seller: listings.seller,
+	lat: listings.lat,
+	lng: listings.lng,
+	listedAt: listings.listedAt,
+	firstSeenAt: listings.firstSeenAt,
+	heatingType: listings.heatingType,
+	propertyType: listings.propertyType,
+	propertyKind: listings.propertyKind,
+	mapLat: listings.mapLat,
+	mapLng: listings.mapLng,
+	features: listings.features,
+	buildingId: listings.buildingId,
+	buildingAddress: buildings.address,
+	buildingLat: buildings.lat,
+	buildingLng: buildings.lng,
+	offerType: listings.offerType,
+	pricePeriod: listings.pricePeriod,
+	minimumStayNights: listings.minimumStayNights,
+	rating: listings.rating,
+	reviewsCount: listings.reviewsCount,
+	availabilityCount: listings.availabilityCount,
+	maxGuests: listings.maxGuests,
+	bedrooms: listings.bedrooms,
+	beds: listings.beds,
+	bathrooms: listings.bathrooms,
+	utilities: listings.utilities,
+	constructionEndLabel: listings.constructionEndLabel,
+	constructionEndDate: listings.constructionEndDate,
+};
+
+async function loadDetail(id: number): Promise<ListingDto | null> {
+	const [row] = await db
+		.select(detailColumns)
+		.from(listings)
+		.leftJoin(buildings, eq(listings.buildingId, buildings.id))
+		.where(eq(listings.id, id))
+		.limit(1);
+	if (!row) return null;
+
+	const base = { ...row } as Record<string, unknown>;
+	for (const key of ATTRIBUTE_KEYS) delete base[key];
+	const summary =
+		row.buildingId != null
+			? (await transactionSummaryByBuilding([row.buildingId]))[0]
+			: undefined;
+	const attributes = popupAttributes(row);
+	return {
+		...base,
+		listedAt: iso(row.listedAt),
+		firstSeenAt: iso(row.firstSeenAt),
+		sourceUpdatedAt: iso(row.sourceUpdatedAt),
+		auctionDate: iso(row.auctionDate),
+		attributes: Object.keys(attributes).length > 0 ? attributes : null,
+		features: clientFeatures(row),
+		mapLat: row.mapLat ?? row.lat,
+		mapLng: row.mapLng ?? row.lng,
+		transactionStats: summary ?? null,
+	} as unknown as ListingDto;
+}
+
+const tableColumns = {
+	id: listings.id,
+	source: listings.source,
+	externalId: listings.externalId,
+	url: listings.url,
+	title: listings.title,
+	price: listings.price,
+	pricePerM2: listings.pricePerM2,
+	areaM2: listings.areaM2,
+	rooms: listings.rooms,
+	floor: listings.floor,
+	district: listings.district,
+	city: listings.city,
+	plotAreaM2: listings.plotAreaM2,
+	buildingType: listings.buildingType,
+	adminFee: listings.adminFee,
+	deposit: listings.deposit,
+	advertiserType: listings.advertiserType,
+	auctionType: listings.auctionType,
+	auctionDate: listings.auctionDate,
+	listedAt: listings.listedAt,
+	firstSeenAt: listings.firstSeenAt,
+	heatingType: listings.heatingType,
+	propertyType: listings.propertyType,
+	propertyKind: listings.propertyKind,
+	features: listings.features,
+	constructionEndLabel: listings.constructionEndLabel,
+	constructionEndDate: listings.constructionEndDate,
+	offerType: listings.offerType,
+};
+
+async function loadTable(
+	url: URL,
+	search: ReturnType<typeof listingSearchSchema.parse>,
+	filters: ListingFilters,
+): Promise<ListingsTableResponse> {
+	const pageSize = Math.min(
+		500,
+		Math.max(1, Number(url.searchParams.get("pageSize") ?? "100") || 100),
+	);
+	const where = listingFilterSql(filters);
+	const facets = await cachedFacets(filters.days);
+	const [countRow] = await db
+		.select({ count: sql<number>`count(*)` })
+		.from(listings)
+		.where(where);
+	const total = Number(countRow?.count ?? 0);
+	const maxPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+	const page = Math.min(search.page ?? 0, maxPage);
+	const rows = await db
+		.select(tableColumns)
+		.from(listings)
+		.where(where)
+		.orderBy(desc(listings.scrapedAt))
+		.limit(pageSize)
+		.offset(page * pageSize);
+	return {
+		listings: rows.map((row) => ({
+			...row,
+			listedAt: iso(row.listedAt),
+			firstSeenAt: iso(row.firstSeenAt),
+			auctionDate: iso(row.auctionDate),
+			features: clientFeatures(row),
+			propertyKind: row.propertyKind as PropertyKind | null,
+		})),
+		total,
+		page,
+		pageSize,
+		facets: {
+			total: facets.total,
+			bySource: facets.bySource,
+			byKind: facets.byKind as Record<string, number>,
+		},
+		generatedAt: new Date().toISOString(),
 	};
 }
 
@@ -375,82 +576,87 @@ export const Route = createFileRoute("/api/listings")({
 	server: {
 		handlers: {
 			GET: async ({ request }) => {
+				await ensureListingDerived();
 				const url = new URL(request.url);
 				const search = listingSearchSchema.parse(
 					Object.fromEntries(url.searchParams),
 				);
 				const filters = filtersFromSearch(search);
-				const view = url.searchParams.get("view") === "table" ? "table" : "map";
+				const view = url.searchParams.get("view") ?? "map";
 
-				if (view === "table") {
-					const rows = (await loadVisibleRows()).map(kindOf);
-					const pageSize = Math.min(
-						500,
-						Math.max(
-							1,
-							Number(url.searchParams.get("pageSize") ?? "100") || 100,
-						),
-					);
-					const facets = listingFacets(rows, filters.days);
-					const filtered = filterListings(rows, filters);
-					const total = filtered.length;
-					const maxPage = Math.max(0, Math.ceil(total / pageSize) - 1);
-					const page = Math.min(search.page ?? 0, maxPage);
-					const start = page * pageSize;
-					return json({
-						listings: filtered.slice(start, start + pageSize).map(tableRow),
-						total,
-						page,
-						pageSize,
-						facets: {
-							total: facets.total,
-							bySource: Object.fromEntries(facets.bySource),
-							byKind: Object.fromEntries(facets.byKind),
-						},
-						generatedAt: new Date().toISOString(),
-					});
+				if (view === "detail") {
+					const rawId = url.searchParams.get("id");
+					const id = rawId == null ? Number.NaN : Number(rawId);
+					if (!Number.isFinite(id) || id <= 0) {
+						return json({ error: "id required" }, { status: 400 });
+					}
+					const listing = await loadDetail(id);
+					if (!listing) {
+						return json({ error: "not found" }, { status: 404 });
+					}
+					return json({ listing, generatedAt: new Date().toISOString() });
 				}
 
-				// Map feed: every point, the per-building RCN summary and the
-				// map anchor. It is the one multi-megabyte response (35 MB raw,
-				// ~3.9 MB gzipped), so cache the serialized/gzipped body for a
-				// minute instead of rebuilding and recompressing on every load.
-				const feed = await withCache("listings-map", 60_000, async () => {
-					const rows = (await loadVisibleRows()).map(kindOf);
-					const buildingIds = [
-						...new Set(
-							rows
-								.map((row) => row.buildingId)
-								.filter((value): value is number => value != null),
-						),
-					];
-					const summaryByBuilding = new Map(
-						(await transactionSummaryByBuilding(buildingIds)).map((summary) => [
-							String(summary.buildingId),
-							summary,
-						]),
-					);
-					const body = JSON.stringify({
-						listings: rows.map((row) => {
-							// Keep the map row lean: the promoted columns move into
-							// `attributes` instead of duplicating at the top level.
-							const base: Record<string, unknown> = { ...row };
-							for (const key of ATTRIBUTE_KEYS) delete base[key];
-							const attributes = popupAttributes(row);
-							return {
-								...base,
-								attributes:
-									Object.keys(attributes).length > 0 ? attributes : undefined,
-								features: clientFeatures(row),
-								mapLat: row.buildingLat ?? row.lat,
-								mapLng: row.buildingLng ?? row.lng,
-								transactionStats: row.buildingId
-									? (summaryByBuilding.get(String(row.buildingId)) ?? null)
-									: null,
-							};
-						}),
+				if (view === "facets") {
+					return json(await cachedFacets(filters.days));
+				}
+
+				if (view === "table") {
+					return json(await loadTable(url, search, filters));
+				}
+
+				const hasBbox = hasBboxParams(url.searchParams);
+				const bbox = parseBbox(url.searchParams);
+				if (hasBbox && !bbox) {
+					return json({ error: "invalid bbox" }, { status: 400 });
+				}
+				const area = bbox ?? DEFAULT_BBOX;
+				const zoomValue = Number(url.searchParams.get("zoom") ?? "8.5");
+				const zoom = Number.isFinite(zoomValue)
+					? Math.min(19, Math.max(4, zoomValue))
+					: 8.5;
+				const cacheKey = [
+					"listings-map-v2",
+					[area.minLng, area.minLat, area.maxLng, area.maxLat]
+						.map((value) => value.toFixed(4))
+						.join(","),
+					zoom.toFixed(2),
+					filters.source,
+					filters.kind,
+					filters.offerType,
+					filters.days,
+				].join(":");
+				const feed = await withCache(cacheKey, MAP_CACHE_TTL_MS, async () => {
+					let mode: MapFeedResponse["mode"] = "points";
+					let points: MapFeedPoint[] = [];
+					let capped = false;
+					if (zoom >= MAP_EXACT_MIN_ZOOM) {
+						const exact = await loadExactPoints(filters, area);
+						if (exact.capped) {
+							mode = "clusters";
+							capped = true;
+							points = await loadClusters(filters, area, zoom);
+						} else {
+							points = exact.points;
+						}
+					} else {
+						mode = "clusters";
+						points = await loadClusters(filters, area, zoom);
+					}
+					// Court-auction and construction threads keep their own
+					// symbols at every zoom; they are never folded into a cell,
+					// so cluster mode appends them as exact points. Exact mode
+					// already returned them with the rest of the viewport.
+					if (mode === "clusters") {
+						points = points.concat(await loadSpecialPoints(filters, area));
+					}
+					const response: MapFeedResponse = {
+						mode,
+						points,
+						...(capped ? { capped: true } : {}),
 						generatedAt: new Date().toISOString(),
-					});
+					};
+					const body = JSON.stringify(response);
 					return { body, gzip: await gzipJson(body) };
 				});
 				return jsonResponse(feed.body, request, feed.gzip);

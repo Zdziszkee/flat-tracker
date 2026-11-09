@@ -10,7 +10,11 @@ import { parseListingFeatures } from "#/lib/listing-features";
 import { PROPERTY_KIND_LABELS } from "#/lib/property-kind";
 import { sourceLabel } from "#/lib/sources";
 import { horizonLabel } from "#/lib/valuation/upside";
-import type { ListingAttributesDto, OfferValuation } from "#/types/listing";
+import type {
+	ListingAttributesDto,
+	MapListingDto,
+	OfferValuation,
+} from "#/types/listing";
 import type { ApiListing, BuildingLookup } from "./types";
 
 const BUILDING_TYPE_LABELS: Record<string, string> = {
@@ -332,6 +336,39 @@ function fallbackAttributes(
 		seller:
 			rawText(raw, ["seller", "organ_egzekucyjny", "sprzedajacy"]) ?? undefined,
 	};
+}
+
+/**
+ * Popup shell drawn from the compact map point, before the detail request
+ * lands. It carries the facts the map feed already has; `popupHtml` replaces
+ * the body once `view=detail` resolves.
+ */
+export function mapListingPopupHtml(listing: MapListingDto): string {
+	const location =
+		listing.address ??
+		listing.buildingAddress ??
+		listing.district ??
+		listing.city ??
+		"";
+	const price =
+		listing.price != null ? formatPln(listing.price) : "cena na zapytanie";
+	const perM2 =
+		listing.pricePerM2 != null ? `${formatPln(listing.pricePerM2)}/m²` : null;
+	const layout = [
+		listing.areaM2 != null ? `${formatArea(listing.areaM2)}` : null,
+		listing.rooms != null ? `${listing.rooms} pok.` : null,
+	].filter(Boolean);
+	return `<div class="min-w-56 max-w-[320px] space-y-1 p-0.5 text-sm">
+		<div class="text-xs font-medium uppercase tracking-wide text-gray-500">${escapeHtml(sourceLabel(listing.source))}</div>
+		<a href="${escapeHtml(listing.url)}" target="_blank" rel="noreferrer" class="block font-semibold leading-snug hover:text-blue-600 hover:underline">${escapeHtml(listing.title)}</a>
+		${location ? `<div class="text-xs text-gray-500">${escapeHtml(location)}</div>` : ""}
+		<div class="flex items-baseline gap-2">
+			<span class="text-base font-semibold">${escapeHtml(price)}</span>
+			${perM2 ? `<span class="text-xs text-gray-500">${escapeHtml(perM2)}</span>` : ""}
+		</div>
+		${layout.length > 0 ? `<div class="text-xs text-gray-600">${escapeHtml(layout.join(" · "))}</div>` : ""}
+		<div class="pt-1 text-xs text-gray-400">Ładowanie szczegółów…</div>
+	</div>`;
 }
 
 export function popupHtml(listing: ApiListing): string {

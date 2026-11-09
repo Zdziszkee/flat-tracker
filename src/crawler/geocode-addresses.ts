@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { rm } from "node:fs/promises";
 
+import { recomputeListingDerived } from "../db/listing-derived.ts";
 import { ADDRESS_ONLY_SOURCES } from "./address-sources.ts";
 import {
 	geocodeUnlocatedListings,
@@ -51,6 +52,14 @@ async function main(): Promise<void> {
 		`done: local=${report.localHits} nominatim=${report.nomHits} ` +
 			`titles=${report.titleExtracted} misses=${report.misses} ` +
 			`(of ${report.total})`,
+	);
+	// New coordinates/addresses change the map anchor and can change the
+	// cross-source dedupe (an address now resolves to a building), so refresh
+	// the denormalized fields after a manual drain too.
+	const derived = recomputeListingDerived();
+	console.log(
+		`listing-derived: ${derived.rows} rows, ${derived.visible} visible ` +
+			`(${derived.elapsedMs} ms)`,
 	);
 }
 

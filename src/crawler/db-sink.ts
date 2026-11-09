@@ -305,6 +305,11 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 					beds: sql`coalesce(excluded.beds, ${listings.beds})`,
 					bathrooms: sql`coalesce(excluded.bathrooms, ${listings.bathrooms})`,
 					utilities: sql`coalesce(excluded.utilities, ${listings.utilities})`,
+					// Any crawl write can change the cross-source visibility
+					// set (a new investmap flat retires its investment stand-in,
+					// a shared morizon/gratka row changes the duplicate key), so
+					// mark the row stale for the next derived pass.
+					derivedAt: null,
 				},
 			})
 			.returning({

@@ -1,7 +1,32 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import "nitro/types";
 import { definePlugin } from "nitro";
+
+/**
+ * A boot crawl saturates CPU/SQLite at exactly the moment the first page is
+ * compiled and opened, which made `bun run dev` feel like the app was broken.
+ * Let the first visit land first; skip entirely when a crawl finished in the
+ * last 30 minutes.
+ */
+const BOOT_CRAWL_DELAY_MS = 20_000;
+const RECENT_CRAWL_WINDOW_MS = 30 * 60_000;
+
+function crawledRecently(): boolean {
+	try {
+		const state = JSON.parse(
+			readFileSync(resolve(process.cwd(), "data/crawler/state.json"), "utf8"),
+		) as Record<string, string>;
+		const newest = Math.max(
+			0,
+			...Object.values(state).map((value) => new Date(value).getTime() || 0),
+		);
+		return Date.now() - newest < RECENT_CRAWL_WINDOW_MS;
+	} catch {
+		return false;
+	}
+}
 
 /**
  * On dev server start, kick off a background data refresh so the app boots
@@ -20,17 +45,27 @@ import { definePlugin } from "nitro";
 export default definePlugin(() => {
 	if (!import.meta.dev) return;
 	console.log(
-		"[refresh] dev server started; running incremental crawl in a child process...",
+		`[refresh] dev server started; incremental crawl in ${BOOT_CRAWL_DELAY_MS / 1000}s unless one just ran...`,
 	);
-	const script = resolve(process.cwd(), "server/boot-refresh.ts");
-	const child = spawn(process.execPath, ["--import", "tsx", script], {
-		cwd: process.cwd(),
-		stdio: "inherit",
-		env: process.env,
-	});
-	child.on("error", (err) => {
-		console.error("[refresh] could not start the dev crawl:", err);
-	});
+	let child: ReturnType<typeof spawn> | null = null;
+	const timer = setTimeout(() => {
+		if (crawledRecently()) {
+			console.log("[refresh] a crawl ran recently; skipping the dev-boot crawl");
+			return;
+		}
+		const script = resolve(process.cwd(), "server/boot-refresh.ts");
+		child = spawn(process.execPath, ["--import", "tsx", script], {
+			cwd: process.cwd(),
+			stdio: "inherit",
+			env: process.env,
+		});
+		child.on("error", (err) => {
+			console.error("[refresh] could not start the dev crawl:", err);
+		});
+	}, BOOT_CRAWL_DELAY_MS);
 	// The crawl must not outlive the server it belongs to.
-	process.once("exit", () => child.kill());
+	process.once("exit", () => {
+		clearTimeout(timer);
+		child?.kill();
+	});
 });

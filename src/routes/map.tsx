@@ -2,15 +2,16 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import { ListingFilters } from "#/components/listing-filters";
+import { useListingFacets } from "#/hooks/use-listing-facets";
 import { useListingFilters } from "#/hooks/use-listing-filters";
-import { useListings } from "#/hooks/use-listings";
 import { usePublicInvestments } from "#/hooks/use-public-investments";
 import { useSources } from "#/hooks/use-sources";
 import {
-	listingFacets,
+	type ListingFacets,
 	listingSearchSchema,
 	PUBLIC_INVESTMENTS_KIND,
 } from "#/lib/listing-features";
+import type { PropertyKind } from "#/lib/property-kind";
 import {
 	PUBLIC_INVESTMENT_CATEGORY_COLORS,
 	PUBLIC_INVESTMENT_CATEGORY_LABELS,
@@ -33,10 +34,18 @@ const OCCUPANCY_STORAGE_KEY = "flat-tracker:show-occupancy";
 
 function MapPage() {
 	const { filters, setFilters } = useListingFilters("/map");
-	const { data } = useListings();
+	const { data: facetsData } = useListingFacets(filters.days);
 	const { data: sourcesData } = useSources();
 	const sources = sourcesData?.sources ?? [];
-	const facets = listingFacets(data?.listings ?? [], filters.days);
+	const facets: ListingFacets = {
+		total: facetsData?.total ?? 0,
+		bySource: new Map(Object.entries(facetsData?.bySource ?? {})),
+		byKind: new Map(
+			Object.entries(facetsData?.byKind ?? {}).map(
+				([kind, count]) => [kind as PropertyKind, count] as const,
+			),
+		),
+	};
 	const showingPublicInvestments = filters.kind === PUBLIC_INVESTMENTS_KIND;
 	const { data: publicInvestments } = usePublicInvestments(
 		showingPublicInvestments,
