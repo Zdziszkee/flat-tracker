@@ -168,7 +168,13 @@
   --color-sidebar-ring: var(--sidebar-ring);
 }
 
-html,
+html {
+  /* `min-height: 100%` on body resolves to auto unless the parent has a
+   * definite height, which left short routes (the home page) with the html
+   * canvas showing below the body gradient as a dark band. */
+  height: 100%;
+}
+
 body,
 #app {
   min-height: 100%;
