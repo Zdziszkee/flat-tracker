@@ -16,8 +16,8 @@
  * idempotent: a parcel with a `parcel_features` row is skipped.
  */
 
-import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { readFileSync } from "node:fs";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import {
@@ -50,6 +50,8 @@ export interface EnrichParcelsOptions {
 	includePlanning?: boolean;
 	/** Skip the Copernicus DEM reads. */
 	includeTerrain?: boolean;
+	/** Refresh only road distance, class and frontage. */
+	roadsOnly?: boolean;
 }
 
 export interface EnrichParcelsReport {
@@ -93,12 +95,7 @@ function haversineM(
 }
 
 /** Distance from a point to a segment, in metres, via a local projection. */
-function pointSegmentM(
-	lat: number,
-	lng: number,
-	a: Ring,
-	b: Ring,
-): number {
+function pointSegmentM(lat: number, lng: number, a: Ring, b: Ring): number {
 	const lat0 = (lat + a.lat + b.lat) / 3;
 	const mx = 111_320 * Math.cos((lat0 * Math.PI) / 180);
 	const my = 110_574;
@@ -138,32 +135,36 @@ interface RoadHit {
 	frontageM: number;
 }
 
-function roadMetrics(ring: Ring[], roads: Array<{ roadClass: string; points: Ring[] }>): RoadHit {
+function roadMetrics(
+	ring: Ring[],
+	roads: Array<{ roadClass: string; points: Ring[] }>,
+): RoadHit {
 	let best = Number.POSITIVE_INFINITY;
 	let bestClass = "";
-	let frontage = 0;
 	for (const road of roads) {
 		const d = ringPolylineM(ring, road.points);
 		if (d < best) {
 			best = d;
 			bestClass = road.roadClass;
 		}
-		if (d <= 10) {
-			// Approximate frontage: parcel edges whose midpoint is within
-			// 10 m of this road. Good enough for a model feature, and it
-			// avoids a full polygon buffer implementation.
-			for (let i = 0; i < ring.length; i++) {
-				const a = ring[i];
-				const b = ring[(i + 1) % ring.length];
-				const mid = { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 };
-				if (pointPolylineM(mid, road.points) <= 10) {
-					frontage += haversineM(a.lat, a.lng, b.lat, b.lng);
-				}
-			}
-		}
 	}
 	if (!Number.isFinite(best)) {
 		return { distanceM: Number.NaN, roadClass: "", frontageM: 0 };
+	}
+	// Count each parcel edge once, even when several roads run alongside it.
+	// Summing per road double-counted shared frontage and could exceed the
+	// parcel perimeter.
+	let frontage = 0;
+	for (let i = 0; i < ring.length; i++) {
+		const a = ring[i];
+		const b = ring[(i + 1) % ring.length];
+		const mid = { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 };
+		const nearRoad = roads.some(
+			(road) => pointPolylineM(mid, road.points) <= 10,
+		);
+		if (nearRoad) {
+			frontage += haversineM(a.lat, a.lng, b.lat, b.lng);
+		}
 	}
 	return { distanceM: best, roadClass: bestClass, frontageM: frontage };
 }
@@ -382,7 +383,51 @@ export async function enrichParcels(
 		const areaM2 = ringAreaM2(ring);
 		const perimeterM = ringPerimeterM(ring);
 		const compactness =
-			perimeterM > 0 ? (4 * Math.PI * areaM2) / (perimeterM * perimeterM) : null;
+			perimeterM > 0
+				? (4 * Math.PI * areaM2) / (perimeterM * perimeterM)
+				: null;
+
+		if (options.roadsOnly) {
+			const pad = 0.0006; // ~60 m
+			const roadRows = await db
+				.select({ roadClass: osmRoads.roadClass, points: osmRoads.points })
+				.from(osmRoads)
+				.where(
+					and(
+						lte(osmRoads.bboxMinLat, parcel.bboxMaxLat + pad),
+						gte(osmRoads.bboxMaxLat, parcel.bboxMinLat - pad),
+						lte(osmRoads.bboxMinLng, parcel.bboxMaxLng + pad),
+						gte(osmRoads.bboxMaxLng, parcel.bboxMinLng - pad),
+					),
+				);
+			const roads = roadRows
+				.map((r) => {
+					try {
+						return {
+							roadClass: r.roadClass,
+							points: JSON.parse(r.points) as Ring[],
+						};
+					} catch {
+						return null;
+					}
+				})
+				.filter((r): r is { roadClass: string; points: Ring[] } => r !== null);
+			const rStats = roadMetrics(ring, roads);
+			await db
+				.update(parcelFeatures)
+				.set({
+					frontageM: rStats.frontageM,
+					roadDistanceM: Number.isFinite(rStats.distanceM)
+						? rStats.distanceM
+						: null,
+					roadClass: rStats.roadClass || null,
+					updatedAt: new Date(),
+				})
+				.where(eq(parcelFeatures.parcelId, parcelId));
+			report.processed++;
+			if (Number.isFinite(rStats.distanceM)) report.withRoad++;
+			continue;
+		}
 
 		const buildingRows = await db
 			.select({ polygon: osmBuildings.polygon, tags: osmBuildings.tags })
@@ -566,6 +611,7 @@ async function main(): Promise<void> {
 	if (idsArg) {
 		const path = idsArg.slice("--ids=".length);
 		const chunk = chunkArg ? Number.parseInt(chunkArg.split("=")[1], 10) : 100;
+		const roadsOnly = process.argv.includes("--roads-only");
 		const ids = [
 			...new Set(
 				readFileSync(path, "utf8")
@@ -574,7 +620,9 @@ async function main(): Promise<void> {
 					.filter(Boolean),
 			),
 		];
-		console.log(`enrich-parcels: ${ids.length} ids from ${path}, chunk ${chunk}`);
+		console.log(
+			`enrich-parcels: ${ids.length} ids from ${path}, chunk ${chunk}`,
+		);
 		let processed = 0;
 		for (let i = 0; i < ids.length; i += chunk) {
 			const part = ids.slice(i, i + chunk);
@@ -583,6 +631,7 @@ async function main(): Promise<void> {
 				staleDays: 0,
 				includePlanning: !fast,
 				includeTerrain: !fast,
+				roadsOnly,
 			});
 			processed += report.processed;
 			console.log(
@@ -607,7 +656,9 @@ async function main(): Promise<void> {
 }
 
 if (
-	process.argv[1]?.replace(/\\/g, "/").endsWith("/src/crawler/enrich-parcels.ts")
+	process.argv[1]
+		?.replace(/\\/g, "/")
+		.endsWith("/src/crawler/enrich-parcels.ts")
 ) {
 	main().catch((err) => {
 		console.error(err);
