@@ -85,6 +85,38 @@ national runs never double-count it. `assign-buildings` only anchors rows
 inside the małopolska OSM footprint index, so powiaty outside the region
 keep their registry coordinates but get no building link.
 
+## Parcel enrichment
+
+Every listing and transaction is bound to its cadastral parcel and gets the
+physical features the valuation model needs. The hourly refresh does this
+automatically for new rows: it finds the parcel containing the building,
+fetches a missing parcel on demand from EGiB, then fills `parcel_features`.
+
+Public layers used:
+
+- EGiB WFS (GUGiK): parcel polygon, land-use class, register group.
+- OpenStreetMap: building footprints and public road centre lines.
+- Krakow MSIP ArcGIS: MPZP zones, WZ decisions, building permits, flood hazard.
+- Copernicus DEM GLO-30: elevation and slope.
+- RCN `parcel_meta.zoning`: MPZP/WZ labels outside Krakow.
+
+One-time caches and backfills:
+
+```bash
+bun run build:osm-roads        # OSM road index, ~1.5 min from the cached PBFs
+bun run build:dem              # eight Copernicus DEM tiles, ~200 MB
+bun run import:egib            # region-wide parcel index, resumable
+bun run assign-parcels         # bind existing listings/transactions to parcels
+bun run enrich:parcels         # compute parcel_features
+bun run validate:parcel-features
+```
+
+`parcel_features` stores geometry, building coverage, road distance and
+frontage, land-use class, MPZP/WZ flags, flood risk, slope and elevation.
+Null means "not measured", never zero. The refresh processes a bounded
+batch per run (`PARCEL_ASSIGN_LISTINGS`, `PARCEL_ASSIGN_TX`,
+`PARCEL_ENRICH_LIMIT`, `EGIB_TILES_PER_REFRESH`).
+
 ## Stack
 
 TanStack Start (React 19) · Crawlee 3 + Cheerio · SQLite + Drizzle ·

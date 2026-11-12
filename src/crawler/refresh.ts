@@ -154,6 +154,8 @@ export async function refreshAll(
 		"geocoding",
 		"rcn-import",
 		"building-assign",
+		"parcel-assign",
+		"parcel-enrich",
 		"public-investments",
 		"finwire",
 	]);
@@ -581,6 +583,90 @@ export async function refreshAll(
 				});
 				console.error("[refresh] building assignment failed:", err);
 			}
+		}
+
+		// Bind listings (and any unbound transactions) to their cadastral
+		// parcel. New listings can arrive before the region-wide EGiB tile
+		// import reaches them, so a single-parcel WFS lookup is the fallback.
+		setPhase("parcel-assign");
+		setSourceProgress("parcel-assign", {
+			state: "running",
+			startedAt: new Date().toISOString(),
+		});
+		try {
+			const { assignParcels } = await import("./parcel-index.ts");
+			const parcels = await assignParcels({
+				listingLimit: Number(process.env.PARCEL_ASSIGN_LISTINGS ?? 500),
+				transactionLimit: Number(process.env.PARCEL_ASSIGN_TX ?? 200),
+				onDemand: process.env.PARCEL_ON_DEMAND !== "0",
+			});
+			console.log(
+				`[refresh] parcel assignment: ${parcels.listings} listings, ` +
+					`${parcels.transactions} transactions, ${parcels.fetched} fetched from EGiB, ` +
+					`${parcels.missed} missed`,
+			);
+			setSourceProgress("parcel-assign", {
+				state: "ok",
+				finishedAt: new Date().toISOString(),
+				newCount: parcels.listings + parcels.transactions,
+				updatedCount: parcels.fetched,
+			});
+		} catch (err) {
+			setSourceProgress("parcel-assign", {
+				state: "failed",
+				error: String(err),
+			});
+			console.error("[refresh] parcel assignment failed:", err);
+		}
+
+		// Fill the region-wide parcel index gradually. Default 0: the
+		// on-demand lookup above already covers new listings, and a full
+		// two-voivodeship import is a separate `bun run import:egib` job.
+		const egibTiles = Number(process.env.EGIB_TILES_PER_REFRESH ?? 0);
+		if (egibTiles > 0) {
+			try {
+				const { importEgib } = await import("./import-egib.ts");
+				const egib = await importEgib({
+					maxTiles: egibTiles,
+					quiet: true,
+				});
+				console.log(
+					`[refresh] egib: +${egib.inserted} parcels, ` +
+						`${egib.completed}/${egib.total} tiles complete`,
+				);
+			} catch (err) {
+				console.error("[refresh] egib import failed:", err);
+			}
+		}
+
+		// Compute the physical features once per parcel. Bounded per refresh:
+		// the backlog drains over several runs, new parcels are first.
+		setPhase("parcel-enrich");
+		setSourceProgress("parcel-enrich", {
+			state: "running",
+			startedAt: new Date().toISOString(),
+		});
+		try {
+			const { enrichParcels } = await import("./enrich-parcels.ts");
+			const enriched = await enrichParcels({
+				limit: Number(process.env.PARCEL_ENRICH_LIMIT ?? 200),
+			});
+			console.log(
+				`[refresh] parcel enrichment: ${enriched.processed} processed, ` +
+					`${enriched.withBuildings} with buildings, ${enriched.withRoad} with road, ` +
+					`${enriched.withZoning} with zoning`,
+			);
+			setSourceProgress("parcel-enrich", {
+				state: "ok",
+				finishedAt: new Date().toISOString(),
+				newCount: enriched.processed,
+			});
+		} catch (err) {
+			setSourceProgress("parcel-enrich", {
+				state: "failed",
+				error: String(err),
+			});
+			console.error("[refresh] parcel enrichment failed:", err);
 		}
 
 		// Rebuild the quarterly price indices the per-offer valuation model

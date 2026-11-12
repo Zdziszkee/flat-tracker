@@ -188,6 +188,8 @@ export const listings = sqliteTable(
 		lng: real(),
 		/** The building this offer was assigned to (see crawler/geocode.ts). */
 		buildingId: integer("building_id").references(() => buildings.id),
+		/** Cadastral parcel containing the building, assigned by crawler/parcel-index.ts. */
+		parcelId: text("parcel_id"),
 		/** When the ad was created on the portal, if exposed. */
 		listedAt: integer("listed_at", { mode: "timestamp" }),
 		scrapedAt: integer("scraped_at", { mode: "timestamp" }).notNull(),
@@ -251,6 +253,7 @@ export const listings = sqliteTable(
 	(t) => [
 		uniqueIndex("listings_source_external_idx").on(t.source, t.externalId),
 		index("listings_building_idx").on(t.buildingId),
+		index("listings_parcel_idx").on(t.parcelId),
 		index("listings_district_listed_idx").on(t.district, t.listedAt),
 		index("listings_source_listed_idx").on(t.source, t.listedAt),
 		index("listings_price_m2_idx").on(t.pricePerM2),
@@ -435,6 +438,38 @@ export const osmBuildings = sqliteTable(
 );
 
 /**
+ * Local copy of OSM road centre lines from the same Geofabrik extracts as
+ * the building index. Used to measure parcel road access and frontage
+ * without calling Overpass per parcel.
+ */
+export const osmRoads = sqliteTable(
+	"osm_roads",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		osmId: integer("osm_id", { mode: "number" }).notNull().unique(),
+		/** OSM highway class: motorway, primary, residential, service, track... */
+		roadClass: text("road_class").notNull(),
+		surface: text(),
+		name: text(),
+		bboxMinLat: real("bbox_min_lat").notNull(),
+		bboxMinLng: real("bbox_min_lng").notNull(),
+		bboxMaxLat: real("bbox_max_lat").notNull(),
+		bboxMaxLng: real("bbox_max_lng").notNull(),
+		/** Polyline as JSON array of {lat, lng}. */
+		points: text().notNull(),
+	},
+	(t) => [
+		index("osm_roads_bbox_idx").on(
+			t.bboxMinLat,
+			t.bboxMinLng,
+			t.bboxMaxLat,
+			t.bboxMaxLng,
+		),
+		index("osm_roads_class_idx").on(t.roadClass),
+	],
+);
+
+/**
  * Local index of cadastral parcels (działki). Two sources feed it:
  * - 'rcn'  — RCN_Dzialka parsed from the Krakow RCN GML export (binds
  *   transactions to their true parcel via exact xlink refs)
@@ -465,6 +500,14 @@ export const parcels = sqliteTable(
 		obreb: text(),
 		/** Commune (gmina) name, from the KIEG feed. */
 		gmina: text(),
+		/** EGiB land-use class, e.g. B, Ba, R, Ls. */
+		landUseClass: text("land_use_class"),
+		/** EGiB register group, e.g. 1, 2, 7. */
+		registerGroup: text("register_group"),
+		/** Date of the EGiB snapshot that produced this row. */
+		egibDataDate: text("egib_data_date"),
+		/** Geometric area in hectares, computed from the polygon. */
+		areaHa: real("area_ha"),
 	},
 	(t) => [
 		index("parcels_bbox_idx").on(
@@ -614,6 +657,55 @@ export const parcelMeta = sqliteTable("parcel_meta", {
 		.notNull()
 		.default(sql`(unixepoch())`),
 });
+
+/**
+ * Derived physical and regulatory features for a cadastral parcel.
+ * Populated by crawler/enrich-parcels.ts for parcels linked to a listing
+ * or transaction. One row per parcel, recomputed when the source layers
+ * change. Null means "not measured", never zero.
+ */
+export const parcelFeatures = sqliteTable(
+	"parcel_features",
+	{
+		parcelId: text("parcel_id").primaryKey(),
+		/** Polygon area in square metres. */
+		areaM2: real("area_m2"),
+		perimeterM: real("perimeter_m"),
+		/** 4*pi*area/perimeter^2, 1.0 for a circle. */
+		compactness: real("compactness"),
+		/** Boundary length within 5 m of a public road, metres. */
+		frontageM: real("frontage_m"),
+		/** Distance from the parcel boundary to the nearest public road, metres. */
+		roadDistanceM: real("road_distance_m"),
+		/** Highest-class road touching or nearest the parcel. */
+		roadClass: text("road_class"),
+		buildingCount: integer("building_count", { mode: "number" }),
+		buildingAreaM2: real("building_area_m2"),
+		/** Building footprint area divided by parcel area. */
+		buildingCoverage: real("building_coverage"),
+		maxFloors: integer("max_floors", { mode: "number" }),
+		landUseClass: text("land_use_class"),
+		registerGroup: text("register_group"),
+		/** 1 when the parcel has a WZ decision (decyzja o warunkach zabudowy). */
+		zoningWz: integer("zoning_wz", { mode: "boolean" }),
+		/** 1 when the parcel has no MPZP and no WZ. */
+		zoningNoPlan: integer("zoning_no_plan", { mode: "boolean" }),
+		/** Number of distinct MPZP/WZ labels intersecting the parcel. */
+		zoningPlanCount: integer("zoning_plan_count", { mode: "number" }),
+		/** Full label list as JSON. */
+		zoningFlags: text("zoning_flags"),
+		/** 1 when any part of the parcel is in a flood hazard zone. */
+		floodRisk: integer("flood_risk", { mode: "boolean" }),
+		slopeDeg: real("slope_deg"),
+		elevationM: real("elevation_m"),
+		/** Date of the source snapshot used for the regulatory layers. */
+		sourceDataDate: text("source_data_date"),
+		updatedAt: integer("updated_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+	},
+	(t) => [index("parcel_features_updated_idx").on(t.updatedAt)],
+);
 
 /**
  * Monthly price aggregation per rental listing, folded from availability

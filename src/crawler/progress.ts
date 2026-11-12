@@ -28,6 +28,8 @@ export type RefreshPhase =
 	| "geocode"
 	| "rcn"
 	| "building-assign"
+	| "parcel-assign"
+	| "parcel-enrich"
 	| "listing-derived"
 	| "public-investments"
 	| "finwire"

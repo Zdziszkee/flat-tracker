@@ -451,6 +451,11 @@ with the build's peak at ~2 GB. If you touch the loader, watch
 | GUGiK RCN (Usługa Transakcje) | Same, but every powiat in Poland: the tracked voivodeships (małopolskie + śląskie) by default, the rest on demand (per-powiat GeoPackages; parcel/building/lokal transactions) | `https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG/{teryt}_transakcje_ceny.gpkg.zip` — imported by `import-rcn-gugik.ts` (`bun run import:rcn-gugik`, `bun run import:rcn-gugik:all`) |
 | finwire.pl (city price index) | Quarterly median zł/m² for flats, Kraków + Katowice, RCN-derived | `GET /ceny-mieszkan/<city>` embeds an Angular `ng-state` JSON blob; the key `cm-rcn-city:<slug>` holds `trend` (12 quarters of `medianM2` + `n`), `pierwotnyM2`/`wtornyM2` (latest prim./sec. medians), `latestQuarter` and `firstQuarter`. Imported by `src/crawler/import-finwire.ts` into `price_indices` as `external_city` rows (`source = "finwire"`, `method = "external"`, segments `flat`/`flat_primary`/`flat_secondary`, chain index 100 at the first quarter). Weekly gate `data/crawler/finwire-state.json`; `bun run import:finwire -- --force`. NBP BaRN is the official reference but its pages are WAF-gated, so this RCN mirror fills the same role |
 | OpenStreetMap (Overpass) | Building footprints/addresses | Free API, rate-limited, 3 mirror endpoints |
+| GUGiK EGiB WFS | Parcel polygons, land-use class, register group; building footprints/type/floors | `https://mapy.geoportal.gov.pl/wss/service/PZGIK/EGIB/WFS/UslugaZbiorcza`, open, 1000 features/page, `STARTINDEX` cap 10000. `import-egib.ts` fills `parcels`; `egib.ts` does on-demand point/id lookups |
+| OpenStreetMap (Geofabrik) roads | Public road centre lines for parcel access and frontage | Same Małopolskie + Śląskie PBF extracts as the building index. `osm-roads.ts` builds `osm_roads` |
+| Kraków MSIP ArcGIS | MPZP zones, WZ decisions, building permits | `https://msip3.um.krakow.pl/server/rest/services/Planowanie/BP_MPZP/MapServer`, `.../Architektura/AU_Sos/MapServer`; point queries in EPSG:4326, public |
+| Kraków MSIP flood | Flood hazard polygons | `https://msip3.um.krakow.pl/hosting/rest/services/Mapy_powodziowe/Mapy_ryzyka_powodziowego_hosting/MapServer`; some legacy layers reject queries, skipped |
+| Copernicus DEM GLO-30 | Elevation and slope | AWS Open Data COG tiles `https://copernicus-dem-30m.s3.amazonaws.com/...`; `terrain.ts` caches the eight tiles covering both voivodeships |
 
 ### Price indices and the external city fallback
 
@@ -736,6 +741,34 @@ price, pricePerM2, areaM2, rooms, floor, district, lat, lng, listedAt).
   refresh (and every HTTP request) for minutes; the paged version keeps the
   event loop responsive and the cache removes the repeat builds that
   `assign-buildings` + geocoding used to trigger in the same run.
+
+## Parcel enrichment
+
+`listings.parcel_id` is assigned by `parcel-index.ts` after building
+assignment: it queries the local `parcels` bbox index, runs point-in-polygon
+on the stored ring, and falls back to one EGiB WFS point lookup when the
+region-wide tile has not been imported yet. The same pass fills missing
+`transactions.parcel_id`.
+
+`enrich-parcels.ts` fills `parcel_features` for parcels linked to a listing
+or transaction, bounded per run. It computes:
+
+- geometry: area, perimeter, compactness;
+- buildings: count, footprint area, coverage, max floors from `osm_buildings`;
+- roads: nearest public road, class, frontage from `osm_roads`;
+- land: EGiB land-use class and register group;
+- zoning: MPZP/WZ labels, WZ flag, no-plan flag;
+- flood and terrain: Kraków MSIP flood polygons and Copernicus DEM slope.
+
+Polygon storage is mixed by design: RCN rows are GeoJSON
+(`{"type":"Polygon","coordinates":[[[lng,lat],...]]}`) and EGiB rows are
+`[{lat,lng},...]`. `parseParcelRing()` in `egib.ts` accepts both. Always use
+it instead of `JSON.parse` on `parcels.polygon`.
+
+The hourly refresh calls `assignParcels` and a bounded `enrichParcels` after
+building assignment. `EGIB_TILES_PER_REFRESH` defaults to 0; new listings
+are covered by the on-demand point lookup, and a full region import is the
+separate `bun run import:egib` job.
 
 ## Effect TS usage
 

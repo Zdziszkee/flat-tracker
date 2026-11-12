@@ -176,6 +176,20 @@
       "when": 1794247006690,
       "tag": "0024_strong_lord_hawal",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1794506219978,
+      "tag": "0025_normal_chat",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1794506421967,
+      "tag": "0026_useful_annihilus",
+      "breakpoints": true
     }
   ]
 }

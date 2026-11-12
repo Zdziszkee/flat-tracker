@@ -33,6 +33,7 @@ import { SaxesParser } from "saxes";
 import { db } from "#/db/index";
 import { TRACKED_REGIONS, type TrackedRegion } from "#/db/region";
 import { parcels as parcelsTable } from "#/db/schema";
+import { cleanEgibValue } from "./egib.ts";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -138,6 +139,28 @@ interface ParcelInsert {
 	ring: Array<{ lat: number; lng: number }>;
 	obreb: string | null;
 	gmina: string | null;
+	landUseClass: string | null;
+	registerGroup: string | null;
+	egibDataDate: string | null;
+	areaHa: number | null;
+}
+
+/** Shoelace area of a lat/lng ring, projected locally to metres. */
+function ringAreaM2(ring: Array<{ lat: number; lng: number }>): number {
+	if (ring.length < 3) return 0;
+	let latSum = 0;
+	for (const p of ring) latSum += p.lat;
+	const lat0 = latSum / ring.length;
+	const mPerDegLat = 110_574;
+	const mPerDegLng = 111_320 * Math.cos((lat0 * Math.PI) / 180);
+	let area = 0;
+	for (let i = 0; i < ring.length; i++) {
+		const a = ring[i];
+		const b = ring[(i + 1) % ring.length];
+		area += a.lng * mPerDegLng * (b.lat * mPerDegLat);
+		area -= b.lng * mPerDegLng * (a.lat * mPerDegLat);
+	}
+	return Math.abs(area) / 2;
 }
 
 function insertBatch(batch: ParcelInsert[]): number {
@@ -169,6 +192,10 @@ function insertBatch(batch: ParcelInsert[]): number {
 			source: "egib" as const,
 			obreb: p.obreb,
 			gmina: p.gmina,
+			landUseClass: p.landUseClass,
+			registerGroup: p.registerGroup,
+			egibDataDate: p.egibDataDate,
+			areaHa: p.areaHa,
 		};
 	});
 	const res = db
@@ -224,6 +251,9 @@ interface PendingParcel {
 	parcelId: string | null;
 	obreb: string | null;
 	gmina: string | null;
+	landUseClass: string | null;
+	registerGroup: string | null;
+	egibDataDate: string | null;
 	posList: string;
 }
 
@@ -233,18 +263,36 @@ function parsePage(xml: string): ParcelInsert[] {
 	const parser = new SaxesParser({ xmlns: false });
 	const out: ParcelInsert[] = [];
 	let member: PendingParcel | null = null;
-	let capture: "idDzialki" | "obreb" | "gmina" | null = null;
+	let capture:
+		| "idDzialki"
+		| "obreb"
+		| "gmina"
+		| "landUseClass"
+		| "registerGroup"
+		| "egibDataDate"
+		| null = null;
 	let inPosList = false;
 
 	parser.on("opentag", (node) => {
 		const name = node.name;
 		if (name === "ms:dzialki") {
-			member = { parcelId: null, obreb: null, gmina: null, posList: "" };
+			member = {
+				parcelId: null,
+				obreb: null,
+				gmina: null,
+				landUseClass: null,
+				registerGroup: null,
+				egibDataDate: null,
+				posList: "",
+			};
 		} else if (member) {
 			if (name === "gml:posList") inPosList = true;
 			else if (name === "ms:ID_DZIALKI") capture = "idDzialki";
 			else if (name === "ms:NAZWA_OBREBU") capture = "obreb";
 			else if (name === "ms:NAZWA_GMINY") capture = "gmina";
+			else if (name === "ms:KLASOUZYTKI_EGIB") capture = "landUseClass";
+			else if (name === "ms:GRUPA_REJESTROWA") capture = "registerGroup";
+			else if (name === "ms:DATA") capture = "egibDataDate";
 		}
 	});
 	parser.on("text", (t) => {
@@ -254,6 +302,12 @@ function parsePage(xml: string): ParcelInsert[] {
 			member.parcelId = (member.parcelId ?? "") + t;
 		else if (capture === "obreb") member.obreb = (member.obreb ?? "") + t;
 		else if (capture === "gmina") member.gmina = (member.gmina ?? "") + t;
+		else if (capture === "landUseClass")
+			member.landUseClass = (member.landUseClass ?? "") + t;
+		else if (capture === "registerGroup")
+			member.registerGroup = (member.registerGroup ?? "") + t;
+		else if (capture === "egibDataDate")
+			member.egibDataDate = (member.egibDataDate ?? "") + t;
 	});
 	parser.on("closetag", (node) => {
 		const name = node.name;
@@ -261,7 +315,10 @@ function parsePage(xml: string): ParcelInsert[] {
 		else if (
 			name === "ms:ID_DZIALKI" ||
 			name === "ms:NAZWA_OBREBU" ||
-			name === "ms:NAZWA_GMINY"
+			name === "ms:NAZWA_GMINY" ||
+			name === "ms:KLASOUZYTKI_EGIB" ||
+			name === "ms:GRUPA_REJESTROWA" ||
+			name === "ms:DATA"
 		) {
 			capture = null;
 		} else if (name === "ms:dzialki" && member) {
@@ -275,6 +332,10 @@ function parsePage(xml: string): ParcelInsert[] {
 						ring,
 						obreb: m.obreb || null,
 						gmina: m.gmina || null,
+						landUseClass: cleanEgibValue(m.landUseClass),
+						registerGroup: cleanEgibValue(m.registerGroup),
+						egibDataDate: m.egibDataDate || null,
+						areaHa: ringAreaM2(ring) / 10_000,
 					});
 				}
 			}
@@ -408,16 +469,42 @@ async function pageThrough(tile: Tile): Promise<void> {
 	}
 }
 
-async function main() {
+export interface ImportEgibOptions {
+	/** Max base tiles to process in this run. */
+	maxTiles?: number;
+	/** Restrict to these tile keys (row:col), mostly for smoke tests. */
+	tileKeys?: string[];
+	/** Suppress per-tile progress lines (used by the hourly refresh). */
+	quiet?: boolean;
+}
+
+/**
+ * Import EGiB parcels for the tracked regions. Resumable: completed base
+ * tiles are recorded in data/crawler/egib-state.json. Safe to call from the
+ * refresh with a small `maxTiles` budget; the next run continues where this
+ * one stopped.
+ */
+export async function importEgib(
+	options: ImportEgibOptions = {},
+): Promise<{
+	inserted: number;
+	completed: number;
+	total: number;
+	ranTiles: number;
+}> {
 	const allTiles = buildTiles();
 	let pending = allTiles.filter((t) => !completed.has(t.key));
-	if (tileKeys.length > 0)
-		pending = pending.filter((t) => tileKeys.includes(t.key));
-	const runTiles = tileLimit != null ? pending.slice(0, tileLimit) : pending;
-	console.log(
-		`EGIB import: ${completed.size}/${allTiles.length} tiles already done, running ${runTiles.length} ` +
-			`(${Object.keys(TRACKED_REGIONS).length} regions, DB ${DB_PATH})`,
-	);
+	const requestedKeys = options.tileKeys ?? tileKeys;
+	if (requestedKeys.length > 0)
+		pending = pending.filter((t) => requestedKeys.includes(t.key));
+	const limit = options.maxTiles ?? tileLimit;
+	const runTiles = limit != null ? pending.slice(0, limit) : pending;
+	if (!options.quiet) {
+		console.log(
+			`EGIB import: ${completed.size}/${allTiles.length} tiles already done, running ${runTiles.length} ` +
+				`(${Object.keys(TRACKED_REGIONS).length} regions, DB ${DB_PATH})`,
+		);
+	}
 
 	const t0 = Date.now();
 	let insertedTotal = 0;
@@ -433,7 +520,7 @@ async function main() {
 		}
 		const after = await countParcels();
 		insertedTotal += after - before;
-		if ((i + 1) % 10 === 0 || i === runTiles.length - 1) {
+		if (!options.quiet && ((i + 1) % 10 === 0 || i === runTiles.length - 1)) {
 			saveState();
 			const mins = (Date.now() - t0) / 60_000;
 			console.log(
@@ -444,9 +531,17 @@ async function main() {
 	}
 
 	saveState();
-	console.log(
-		`Done: ${insertedTotal} newly inserted. Completed tiles: ${completed.size}/${allTiles.length}.`,
-	);
+	if (!options.quiet) {
+		console.log(
+			`Done: ${insertedTotal} newly inserted. Completed tiles: ${completed.size}/${allTiles.length}.`,
+		);
+	}
+	return {
+		inserted: insertedTotal,
+		completed: completed.size,
+		total: allTiles.length,
+		ranTiles: runTiles.length,
+	};
 }
 
 let _lastCount = -1;
@@ -459,7 +554,12 @@ async function countParcels(): Promise<number> {
 	return _lastCount;
 }
 
-main().catch((err) => {
-	console.error(err);
-	process.exit(1);
-});
+const isDirectRun =
+	process.argv[1]?.replace(/\\/g, "/").endsWith("/src/crawler/import-egib.ts") ??
+	false;
+if (isDirectRun) {
+	importEgib().catch((err) => {
+		console.error(err);
+		process.exit(1);
+	});
+}
