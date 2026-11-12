@@ -681,6 +681,12 @@ export const parcelFeatures = sqliteTable(
 		roadClass: text("road_class"),
 		buildingCount: integer("building_count", { mode: "number" }),
 		buildingAreaM2: real("building_area_m2"),
+		/** Dominant OSM building subtype by footprint area. */
+		buildingSubtype: text("building_subtype"),
+		/** Share of building footprint area by subtype. */
+		buildingResidentialRatio: real("building_residential_ratio"),
+		buildingGarageRatio: real("building_garage_ratio"),
+		buildingCommercialRatio: real("building_commercial_ratio"),
 		/** Building footprint area divided by parcel area. */
 		buildingCoverage: real("building_coverage"),
 		maxFloors: integer("max_floors", { mode: "number" }),

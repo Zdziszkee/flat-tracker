@@ -172,6 +172,62 @@ interface BuildingStats {
 	count: number;
 	areaM2: number;
 	maxFloors: number | null;
+	subtype: string | null;
+	residentialRatio: number | null;
+	garageRatio: number | null;
+	commercialRatio: number | null;
+}
+
+type BuildingClass = "residential" | "garage" | "commercial" | "other";
+
+const RESIDENTIAL_TAGS = new Set([
+	"house",
+	"apartments",
+	"residential",
+	"detached",
+	"semidetached_house",
+	"terrace",
+	"bungalow",
+	"farm",
+	"cabin",
+	"static_caravan",
+	"dormitory",
+]);
+const GARAGE_TAGS = new Set([
+	"garage",
+	"garages",
+	"shed",
+	"hut",
+	"carport",
+	"greenhouse",
+	"barn",
+	"stable",
+	"cowshed",
+]);
+const COMMERCIAL_TAGS = new Set([
+	"commercial",
+	"industrial",
+	"warehouse",
+	"retail",
+	"office",
+	"kiosk",
+	"supermarket",
+	"hotel",
+	"school",
+	"hospital",
+	"church",
+	"public",
+	"civic",
+	"government",
+]);
+
+function classifyBuilding(tag: string | undefined): BuildingClass {
+	if (!tag) return "other";
+	const t = tag.toLowerCase();
+	if (RESIDENTIAL_TAGS.has(t)) return "residential";
+	if (GARAGE_TAGS.has(t)) return "garage";
+	if (COMMERCIAL_TAGS.has(t)) return "commercial";
+	return "other";
 }
 
 function buildingStats(
@@ -181,6 +237,12 @@ function buildingStats(
 	let count = 0;
 	let area = 0;
 	let maxFloors: number | null = null;
+	const areaByClass: Record<BuildingClass, number> = {
+		residential: 0,
+		garage: 0,
+		commercial: 0,
+		other: 0,
+	};
 	for (const b of candidates) {
 		let bRing: Ring[];
 		try {
@@ -192,10 +254,13 @@ function buildingStats(
 		const inside = bRing.some((p) => pointInRing(ring, p.lat, p.lng));
 		if (!inside) continue;
 		count++;
-		area += ringAreaM2(bRing);
+		const footprint = ringAreaM2(bRing);
+		area += footprint;
+		let buildingTag: string | undefined;
 		if (b.tags) {
 			try {
 				const tags = JSON.parse(b.tags) as Record<string, string>;
+				buildingTag = tags.building;
 				const levels = Number.parseFloat(
 					tags["building:levels"] ?? tags.levels ?? "",
 				);
@@ -206,8 +271,31 @@ function buildingStats(
 				// ignore malformed tags
 			}
 		}
+		areaByClass[classifyBuilding(buildingTag)] += footprint;
 	}
-	return { count, areaM2: area, maxFloors };
+	if (count === 0 || area <= 0) {
+		return {
+			count,
+			areaM2: area,
+			maxFloors,
+			subtype: null,
+			residentialRatio: null,
+			garageRatio: null,
+			commercialRatio: null,
+		};
+	}
+	const dominant = (
+		Object.entries(areaByClass) as Array<[BuildingClass, number]>
+	).sort((a, b) => b[1] - a[1])[0][0];
+	return {
+		count,
+		areaM2: area,
+		maxFloors,
+		subtype: dominant,
+		residentialRatio: areaByClass.residential / area,
+		garageRatio: areaByClass.garage / area,
+		commercialRatio: areaByClass.commercial / area,
+	};
 }
 
 function zoningOf(zoning: string | null): {
@@ -408,6 +496,10 @@ export async function enrichParcels(
 				roadClass: rStats.roadClass || null,
 				buildingCount: bStats.count,
 				buildingAreaM2: bStats.areaM2,
+				buildingSubtype: bStats.subtype,
+				buildingResidentialRatio: bStats.residentialRatio,
+				buildingGarageRatio: bStats.garageRatio,
+				buildingCommercialRatio: bStats.commercialRatio,
 				buildingCoverage:
 					areaM2 > 0 ? Math.min(1, bStats.areaM2 / areaM2) : null,
 				maxFloors: bStats.maxFloors,
@@ -436,6 +528,10 @@ export async function enrichParcels(
 					roadClass: rStats.roadClass || null,
 					buildingCount: bStats.count,
 					buildingAreaM2: bStats.areaM2,
+					buildingSubtype: bStats.subtype,
+					buildingResidentialRatio: bStats.residentialRatio,
+					buildingGarageRatio: bStats.garageRatio,
+					buildingCommercialRatio: bStats.commercialRatio,
 					buildingCoverage:
 						areaM2 > 0 ? Math.min(1, bStats.areaM2 / areaM2) : null,
 					maxFloors: bStats.maxFloors,

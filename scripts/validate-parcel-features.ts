@@ -159,6 +159,29 @@ const terrainRows = count(sql`
 `);
 check("at least one parcel has terrain", terrainRows > 0, `${terrainRows} rows`);
 
+const badSubtype = count(sql`
+	select count(*) as n from parcel_features
+	where building_subtype is not null
+	  and building_subtype not in ('residential', 'garage', 'commercial', 'other')
+`);
+check("building subtype is known", badSubtype === 0, `${badSubtype} bad rows`);
+
+const badRatios = count(sql`
+	select count(*) as n from parcel_features
+	where (building_residential_ratio is not null
+	       and (building_residential_ratio < 0 or building_residential_ratio > 1))
+	   or (building_garage_ratio is not null
+	       and (building_garage_ratio < 0 or building_garage_ratio > 1))
+	   or (building_commercial_ratio is not null
+	       and (building_commercial_ratio < 0 or building_commercial_ratio > 1))
+`);
+check("building subtype ratios are 0..1", badRatios === 0, `${badRatios} bad rows`);
+
+const subtypeRows = count(sql`
+	select count(*) as n from parcel_features where building_subtype is not null
+`);
+check("at least one parcel has a building subtype", subtypeRows > 0, `${subtypeRows} rows`);
+
 // 4. Source coverage.
 const roads = count(sql`select count(*) as n from osm_roads`);
 check("osm_roads is populated", roads > 0, `${roads} roads`);
