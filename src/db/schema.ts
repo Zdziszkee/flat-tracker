@@ -690,6 +690,18 @@ export const parcelFeatures = sqliteTable(
 		/** Building footprint area divided by parcel area. */
 		buildingCoverage: real("building_coverage"),
 		maxFloors: integer("max_floors", { mode: "number" }),
+		/** EGiB building count intersecting the parcel. */
+		egibBuildingCount: integer("egib_building_count", { mode: "number" }),
+		/** EGiB building footprint area intersecting the parcel. */
+		egibBuildingAreaM2: real("egib_building_area_m2"),
+		/** EGiB floor area where above-ground floors are published. */
+		egibBuildingFloorAreaM2: real("egib_building_floor_area_m2"),
+		/** Footprint-weighted above-ground floors, where published. */
+		egibBuildingFloors: real("egib_building_floors"),
+		/** Share of EGiB footprint classified as residential. */
+		egibBuildingResidentialRatio: real("egib_building_residential_ratio"),
+		/** EGiB footprint area divided by parcel area. */
+		egibBuildingCoverage: real("egib_building_coverage"),
 		landUseClass: text("land_use_class"),
 		registerGroup: text("register_group"),
 		/** 1 when the parcel has a WZ decision (decyzja o warunkach zabudowy). */

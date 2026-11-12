@@ -31,6 +31,10 @@ import {
 } from "#/db/schema";
 import { parseParcelRing, pointInRing, ringAreaM2 } from "./egib.ts";
 import {
+	egibBuildingStats,
+	fetchEgibBuildingsByBbox,
+} from "./egib-buildings.ts";
+import {
 	fetchKrakowFloodAtPoint,
 	fetchKrakowMpzpAtPoint,
 	fetchKrakowPermitsAtPoint,
@@ -52,6 +56,10 @@ export interface EnrichParcelsOptions {
 	includeTerrain?: boolean;
 	/** Refresh only road distance, class and frontage. */
 	roadsOnly?: boolean;
+	/** Fetch EGiB building footprints. Default true. */
+	includeEgibBuildings?: boolean;
+	/** Refresh only EGiB building features. */
+	egibBuildingsOnly?: boolean;
 }
 
 export interface EnrichParcelsReport {
@@ -429,6 +437,35 @@ export async function enrichParcels(
 			continue;
 		}
 
+		if (options.egibBuildingsOnly) {
+			let stats: Awaited<ReturnType<typeof egibBuildingStats>> | null = null;
+			try {
+				const buildings = await fetchEgibBuildingsByBbox(
+					parcel.bboxMinLat,
+					parcel.bboxMinLng,
+					parcel.bboxMaxLat,
+					parcel.bboxMaxLng,
+				);
+				stats = egibBuildingStats(ring, buildings, areaM2);
+			} catch {
+				stats = null;
+			}
+			await db
+				.update(parcelFeatures)
+				.set({
+					egibBuildingCount: stats?.count ?? null,
+					egibBuildingAreaM2: stats?.areaM2 ?? null,
+					egibBuildingFloorAreaM2: stats?.floorAreaM2 ?? null,
+					egibBuildingFloors: stats?.floors ?? null,
+					egibBuildingResidentialRatio: stats?.residentialRatio ?? null,
+					egibBuildingCoverage: stats?.coverage ?? null,
+					updatedAt: new Date(),
+				})
+				.where(eq(parcelFeatures.parcelId, parcelId));
+			report.processed++;
+			continue;
+		}
+
 		const buildingRows = await db
 			.select({ polygon: osmBuildings.polygon, tags: osmBuildings.tags })
 			.from(osmBuildings)
@@ -441,6 +478,20 @@ export async function enrichParcels(
 				),
 			);
 		const bStats = buildingStats(ring, buildingRows);
+		let egibStats: Awaited<ReturnType<typeof egibBuildingStats>> | null = null;
+		if (options.includeEgibBuildings !== false) {
+			try {
+				const egibBuildings = await fetchEgibBuildingsByBbox(
+					parcel.bboxMinLat,
+					parcel.bboxMinLng,
+					parcel.bboxMaxLat,
+					parcel.bboxMaxLng,
+				);
+				egibStats = egibBuildingStats(ring, egibBuildings, areaM2);
+			} catch {
+				egibStats = null;
+			}
+		}
 
 		const pad = 0.0006; // ~60 m
 		const roadRows = await db
@@ -548,6 +599,12 @@ export async function enrichParcels(
 				buildingCoverage:
 					areaM2 > 0 ? Math.min(1, bStats.areaM2 / areaM2) : null,
 				maxFloors: bStats.maxFloors,
+				egibBuildingCount: egibStats?.count ?? null,
+				egibBuildingAreaM2: egibStats?.areaM2 ?? null,
+				egibBuildingFloorAreaM2: egibStats?.floorAreaM2 ?? null,
+				egibBuildingFloors: egibStats?.floors ?? null,
+				egibBuildingResidentialRatio: egibStats?.residentialRatio ?? null,
+				egibBuildingCoverage: egibStats?.coverage ?? null,
 				landUseClass: parcel.landUseClass,
 				registerGroup: parcel.registerGroup,
 				zoningWz: zoning.wz,
@@ -580,6 +637,12 @@ export async function enrichParcels(
 					buildingCoverage:
 						areaM2 > 0 ? Math.min(1, bStats.areaM2 / areaM2) : null,
 					maxFloors: bStats.maxFloors,
+					egibBuildingCount: egibStats?.count ?? null,
+					egibBuildingAreaM2: egibStats?.areaM2 ?? null,
+					egibBuildingFloorAreaM2: egibStats?.floorAreaM2 ?? null,
+					egibBuildingFloors: egibStats?.floors ?? null,
+					egibBuildingResidentialRatio: egibStats?.residentialRatio ?? null,
+					egibBuildingCoverage: egibStats?.coverage ?? null,
 					landUseClass: parcel.landUseClass,
 					registerGroup: parcel.registerGroup,
 					zoningWz: zoning.wz,
@@ -612,6 +675,7 @@ async function main(): Promise<void> {
 		const path = idsArg.slice("--ids=".length);
 		const chunk = chunkArg ? Number.parseInt(chunkArg.split("=")[1], 10) : 100;
 		const roadsOnly = process.argv.includes("--roads-only");
+		const egibBuildingsOnly = process.argv.includes("--egib-buildings-only");
 		const ids = [
 			...new Set(
 				readFileSync(path, "utf8")
@@ -632,6 +696,7 @@ async function main(): Promise<void> {
 				includePlanning: !fast,
 				includeTerrain: !fast,
 				roadsOnly,
+				egibBuildingsOnly,
 			});
 			processed += report.processed;
 			console.log(
