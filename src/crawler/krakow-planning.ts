@@ -10,6 +10,8 @@
  * All queries use EPSG:4326 points and return attributes only.
  */
 
+import { pointInRing } from "./egib.ts";
+
 const MPZP_URL =
 	"https://msip3.um.krakow.pl/server/rest/services/Planowanie/BP_MPZP/MapServer";
 const PLANNING_URL =
@@ -21,6 +23,18 @@ const MPZP_ZONE_LAYERS = [1, 2, 3];
 const WZ_LAYERS = [6, 7, 8, 9, 10];
 const PERMIT_LAYERS = [0, 1, 2, 3, 4];
 const FLOOD_LAYERS = [13, 31, 49, 61, 72, 83, 99, 111, 128, 146, 159, 170];
+
+interface FloodPolygon {
+	layer: number;
+	ring: Array<{ lat: number; lng: number }>;
+	minLat: number;
+	minLng: number;
+	maxLat: number;
+	maxLng: number;
+}
+
+let floodPolygons: FloodPolygon[] | null = null;
+let floodLoad: Promise<FloodPolygon[]> | null = null;
 
 export interface MpzpZone {
 	nazwa: string | null;
@@ -89,8 +103,12 @@ async function queryLayer(
 		headers: { "User-Agent": "flat-tracker/1.0 (parcel enrichment)" },
 		signal: AbortSignal.timeout(20_000),
 	});
-	if (!res.ok) throw new Error(`ArcGIS HTTP ${res.status} for layer ${layerId}`);
-	const json = (await res.json()) as { features?: ArcGisFeature[]; error?: unknown };
+	if (!res.ok)
+		throw new Error(`ArcGIS HTTP ${res.status} for layer ${layerId}`);
+	const json = (await res.json()) as {
+		features?: ArcGisFeature[];
+		error?: unknown;
+	};
 	if (json.error) throw new Error(`ArcGIS error for layer ${layerId}`);
 	return (json.features ?? [])
 		.map((f) => f.attributes ?? {})
@@ -206,11 +224,98 @@ export async function fetchKrakowPermitsAtPoint(
 	);
 }
 
+async function getJson<T>(url: string): Promise<T> {
+	const res = await fetch(url, {
+		headers: { "User-Agent": "flat-tracker/1.0 (parcel enrichment)" },
+		signal: AbortSignal.timeout(30_000),
+	});
+	if (!res.ok) throw new Error(`ArcGIS HTTP ${res.status}`);
+	const json = (await res.json()) as T & { error?: unknown };
+	if (json.error) throw new Error("ArcGIS error");
+	return json;
+}
+
+/**
+ * The flood layers reject point and bbox spatial queries with "Failed to
+ * execute query", even though object-id queries work. Download the small
+ * polygon set once (182 features) and test points locally instead.
+ */
+async function loadFloodPolygons(): Promise<FloodPolygon[]> {
+	if (floodPolygons) return floodPolygons;
+	if (floodLoad) return floodLoad;
+	floodLoad = (async () => {
+		const out: FloodPolygon[] = [];
+		await Promise.all(
+			FLOOD_LAYERS.map(async (layer) => {
+				const idsJson = await getJson<{ objectIds?: number[] }>(
+					`${FLOOD_URL}/${layer}/query?f=json&where=1%3D1&returnIdsOnly=true`,
+				);
+				const ids = idsJson.objectIds ?? [];
+				if (ids.length === 0) return;
+				const params = new URLSearchParams({
+					f: "json",
+					objectIds: ids.join(","),
+					outFields: "*",
+					returnGeometry: "true",
+					outSR: "4326",
+				});
+				const json = await getJson<{
+					features?: Array<{ geometry?: { rings?: number[][][] } }>;
+				}>(`${FLOOD_URL}/${layer}/query?${params.toString()}`);
+				for (const feature of json.features ?? []) {
+					const rings = feature.geometry?.rings ?? [];
+					if (rings.length === 0) continue;
+					const ring = rings[0].map(([lng, lat]) => ({ lat, lng }));
+					let minLat = Infinity;
+					let minLng = Infinity;
+					let maxLat = -Infinity;
+					let maxLng = -Infinity;
+					for (const p of ring) {
+						if (p.lat < minLat) minLat = p.lat;
+						if (p.lat > maxLat) maxLat = p.lat;
+						if (p.lng < minLng) minLng = p.lng;
+						if (p.lng > maxLng) maxLng = p.lng;
+					}
+					out.push({ layer, ring, minLat, minLng, maxLat, maxLng });
+				}
+			}),
+		);
+		floodPolygons = out;
+		return out;
+	})();
+	try {
+		return await floodLoad;
+	} catch (error) {
+		floodLoad = null;
+		throw error;
+	}
+}
+
 /** True when the point falls in any published flood hazard polygon. */
 export async function fetchKrakowFloodAtPoint(
 	lat: number,
 	lng: number,
 ): Promise<{ flood: boolean; layer: number | null }> {
+	try {
+		const polygons = await loadFloodPolygons();
+		for (const p of polygons) {
+			if (
+				lat < p.minLat ||
+				lat > p.maxLat ||
+				lng < p.minLng ||
+				lng > p.maxLng
+			) {
+				continue;
+			}
+			if (pointInRing(p.ring, lat, lng)) {
+				return { flood: true, layer: p.layer };
+			}
+		}
+		return { flood: false, layer: null };
+	} catch {
+		// Fall back to the point query for deployments where the bulk
+		// download fails but the layer still accepts spatial filters.
+	}
 	const pages = await Promise.all(
 		FLOOD_LAYERS.map(async (layer) => {
 			try {
