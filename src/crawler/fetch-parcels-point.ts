@@ -81,45 +81,53 @@ async function main(): Promise<void> {
 
 	let stored = 0;
 	let empty = 0;
-	for (let i = 0; i < missing.length; i++) {
-		if (cap <= 0) {
-			console.warn(`ULDK cap reached, stopping at ${i}/${missing.length}`);
-			break;
-		}
-		const row = missing[i];
-		try {
-			const current = await fetchParcelAtPointUldk(row.lat, row.lng);
-			if (current) {
-				// Store under the original RCN id. The geometry is the current
-				// successor parcel at the transaction coordinate, which is what
-				// the feature block needs.
-				await storeEgibParcel(
-					{ ...current, parcelId: row.parcelId },
-					"uldk_point",
-				);
-				stored++;
-			} else {
+	let done = 0;
+	let next = 0;
+	// Two workers keep ULDK under its 200/minute budget while hiding most of
+	// the request latency. The database writes are synchronous, so workers
+	// only interleave on the network wait.
+	const worker = async (): Promise<void> => {
+		for (;;) {
+			if (cap <= 0) return;
+			const index = next++;
+			if (index >= missing.length) return;
+			const row = missing[index];
+			try {
+				const current = await fetchParcelAtPointUldk(row.lat, row.lng);
+				if (current) {
+					// Store under the original RCN id. The geometry is the current
+					// successor parcel at the transaction coordinate, which is what
+					// the feature block needs.
+					await storeEgibParcel(
+						{ ...current, parcelId: row.parcelId },
+						"uldk_point",
+					);
+					stored++;
+				} else {
+					empty++;
+				}
+			} catch (err) {
+				console.warn(`  ${row.parcelId} failed: ${String(err).slice(0, 100)}`);
 				empty++;
 			}
-		} catch (err) {
-			console.warn(`  ${row.parcelId} failed: ${String(err).slice(0, 100)}`);
-			empty++;
+			cap--;
+			done++;
+			if (done % 50 === 0) {
+				const pct = Math.round((done / missing.length) * 100);
+				console.log(
+					`JCODE_PROGRESS ${JSON.stringify({
+						percent: pct,
+						current: done,
+						total: missing.length,
+						unit: "parcels",
+						message: `${stored} stored, ${empty} empty`,
+					})}`,
+				);
+			}
+			await new Promise((r) => setTimeout(r, 400));
 		}
-		cap--;
-		if ((i + 1) % 50 === 0) {
-			const pct = Math.round(((i + 1) / missing.length) * 100);
-			console.log(
-				`JCODE_PROGRESS ${JSON.stringify({
-					percent: pct,
-					current: i + 1,
-					total: missing.length,
-					unit: "parcels",
-					message: `${stored} stored, ${empty} empty`,
-				})}`,
-			);
-		}
-		await new Promise((r) => setTimeout(r, 300));
-	}
+	};
+	await Promise.all([worker(), worker()]);
 	console.log(
 		`fetch-parcels-point done: ${stored} stored, ${empty} not found, cap left ${cap}`,
 	);
