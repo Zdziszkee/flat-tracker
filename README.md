@@ -109,6 +109,7 @@ bun run build:osm-roads        # OSM road index, ~1.5 min from the cached PBFs
 bun run build:dem              # eight Copernicus DEM tiles, ~200 MB
 bun run import:egib            # region-wide parcel index, resumable
 bun run assign-parcels         # bind existing listings/transactions to parcels
+bun run fetch:parcels-point data/missing_parcels.csv  # recover stale ids by ULDK point
 bun run enrich:parcels         # compute parcel_features
 bun run validate:parcel-features
 ```
@@ -123,7 +124,10 @@ Some RCN parcel ids no longer exist in the current cadastre (merged, split or
 retired since the transaction). Those rows keep `has_parcel_features = 0` and
 the model falls back to the v13 feature set. Coverage is complete for most of
 małopolskie and partial for śląskie. `bun run fetch:parcels <ids.txt>` fills a
-known list, with ULDK as the fallback.
+known list, with ULDK as the fallback. `bun run fetch:parcels-point` takes a
+`parcel_id,lat,lng` CSV and stores the current parcel at each transaction
+coordinate under the original id, marked `source = "uldk_point"`. That is a
+geometry proxy, not a historical boundary.
 
 ## Stack
 

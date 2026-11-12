@@ -777,6 +777,13 @@ exist in the current cadastre (merged, split or retired). Those rows stay
 without parcel features. `fetch-parcels.ts` treats them as not found and
 continues; `enrichParcels` only processes parcels present in `parcels`.
 
+`fetch-parcels-point.ts` is the recovery path for stale ids. It reads a
+`parcel_id,lat,lng` CSV, calls ULDK `GetParcelByXY`, and stores the current
+successor geometry under the original id with `source = "uldk_point"`. The
+stored polygon is a proxy based on the transaction coordinate, not a
+historical boundary, so area-sensitive features should still use the RCN
+transaction area.
+
 ## Effect TS usage
 
 `src/crawler/pipeline.ts` models the crawl as an Effect program:

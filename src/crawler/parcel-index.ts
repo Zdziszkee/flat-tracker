@@ -80,7 +80,10 @@ function bboxOf(ring: Array<{ lat: number; lng: number }>): {
 }
 
 /** Insert one EGiB parcel, filling attributes on an existing RCN row too. */
-export async function storeEgibParcel(p: EgibParcel): Promise<void> {
+export async function storeEgibParcel(
+	p: EgibParcel,
+	source = "egib",
+): Promise<void> {
 	const bbox = bboxOf(p.ring);
 	const centroid = centroidOf(p.ring);
 	const areaHa = p.areaHa ?? ringAreaM2(p.ring) / 10_000;
@@ -95,7 +98,7 @@ export async function storeEgibParcel(p: EgibParcel): Promise<void> {
 			centroidLat: centroid.lat,
 			centroidLng: centroid.lng,
 			polygon: JSON.stringify(p.ring),
-			source: "egib",
+			source,
 			obreb: p.obreb,
 			gmina: p.gmina,
 			landUseClass: p.landUseClass,

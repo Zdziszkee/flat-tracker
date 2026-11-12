@@ -321,6 +321,51 @@ function parseWktRing(wkt: string): Array<[number, number]> {
 	return ring;
 }
 
+interface UldkParcel {
+	parcelId: string;
+	ring: Array<{ lat: number; lng: number }>;
+	obreb: string | null;
+	gmina: string | null;
+}
+
+/**
+ * Parse a ULDK response. `projected` is true for the default EPSG:2180
+ * geometry and false when the request asked for srid=4326.
+ */
+function parseUldkText(text: string, projected: boolean): UldkParcel | null {
+	const lines = text.split(/\r?\n/).filter((l) => l.trim());
+	if (lines[0]?.trim() !== "0" || !lines[1]?.startsWith("SRID=")) return null;
+	const wkt = lines[1].slice(lines[1].indexOf(";") + 1);
+	const raw = parseWktRing(wkt);
+	if (raw.length < 3) return null;
+	const ring = projected
+		? raw.map(([x, y]) => {
+				const [lng, lat] = proj4(EPSG2180, "EPSG:4326", [x, y]);
+				return { lat, lng };
+			})
+		: raw.map(([lng, lat]) => ({ lat, lng }));
+	// ULDK appends the attribute suffix to the geometry line:
+	//   ...POLYGON((...))|id|voivodeship|county|commune|region
+	const attrs = (lines[1].split("))").pop() ?? "")
+		.split("|")
+		.filter((s) => s.length > 0);
+	return {
+		parcelId: attrs[0] ?? "",
+		ring,
+		obreb: cleanEgibValue(attrs[4] ?? null),
+		gmina: cleanEgibValue(attrs[3] ?? null),
+	};
+}
+
+async function getUldk(query: string): Promise<string> {
+	const res = await fetch(`${ULDK_URL}?${query}`, {
+		headers: { "User-Agent": UA },
+		signal: AbortSignal.timeout(25_000),
+	});
+	if (!res.ok) throw new Error(`ULDK HTTP ${res.status}`);
+	return res.text();
+}
+
 /**
  * ULDK fallback for powiats missing from the aggregate EGiB WFS (notably
  * śląskie). ULDK queries the powiat service directly, one parcel per call.
@@ -331,34 +376,43 @@ export async function fetchParcelByUldk(
 ): Promise<EgibParcel | null> {
 	const query =
 		`request=GetParcelById&id=${encodeURIComponent(parcelId)}` +
-		"&result=geom_wkt,parcel_id,voivodeship,county,commune,region";
-	const res = await fetch(`${ULDK_URL}?${query}`, {
-		headers: { "User-Agent": UA },
-		signal: AbortSignal.timeout(25_000),
-	});
-	if (!res.ok) throw new Error(`ULDK HTTP ${res.status}`);
-	const text = await res.text();
-	const lines = text.split(/\r?\n/).filter((l) => l.trim());
-	if (lines[0]?.trim() !== "0" || !lines[1]?.startsWith("SRID=")) return null;
-	const wkt = lines[1].slice(lines[1].indexOf(";") + 1);
-	const projected = parseWktRing(wkt);
-	if (projected.length < 3) return null;
-	const ring = projected.map(([x, y]) => {
-		const [lng, lat] = proj4(EPSG2180, "EPSG:4326", [x, y]);
-		return { lat, lng };
-	});
-	// ULDK appends the attribute suffix to the geometry line:
-	//   ...POLYGON((...))||voivodeship|county|commune|region
-	const attrPart = lines[1].split("))").pop() ?? "";
-	const attrs = attrPart.split("|");
+		"&result=geom_wkt,id,voivodeship,county,commune,region";
+	const parsed = parseUldkText(await getUldk(query), true);
+	if (!parsed) return null;
 	return {
-		parcelId,
-		ring,
-		obreb: cleanEgibValue(attrs[5] ?? null),
-		gmina: cleanEgibValue(attrs[4] ?? null),
+		parcelId: parsed.parcelId || parcelId,
+		ring: parsed.ring,
+		obreb: parsed.obreb,
+		gmina: parsed.gmina,
 		landUseClass: null,
 		registerGroup: null,
 		egibDataDate: null,
-		areaHa: ringAreaM2(ring) / 10_000,
+		areaHa: ringAreaM2(parsed.ring) / 10_000,
+	};
+}
+
+/**
+ * The current parcel at a point, in WGS84. Use this when an RCN parcel id is
+ * stale: the old parcel may have been merged or split, but the transaction
+ * coordinate still identifies the current cadastral unit.
+ */
+export async function fetchParcelAtPointUldk(
+	lat: number,
+	lng: number,
+): Promise<EgibParcel | null> {
+	const query =
+		`request=GetParcelByXY&xy=${lng},${lat},4326&srid=4326` +
+		"&result=geom_wkt,id,voivodeship,county,commune,region";
+	const parsed = parseUldkText(await getUldk(query), false);
+	if (!parsed) return null;
+	return {
+		parcelId: parsed.parcelId,
+		ring: parsed.ring,
+		obreb: parsed.obreb,
+		gmina: parsed.gmina,
+		landUseClass: null,
+		registerGroup: null,
+		egibDataDate: null,
+		areaHa: ringAreaM2(parsed.ring) / 10_000,
 	};
 }
