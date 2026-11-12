@@ -95,6 +95,8 @@ fetches a missing parcel on demand from EGiB, then fills `parcel_features`.
 Public layers used:
 
 - EGiB WFS (GUGiK): parcel polygon, land-use class, register group.
+- ULDK (GUGiK): per-parcel fallback for powiats missing from the aggregate
+  EGiB WFS, mainly śląskie.
 - OpenStreetMap: building footprints and public road centre lines.
 - Krakow MSIP ArcGIS: MPZP zones, WZ decisions, building permits, flood hazard.
 - Copernicus DEM GLO-30: elevation and slope.
@@ -116,6 +118,12 @@ frontage, land-use class, MPZP/WZ flags, flood risk, slope and elevation.
 Null means "not measured", never zero. The refresh processes a bounded
 batch per run (`PARCEL_ASSIGN_LISTINGS`, `PARCEL_ASSIGN_TX`,
 `PARCEL_ENRICH_LIMIT`, `EGIB_TILES_PER_REFRESH`).
+
+Some RCN parcel ids no longer exist in the current cadastre (merged, split or
+retired since the transaction). Those rows keep `has_parcel_features = 0` and
+the model falls back to the v13 feature set. Coverage is complete for most of
+małopolskie and partial for śląskie. `bun run fetch:parcels <ids.txt>` fills a
+known list, with ULDK as the fallback.
 
 ## Stack
 

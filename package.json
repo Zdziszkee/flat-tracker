@@ -23,6 +23,7 @@
     "crawl:airbnb-calendar": "tsx src/crawler/airbnb-calendar.ts",
     "assign-buildings": "tsx src/crawler/assign-buildings.ts",
     "assign-parcels": "tsx src/crawler/parcel-index.ts",
+    "fetch:parcels": "tsx src/crawler/fetch-parcels.ts",
     "import:egib": "tsx src/crawler/import-egib.ts",
     "build:osm-roads": "tsx src/crawler/osm-roads.ts",
     "build:dem": "tsx src/crawler/terrain.ts",

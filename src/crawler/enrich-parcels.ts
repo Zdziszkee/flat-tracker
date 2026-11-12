@@ -17,6 +17,7 @@
  */
 
 import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { readFileSync } from "node:fs";
 
 import { db } from "#/db/index";
 import {
@@ -458,6 +459,38 @@ export async function enrichParcels(
 
 /** CLI alias for `bun run enrich:parcels`. */
 async function main(): Promise<void> {
+	const idsArg = process.argv.find((a) => a.startsWith("--ids="));
+	const chunkArg = process.argv.find((a) => a.startsWith("--chunk="));
+	if (idsArg) {
+		const path = idsArg.slice("--ids=".length);
+		const chunk = chunkArg ? Number.parseInt(chunkArg.split("=")[1], 10) : 100;
+		const ids = [
+			...new Set(
+				readFileSync(path, "utf8")
+					.split(/\s+/)
+					.map((s) => s.trim())
+					.filter(Boolean),
+			),
+		];
+		console.log(`enrich-parcels: ${ids.length} ids from ${path}, chunk ${chunk}`);
+		let processed = 0;
+		for (let i = 0; i < ids.length; i += chunk) {
+			const part = ids.slice(i, i + chunk);
+			const report = await enrichParcels({ parcelIds: part, staleDays: 0 });
+			processed += report.processed;
+			console.log(
+				`JCODE_PROGRESS ${JSON.stringify({
+					percent: Math.round(((i + part.length) / ids.length) * 100),
+					current: i + part.length,
+					total: ids.length,
+					unit: "parcels",
+					message: `${processed} processed, ${report.missed} missed`,
+				})}`,
+			);
+		}
+		console.log(`enrich-parcels done: ${processed} processed`);
+		return;
+	}
 	const report = await enrichParcels({ limit: 20_000 });
 	console.log(
 		`enrich-parcels: ${report.processed} processed, ` +

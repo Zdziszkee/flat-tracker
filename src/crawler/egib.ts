@@ -13,12 +13,18 @@
  */
 
 import { SaxesParser } from "saxes";
+import proj4 from "proj4";
 
 export const EGiB_WFS_URL =
 	"https://mapy.geoportal.gov.pl/wss/service/PZGIK/EGIB/WFS/UslugaZbiorcza";
 
 const UA =
 	"flat-tracker/1.0 (cadastral parcel lookup; contact: zdziszkee@gmail.com)";
+
+const ULDK_URL = "https://uldk.gugik.gov.pl/";
+/** EPSG:2180, the Polish CS92 projection ULDK returns by default. */
+const EPSG2180 =
+	"+proj=tmerc +lat_0=0 +lon_0=19 +k=0.9993 +x_0=500000 +y_0=-5300000 +ellps=GRS80 +units=m +no_defs";
 
 export interface EgibParcel {
 	parcelId: string;
@@ -241,7 +247,7 @@ function parsePosList(
 async function getFeature(query: string): Promise<string> {
 	const res = await fetch(`${EGiB_WFS_URL}?${query}`, {
 		headers: { "User-Agent": UA },
-		signal: AbortSignal.timeout(45_000),
+		signal: AbortSignal.timeout(25_000),
 	});
 	if (!res.ok) throw new Error(`EGiB WFS HTTP ${res.status}`);
 	return res.text();
@@ -274,4 +280,85 @@ export async function fetchParcelById(
 		`&SRSNAME=urn:ogc:def:crs:EPSG::4326&COUNT=1&FILTER=${encodeURIComponent(filter)}`;
 	const parcels = parseEgibPage(await getFeature(query));
 	return parcels[0] ?? null;
+}
+
+/**
+ * Fetch many parcels in one OGC `Or` filter. Callers should keep batches
+ * around 50: the filter is URL-encoded and a 100-id request approaches
+ * common gateway URL limits.
+ */
+export async function fetchParcelsByIds(
+	parcelIds: string[],
+): Promise<EgibParcel[]> {
+	if (parcelIds.length === 0) return [];
+	const or = parcelIds
+		.map(
+			(id) =>
+				`<PropertyIsEqualTo><PropertyName>ID_DZIALKI</PropertyName>` +
+				`<Literal>${id}</Literal></PropertyIsEqualTo>`,
+		)
+		.join("");
+	const filter = `<Filter><Or>${or}</Or></Filter>`;
+	const query =
+		"SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=ms:dzialki" +
+		`&SRSNAME=urn:ogc:def:crs:EPSG::4326&COUNT=${parcelIds.length}` +
+		`&FILTER=${encodeURIComponent(filter)}`;
+	return parseEgibPage(await getFeature(query));
+}
+
+/** Parse the first ring of a ULDK WKT POLYGON/MULTIPOLYGON. */
+function parseWktRing(wkt: string): Array<[number, number]> {
+	const body =
+		wkt.match(/MULTIPOLYGON\s*\(\(\((.*?)\)\)\)/s)?.[1] ??
+		wkt.match(/POLYGON\s*\(\((.*?)\)\)/s)?.[1] ??
+		"";
+	if (!body) return [];
+	const ring: Array<[number, number]> = [];
+	for (const pair of body.split(",")) {
+		const [x, y] = pair.trim().split(/\s+/).map(Number);
+		if (Number.isFinite(x) && Number.isFinite(y)) ring.push([x, y]);
+	}
+	return ring;
+}
+
+/**
+ * ULDK fallback for powiats missing from the aggregate EGiB WFS (notably
+ * śląskie). ULDK queries the powiat service directly, one parcel per call.
+ * Respect the public limits: about 200 requests/minute and 10k/day.
+ */
+export async function fetchParcelByUldk(
+	parcelId: string,
+): Promise<EgibParcel | null> {
+	const query =
+		`request=GetParcelById&id=${encodeURIComponent(parcelId)}` +
+		"&result=geom_wkt,parcel_id,voivodeship,county,commune,region";
+	const res = await fetch(`${ULDK_URL}?${query}`, {
+		headers: { "User-Agent": UA },
+		signal: AbortSignal.timeout(25_000),
+	});
+	if (!res.ok) throw new Error(`ULDK HTTP ${res.status}`);
+	const text = await res.text();
+	const lines = text.split(/\r?\n/).filter((l) => l.trim());
+	if (lines[0]?.trim() !== "0" || !lines[1]?.startsWith("SRID=")) return null;
+	const wkt = lines[1].slice(lines[1].indexOf(";") + 1);
+	const projected = parseWktRing(wkt);
+	if (projected.length < 3) return null;
+	const ring = projected.map(([x, y]) => {
+		const [lng, lat] = proj4(EPSG2180, "EPSG:4326", [x, y]);
+		return { lat, lng };
+	});
+	// ULDK appends the attribute suffix to the geometry line:
+	//   ...POLYGON((...))||voivodeship|county|commune|region
+	const attrPart = lines[1].split("))").pop() ?? "";
+	const attrs = attrPart.split("|");
+	return {
+		parcelId,
+		ring,
+		obreb: cleanEgibValue(attrs[5] ?? null),
+		gmina: cleanEgibValue(attrs[4] ?? null),
+		landUseClass: null,
+		registerGroup: null,
+		egibDataDate: null,
+		areaHa: ringAreaM2(ring) / 10_000,
+	};
 }
