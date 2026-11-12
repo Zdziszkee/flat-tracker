@@ -120,6 +120,12 @@ Null means "not measured", never zero. The refresh processes a bounded
 batch per run (`PARCEL_ASSIGN_LISTINGS`, `PARCEL_ASSIGN_TX`,
 `PARCEL_ENRICH_LIMIT`, `EGIB_TILES_PER_REFRESH`).
 
+The public listing detail API (`/api/listings?view=detail&id=...`) returns
+`parcelId` and a compact `parcelFeatures` block, so the map popup can show the
+same data the model uses. The parcel lookup API
+(`/api/parcels/lookup?parcelId=...` or `?lat=...&lng=...`) also returns the
+full feature row.
+
 Some RCN parcel ids no longer exist in the current cadastre (merged, split or
 retired since the transaction). Those rows keep `has_parcel_features = 0` and
 the model falls back to the v13 feature set. Coverage is complete for most of

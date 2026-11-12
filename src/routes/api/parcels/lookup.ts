@@ -3,7 +3,7 @@ import { json } from "@tanstack/react-start";
 import { eq, sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import { transactionHistoryByParcel } from "#/db/queries/transaction-history";
-import { parcels } from "#/db/schema";
+import { parcelFeatures, parcels } from "#/db/schema";
 
 /**
  * Click-to-inspect for the cadastral-parcel layer: given a clicked point
@@ -63,10 +63,8 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 						);
 					for (const c of candidates) {
 						try {
-							const ring = (
-								JSON.parse(c.polygon) as { coordinates: number[][][] }
-							).coordinates[0];
-							if (pointInRing(lng, lat, ring)) {
+							const ring = parseParcelRing(c.polygon);
+							if (ring && pointInRing(lng, lat, ring)) {
 								parcelId = c.parcelId;
 								break;
 							}
@@ -85,6 +83,11 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 					.limit(1);
 
 				const stats = await parcelStats(parcelId);
+				const features = await db
+					.select()
+					.from(parcelFeatures)
+					.where(eq(parcelFeatures.parcelId, parcelId))
+					.limit(1);
 
 				// ---- Area comparison (1 km around the parcel, 5 years) -----
 				// Land price per m² of nearby transactions vs the parcel's own
@@ -243,6 +246,7 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 						stats,
 						area,
 						meta: meta ?? null,
+						features: features[0] ?? null,
 					},
 				});
 			},
@@ -263,4 +267,29 @@ function pointInRing(lng: number, lat: number, ring: number[][]): boolean {
 		if (intersect) inside = !inside;
 	}
 	return inside;
+}
+
+/**
+ * Parcel polygons are stored in two formats: RCN rows are GeoJSON
+ * (`{"type":"Polygon","coordinates":[[[lng,lat],...]]}`), EGiB and ULDK
+ * proxy rows are `[{lat,lng},...]`. Return a GeoJSON-style [lng,lat] ring.
+ */
+function parseParcelRing(polygon: string): number[][] | null {
+	try {
+		const parsed = JSON.parse(polygon) as
+			| Array<{ lat: number; lng: number }>
+			| { type?: string; coordinates?: number[][][] | number[][][][] };
+		if (Array.isArray(parsed)) {
+			return parsed.map((p) => [p.lng, p.lat]);
+		}
+		if (parsed.type === "Polygon" && Array.isArray(parsed.coordinates)) {
+			return (parsed.coordinates as number[][][])[0] ?? null;
+		}
+		if (parsed.type === "MultiPolygon" && Array.isArray(parsed.coordinates)) {
+			return (parsed.coordinates as number[][][][])[0]?.[0] ?? null;
+		}
+		return null;
+	} catch {
+		return null;
+	}
 }

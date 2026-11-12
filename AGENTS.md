@@ -784,6 +784,12 @@ stored polygon is a proxy based on the transaction coordinate, not a
 historical boundary, so area-sensitive features should still use the RCN
 transaction area.
 
+The public listing detail view (`/api/listings?view=detail&id=...`) includes
+`parcelId` and a compact `parcelFeatures` object. The parcel lookup view
+(`/api/parcels/lookup`) returns the full feature row and accepts either a
+`parcelId` or a `lat`/`lng` point. Both polygon formats (RCN GeoJSON and EGiB
+`[{lat,lng}]`) are handled by the route's `parseParcelRing`.
+
 ## Effect TS usage
 
 `src/crawler/pipeline.ts` models the crawl as an Effect program:

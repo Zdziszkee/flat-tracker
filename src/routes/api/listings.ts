@@ -17,7 +17,7 @@ import { REGIONS } from "#/crawler/regions";
 import { db } from "#/db/index";
 import { ensureListingDerived } from "#/db/listing-derived";
 import { transactionSummaryByBuilding } from "#/db/queries/transaction-history";
-import { buildings, listings } from "#/db/schema";
+import { buildings, listings, parcelFeatures } from "#/db/schema";
 import {
 	ATTRIBUTE_KEYS,
 	clientFeatures,
@@ -447,6 +447,7 @@ const detailColumns = {
 	mapLng: listings.mapLng,
 	features: listings.features,
 	buildingId: listings.buildingId,
+	parcelId: listings.parcelId,
 	buildingAddress: buildings.address,
 	buildingLat: buildings.lat,
 	buildingLng: buildings.lng,
@@ -480,6 +481,16 @@ async function loadDetail(id: number): Promise<ListingDto | null> {
 		row.buildingId != null
 			? (await transactionSummaryByBuilding([row.buildingId]))[0]
 			: undefined;
+	const parcel =
+		row.parcelId != null
+			? (
+					await db
+						.select()
+						.from(parcelFeatures)
+						.where(eq(parcelFeatures.parcelId, row.parcelId))
+						.limit(1)
+				)[0]
+			: undefined;
 	const attributes = popupAttributes(row);
 	return {
 		...base,
@@ -491,6 +502,25 @@ async function loadDetail(id: number): Promise<ListingDto | null> {
 		features: clientFeatures(row),
 		mapLat: row.mapLat ?? row.lat,
 		mapLng: row.mapLng ?? row.lng,
+		parcelFeatures: parcel
+			? {
+					areaM2: parcel.areaM2,
+					perimeterM: parcel.perimeterM,
+					frontageM: parcel.frontageM,
+					roadDistanceM: parcel.roadDistanceM,
+					roadClass: parcel.roadClass,
+					buildingCount: parcel.buildingCount,
+					buildingCoverage: parcel.buildingCoverage,
+					buildingSubtype: parcel.buildingSubtype,
+					landUseClass: parcel.landUseClass,
+					zoningWz: parcel.zoningWz,
+					zoningNoPlan: parcel.zoningNoPlan,
+					zoningPlanCount: parcel.zoningPlanCount,
+					floodRisk: parcel.floodRisk,
+					slopeDeg: parcel.slopeDeg,
+					elevationM: parcel.elevationM,
+				}
+			: null,
 		transactionStats: summary ?? null,
 	} as unknown as ListingDto;
 }

@@ -98,6 +98,26 @@ export interface ListingDto {
 	buildingAddress: string | null;
 	buildingLat?: number | null;
 	buildingLng?: number | null;
+	/** Cadastral parcel containing the building, assigned by parcel-index.ts. */
+	parcelId?: string | null;
+	/** Compact parcel feature block for the detail popup. */
+	parcelFeatures?: {
+		areaM2: number | null;
+		perimeterM: number | null;
+		frontageM: number | null;
+		roadDistanceM: number | null;
+		roadClass: string | null;
+		buildingCount: number | null;
+		buildingCoverage: number | null;
+		buildingSubtype: string | null;
+		landUseClass: string | null;
+		zoningWz: boolean | null;
+		zoningNoPlan: boolean | null;
+		zoningPlanCount: number | null;
+		floodRisk: boolean | null;
+		slopeDeg: number | null;
+		elevationM: number | null;
+	} | null;
 	mapLat: number | null;
 	mapLng: number | null;
 	offerType?: string;
