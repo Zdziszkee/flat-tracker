@@ -24,13 +24,17 @@ const WZ_LAYERS = [6, 7, 8, 9, 10];
 const PERMIT_LAYERS = [0, 1, 2, 3, 4];
 const FLOOD_LAYERS = [13, 31, 49, 61, 72, 83, 99, 111, 128, 146, 159, 170];
 
-interface FloodPolygon {
-	layer: number;
+interface FloodRing {
 	ring: Array<{ lat: number; lng: number }>;
 	minLat: number;
 	minLng: number;
 	maxLat: number;
 	maxLng: number;
+}
+
+interface FloodPolygon {
+	layer: number;
+	rings: FloodRing[];
 }
 
 let floodPolygons: FloodPolygon[] | null = null;
@@ -265,18 +269,22 @@ async function loadFloodPolygons(): Promise<FloodPolygon[]> {
 				for (const feature of json.features ?? []) {
 					const rings = feature.geometry?.rings ?? [];
 					if (rings.length === 0) continue;
-					const ring = rings[0].map(([lng, lat]) => ({ lat, lng }));
-					let minLat = Infinity;
-					let minLng = Infinity;
-					let maxLat = -Infinity;
-					let maxLng = -Infinity;
-					for (const p of ring) {
-						if (p.lat < minLat) minLat = p.lat;
-						if (p.lat > maxLat) maxLat = p.lat;
-						if (p.lng < minLng) minLng = p.lng;
-						if (p.lng > maxLng) maxLng = p.lng;
+					const parsed: FloodRing[] = [];
+					for (const coords of rings) {
+						const ring = coords.map(([lng, lat]) => ({ lat, lng }));
+						let minLat = Infinity;
+						let minLng = Infinity;
+						let maxLat = -Infinity;
+						let maxLng = -Infinity;
+						for (const p of ring) {
+							if (p.lat < minLat) minLat = p.lat;
+							if (p.lat > maxLat) maxLat = p.lat;
+							if (p.lng < minLng) minLng = p.lng;
+							if (p.lng > maxLng) maxLng = p.lng;
+						}
+						parsed.push({ ring, minLat, minLng, maxLat, maxLng });
 					}
-					out.push({ layer, ring, minLat, minLng, maxLat, maxLng });
+					out.push({ layer, rings: parsed });
 				}
 			}),
 		);
@@ -299,15 +307,20 @@ export async function fetchKrakowFloodAtPoint(
 	try {
 		const polygons = await loadFloodPolygons();
 		for (const p of polygons) {
-			if (
-				lat < p.minLat ||
-				lat > p.maxLat ||
-				lng < p.minLng ||
-				lng > p.maxLng
-			) {
-				continue;
+			// Even-odd across every ring handles holes and multipart polygons.
+			let inside = false;
+			for (const r of p.rings) {
+				if (
+					lat < r.minLat ||
+					lat > r.maxLat ||
+					lng < r.minLng ||
+					lng > r.maxLng
+				) {
+					continue;
+				}
+				if (pointInRing(r.ring, lat, lng)) inside = !inside;
 			}
-			if (pointInRing(p.ring, lat, lng)) {
+			if (inside) {
 				return { flood: true, layer: p.layer };
 			}
 		}
