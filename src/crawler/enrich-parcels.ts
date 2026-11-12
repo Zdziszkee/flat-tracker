@@ -46,6 +46,10 @@ export interface EnrichParcelsOptions {
 	staleDays?: number;
 	/** Force these parcel ids (used for a new listing and tests). */
 	parcelIds?: string[];
+	/** Skip the Krakow MSIP planning/flood calls. */
+	includePlanning?: boolean;
+	/** Skip the Copernicus DEM reads. */
+	includeTerrain?: boolean;
 }
 
 export interface EnrichParcelsReport {
@@ -231,7 +235,8 @@ export async function enrichParcels(
 	const limit = options.limit ?? 2000;
 	const staleDays = options.staleDays ?? 30;
 	const staleCutoff = Math.floor(Date.now() / 1000) - staleDays * 86_400;
-	const hasDem = await demReady();
+	const includePlanning = options.includePlanning !== false;
+	const hasDem = options.includeTerrain !== false && (await demReady());
 
 	// Parcels that are actually used by a listing or transaction and have no
 	// feature row yet (or a stale one). The union is indexed on both sides.
@@ -351,7 +356,7 @@ export async function enrichParcels(
 		let zoningDetail: unknown = null;
 		let floodRisk: boolean | null = null;
 		let sourceDataDate = parcel.egibDataDate;
-		if (isKrakowParcel(parcelId)) {
+		if (isKrakowParcel(parcelId) && includePlanning) {
 			const [mpzp, wz, flood, permits] = await Promise.all([
 				fetchKrakowMpzpAtPoint(centroidLat, centroidLng).catch(() => []),
 				fetchKrakowWzAtPoint(centroidLat, centroidLng).catch(() => []),
@@ -461,6 +466,7 @@ export async function enrichParcels(
 async function main(): Promise<void> {
 	const idsArg = process.argv.find((a) => a.startsWith("--ids="));
 	const chunkArg = process.argv.find((a) => a.startsWith("--chunk="));
+	const fast = process.argv.includes("--fast");
 	if (idsArg) {
 		const path = idsArg.slice("--ids=".length);
 		const chunk = chunkArg ? Number.parseInt(chunkArg.split("=")[1], 10) : 100;
@@ -476,7 +482,12 @@ async function main(): Promise<void> {
 		let processed = 0;
 		for (let i = 0; i < ids.length; i += chunk) {
 			const part = ids.slice(i, i + chunk);
-			const report = await enrichParcels({ parcelIds: part, staleDays: 0 });
+			const report = await enrichParcels({
+				parcelIds: part,
+				staleDays: 0,
+				includePlanning: !fast,
+				includeTerrain: !fast,
+			});
 			processed += report.processed;
 			console.log(
 				`JCODE_PROGRESS ${JSON.stringify({
