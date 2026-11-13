@@ -56,7 +56,7 @@ export interface EnrichParcelsOptions {
 	includeTerrain?: boolean;
 	/** Refresh only road distance, class and frontage. */
 	roadsOnly?: boolean;
-	/** Fetch EGiB building footprints. Default true. */
+	/** Fetch EGiB building footprints. Default false: the layer is optional. */
 	includeEgibBuildings?: boolean;
 	/** Refresh only EGiB building features. */
 	egibBuildingsOnly?: boolean;
@@ -479,7 +479,7 @@ export async function enrichParcels(
 			);
 		const bStats = buildingStats(ring, buildingRows);
 		let egibStats: Awaited<ReturnType<typeof egibBuildingStats>> | null = null;
-		if (options.includeEgibBuildings !== false) {
+		if (options.includeEgibBuildings === true) {
 			try {
 				const egibBuildings = await fetchEgibBuildingsByBbox(
 					parcel.bboxMinLat,
