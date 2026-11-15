@@ -204,6 +204,13 @@
       "when": 1794523692011,
       "tag": "0028_fixed_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1794780808779,
+      "tag": "0029_square_dreaming_celestial",
+      "breakpoints": true
     }
   ]
 }

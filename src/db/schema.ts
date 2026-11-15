@@ -822,3 +822,95 @@ export const listingWeekdayStats = sqliteTable(
 		),
 	],
 );
+
+/**
+ * Transparent daily alert score for one sale listing.
+ *
+ * The score is deterministic and versioned. Components are stored separately
+ * so the UI can explain every alert without re-running the scoring engine.
+ */
+export const listingScores = sqliteTable(
+	"listing_scores",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		listingId: integer("listing_id")
+			.notNull()
+			.references(() => listings.id),
+		scoreVersion: text("score_version").notNull(),
+		segment: text().notNull(),
+		region: text().notNull(),
+		valueScore: real("value_score").notNull(),
+		transitScore: real("transit_score").notNull(),
+		greenScore: real("green_score").notNull(),
+		propertyScore: real("property_score").notNull(),
+		riskScore: real("risk_score").notNull(),
+		totalScore: real("total_score").notNull(),
+		confidence: real().notNull(),
+		rankPct: real("rank_pct"),
+		discountPct: real("discount_pct"),
+		fairPrice: real("fair_price"),
+		fairM2: real("fair_m2"),
+		askingPrice: real("asking_price"),
+		/** Top positive and negative score contributions, JSON array. */
+		reasonsJson: text("reasons_json").notNull().default(sql`'[]'`),
+		/** Raw amenity distances and shares, JSON object. */
+		amenitiesJson: text("amenities_json").notNull().default(sql`'{}'`),
+		/** Risk and data-quality flags, JSON array. */
+		flagsJson: text("flags_json").notNull().default(sql`'[]'`),
+		computedAt: integer("computed_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+		expiresAt: integer("expires_at", { mode: "timestamp" }),
+	},
+	(t) => [
+		uniqueIndex("listing_scores_listing_version_idx").on(
+			t.listingId,
+			t.scoreVersion,
+		),
+		index("listing_scores_version_total_idx").on(t.scoreVersion, t.totalScore),
+		index("listing_scores_segment_region_idx").on(
+			t.scoreVersion,
+			t.segment,
+			t.region,
+			t.totalScore,
+		),
+	],
+);
+
+/**
+ * One row per listing per day per channel. The unique index makes the daily
+ * job idempotent: re-running it cannot send the same alert twice.
+ */
+export const listingAlerts = sqliteTable(
+	"listing_alerts",
+	{
+		id: integer({ mode: "number" }).primaryKey({ autoIncrement: true }),
+		listingId: integer("listing_id")
+			.notNull()
+			.references(() => listings.id),
+		scoreId: integer("score_id")
+			.notNull()
+			.references(() => listingScores.id),
+		alertDate: text("alert_date").notNull(),
+		segment: text().notNull(),
+		region: text().notNull(),
+		rank: integer({ mode: "number" }).notNull(),
+		score: real().notNull(),
+		channel: text().notNull().default(sql`'in_app'`),
+		status: text().notNull().default(sql`'pending'`),
+		payloadJson: text("payload_json").notNull().default(sql`'{}'`),
+		createdAt: integer("created_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+		seenAt: integer("seen_at", { mode: "timestamp" }),
+	},
+	(t) => [
+		uniqueIndex("listing_alerts_listing_date_channel_idx").on(
+			t.listingId,
+			t.alertDate,
+			t.channel,
+		),
+		index("listing_alerts_date_rank_idx").on(t.alertDate, t.region, t.rank),
+		index("listing_alerts_status_idx").on(t.status),
+	],
+);

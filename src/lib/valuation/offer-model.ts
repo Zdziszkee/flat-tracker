@@ -853,6 +853,8 @@ export async function estimateSaleValue(
 		 * monthly rent, not a purchase price.
 		 */
 		compareToOffer?: boolean;
+		/** Skip the forward-looking model when only the fair value is needed. */
+		includeUpside?: boolean;
 	} = {},
 ): Promise<SaleValuationResult> {
 	const compareToOffer = options.compareToOffer !== false;
@@ -901,7 +903,7 @@ export async function estimateSaleValue(
 	const confidence = confidenceFor(comps, spreadPct, nowSeconds);
 	const area = offer.areaM2;
 	const index = indexSummary(comps);
-	const upside = compareToOffer
+	const upside = compareToOffer && options.includeUpside !== false
 		? upsidePotential({
 				fairM2,
 				offerM2,

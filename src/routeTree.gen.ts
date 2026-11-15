@@ -10,10 +10,12 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AlertsRouteImport } from './routes/alerts'
 import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as ListingsRouteImport } from './routes/listings'
 import { Route as MapRouteImport } from './routes/map'
 import { Route as SourcesRouteImport } from './routes/sources'
+import { Route as ApiAlertsRouteImport } from './routes/api/alerts'
 import { Route as ApiCrawlStatusRouteImport } from './routes/api/crawl-status'
 import { Route as ApiListingsRouteImport } from './routes/api/listings'
 import { Route as ApiMarketChartsRouteImport } from './routes/api/market-charts'
@@ -37,6 +39,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AlertsRoute = AlertsRouteImport.update({
+  id: '/alerts',
+  path: '/alerts',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AnalyticsRoute = AnalyticsRouteImport.update({
   id: '/analytics',
   path: '/analytics',
@@ -55,6 +62,11 @@ const MapRoute = MapRouteImport.update({
 const SourcesRoute = SourcesRouteImport.update({
   id: '/sources',
   path: '/sources',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAlertsRoute = ApiAlertsRouteImport.update({
+  id: '/api/alerts',
+  path: '/api/alerts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCrawlStatusRoute = ApiCrawlStatusRouteImport.update({
@@ -145,10 +157,12 @@ const ApiValuationOfferRoute = ApiValuationOfferRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/alerts': typeof AlertsRoute
   '/analytics': typeof AnalyticsRoute
   '/listings': typeof ListingsRoute
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
+  '/api/alerts': typeof ApiAlertsRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-charts': typeof ApiMarketChartsRoute
@@ -169,10 +183,12 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/alerts': typeof AlertsRoute
   '/analytics': typeof AnalyticsRoute
   '/listings': typeof ListingsRoute
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
+  '/api/alerts': typeof ApiAlertsRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-charts': typeof ApiMarketChartsRoute
@@ -194,10 +210,12 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/alerts': typeof AlertsRoute
   '/analytics': typeof AnalyticsRoute
   '/listings': typeof ListingsRoute
   '/map': typeof MapRoute
   '/sources': typeof SourcesRoute
+  '/api/alerts': typeof ApiAlertsRoute
   '/api/crawl-status': typeof ApiCrawlStatusRoute
   '/api/listings': typeof ApiListingsRoute
   '/api/market-charts': typeof ApiMarketChartsRoute
@@ -220,10 +238,12 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/alerts'
     | '/analytics'
     | '/listings'
     | '/map'
     | '/sources'
+    | '/api/alerts'
     | '/api/crawl-status'
     | '/api/listings'
     | '/api/market-charts'
@@ -244,10 +264,12 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/alerts'
     | '/analytics'
     | '/listings'
     | '/map'
     | '/sources'
+    | '/api/alerts'
     | '/api/crawl-status'
     | '/api/listings'
     | '/api/market-charts'
@@ -268,10 +290,12 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/alerts'
     | '/analytics'
     | '/listings'
     | '/map'
     | '/sources'
+    | '/api/alerts'
     | '/api/crawl-status'
     | '/api/listings'
     | '/api/market-charts'
@@ -293,10 +317,12 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AlertsRoute: typeof AlertsRoute
   AnalyticsRoute: typeof AnalyticsRoute
   ListingsRoute: typeof ListingsRoute
   MapRoute: typeof MapRoute
   SourcesRoute: typeof SourcesRoute
+  ApiAlertsRoute: typeof ApiAlertsRoute
   ApiCrawlStatusRoute: typeof ApiCrawlStatusRoute
   ApiListingsRoute: typeof ApiListingsRoute
   ApiMarketChartsRoute: typeof ApiMarketChartsRoute
@@ -321,6 +347,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/alerts': {
+      id: '/alerts'
+      path: '/alerts'
+      fullPath: '/alerts'
+      preLoaderRoute: typeof AlertsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/analytics': {
@@ -349,6 +382,13 @@ declare module '@tanstack/react-router' {
       path: '/sources'
       fullPath: '/sources'
       preLoaderRoute: typeof SourcesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/alerts': {
+      id: '/api/alerts'
+      path: '/api/alerts'
+      fullPath: '/api/alerts'
+      preLoaderRoute: typeof ApiAlertsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/crawl-status': {
@@ -499,10 +539,12 @@ const ApiValuationRouteWithChildren = ApiValuationRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AlertsRoute: AlertsRoute,
   AnalyticsRoute: AnalyticsRoute,
   ListingsRoute: ListingsRoute,
   MapRoute: MapRoute,
   SourcesRoute: SourcesRoute,
+  ApiAlertsRoute: ApiAlertsRoute,
   ApiCrawlStatusRoute: ApiCrawlStatusRoute,
   ApiListingsRoute: ApiListingsRoute,
   ApiMarketChartsRoute: ApiMarketChartsRoute,

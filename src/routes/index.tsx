@@ -35,6 +35,12 @@ function Home() {
 				>
 					Data sources
 				</Link>
+				<Link
+					to="/alerts"
+					className="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700"
+				>
+					Alerty dnia
+				</Link>
 			</nav>
 
 			<section className="mt-10 max-w-3xl space-y-4 text-sm leading-relaxed">

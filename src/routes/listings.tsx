@@ -82,6 +82,9 @@ function ListingsPage() {
 					<Link to="/sources" className="text-blue-600 underline">
 						Data sources
 					</Link>
+					<Link to="/alerts" className="text-blue-600 underline">
+						Alerty
+					</Link>
 				</div>
 			</div>
 

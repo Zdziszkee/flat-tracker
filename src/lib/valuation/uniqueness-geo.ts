@@ -32,12 +32,18 @@ interface Indexes {
 
 export interface GeoUniqueness {
 	parkM: number | null;
+	parkCount500m: number;
 	forestM: number | null;
+	forestShare500m: number;
 	waterM: number | null;
+	waterShare1000m: number;
+	lakeM: number | null;
 	riverM: number | null;
 	railM: number | null;
 	trainStationM: number | null;
 	transitM: number | null;
+	tramM: number | null;
+	busM: number | null;
 	city: string | null;
 	centerM: number | null;
 	source: "osm-ways";
@@ -127,7 +133,11 @@ function haversineM(
 	return 2 * 6371000 * Math.asin(Math.sqrt(a));
 }
 
-function pointInRing(lng: number, lat: number, ring: readonly [number, number][]): boolean {
+function pointInRing(
+	lng: number,
+	lat: number,
+	ring: readonly [number, number][],
+): boolean {
 	let inside = false;
 	for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
 		const a = ring[i];
@@ -253,6 +263,65 @@ function nearestPolygon(
 	return Number.isFinite(best) ? best : null;
 }
 
+function coveredByPolygon(
+	tree: RBush<IndexItem>,
+	lng: number,
+	lat: number,
+	kind?: string,
+): boolean {
+	for (const item of tree.search({
+		minX: lng,
+		minY: lat,
+		maxX: lng,
+		maxY: lat,
+	})) {
+		if (kind && item.kind !== kind) continue;
+		if (item.coords && pointInRing(lng, lat, item.coords)) return true;
+	}
+	return false;
+}
+
+/** Fraction of a 5x5 sample grid inside polygons of `kind` within `radiusM`. */
+function polygonShare(
+	tree: RBush<IndexItem>,
+	lng: number,
+	lat: number,
+	radiusM: number,
+	kind: string,
+): number {
+	const steps = [-1, -0.5, 0, 0.5, 1] as const;
+	const dLat = radiusM / 111_320;
+	const dLng =
+		radiusM / (111_320 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
+	let hits = 0;
+	for (const dy of steps) {
+		for (const dx of steps) {
+			if (coveredByPolygon(tree, lng + dx * dLng, lat + dy * dLat, kind)) {
+				hits++;
+			}
+		}
+	}
+	return hits / (steps.length * steps.length);
+}
+
+function countPolygons(
+	tree: RBush<IndexItem>,
+	lng: number,
+	lat: number,
+	maxM: number,
+	kind: string,
+): number {
+	let count = 0;
+	for (const item of candidates(tree, lng, lat, maxM)) {
+		if (item.kind !== kind || !item.coords) continue;
+		const distance = pointInRing(lng, lat, item.coords)
+			? 0
+			: lineDistanceM(lng, lat, item.coords, true);
+		if (distance <= maxM) count++;
+	}
+	return count;
+}
+
 export async function geoUniqueness(
 	lat: number | null,
 	lng: number | null,
@@ -270,12 +339,18 @@ export async function geoUniqueness(
 	}
 	return {
 		parkM: nearestPolygon(indexes.green, lng, lat, 3000, "park"),
+		parkCount500m: countPolygons(indexes.green, lng, lat, 500, "park"),
 		forestM: nearestPolygon(indexes.green, lng, lat, 3000, "forest"),
+		forestShare500m: polygonShare(indexes.green, lng, lat, 500, "forest"),
 		waterM: nearestPolygon(indexes.water, lng, lat, 3000),
+		waterShare1000m: polygonShare(indexes.water, lng, lat, 1000, "water"),
+		lakeM: nearestPolygon(indexes.water, lng, lat, 3000),
 		riverM: nearestGeometry(indexes.river, lng, lat, 3000, false),
 		railM: nearestGeometry(indexes.rail, lng, lat, 2000, false),
 		trainStationM: nearestPoint(indexes.stations, lng, lat, 5000),
 		transitM: nearestPoint(indexes.transit, lng, lat, 3000),
+		tramM: nearestPoint(indexes.transit, lng, lat, 3000, "tram"),
+		busM: nearestPoint(indexes.transit, lng, lat, 3000, "bus"),
 		city,
 		centerM,
 		source: "osm-ways",

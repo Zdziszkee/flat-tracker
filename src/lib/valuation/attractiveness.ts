@@ -134,10 +134,6 @@ function scale(
 	return clamp(result, Math.min(y0, y1), Math.max(y0, y1));
 }
 
-function bool(value: boolean | null | undefined): boolean | null {
-	return typeof value === "boolean" ? value : null;
-}
-
 function distanceText(label: string, meters: number): string {
 	return `${label} ${meters < 1000 ? `${Math.round(meters)} m` : `${(meters / 1000).toFixed(1)} km`}`;
 }

@@ -16,6 +16,9 @@ const airbnbCalendarTask = fileURLToPath(
 const bookingCalendarTask = fileURLToPath(
 	new URL("./server/tasks/booking-calendar.ts", import.meta.url),
 );
+const scoreListingsTask = fileURLToPath(
+	new URL("./server/tasks/score-listings.ts", import.meta.url),
+);
 const refreshPlugin = fileURLToPath(
 	new URL("./server/plugins/refresh-on-start.ts", import.meta.url),
 );
@@ -100,6 +103,11 @@ const config = defineConfig({
 					description:
 						"Import Booking.com availability calendars and fold occupancy stats",
 				},
+				"score-listings": {
+					handler: scoreListingsTask,
+					description:
+						"Score sale offers and create the daily top 5% in-app alerts",
+				},
 			},
 			// Hourly data refresh: the same refreshAll() the /sources page and
 			// the dev boot use, including the incremental RCN diff check that
@@ -108,6 +116,7 @@ const config = defineConfig({
 				"0 * * * *": "refresh",
 				"0 3 * * *": "airbnb-calendar",
 				"30 3 * * *": "booking-calendar",
+				"30 6 * * *": "score-listings",
 			},
 		}),
 		tailwindcss(),
