@@ -19,6 +19,7 @@ import {
 	ALERT_GATES,
 	SCORE_VERSION,
 	SEGMENT_WEIGHTS,
+	valueCurveScore,
 } from "#/lib/scoring/config";
 import type { GeoUniqueness } from "#/lib/valuation/uniqueness-geo";
 import type { ValuationEstimate } from "#/types/listing";
@@ -301,10 +302,10 @@ check(
 	{ eligible: thinComps.eligible, confidence: thinComps.confidence },
 );
 
-const cheapEnough = scoreAlert(flat, estimate(900000), geo());
+const cheapEnough = scoreAlert(flat, estimate(700000), geo());
 check(
-	"20% discount passes the discount gate",
-	cheapEnough.eligible,
+	"10%+ cheaper than the local median passes the discount gate",
+	cheapEnough.eligible && (cheapEnough.discountPct ?? 0) >= 10,
 	{ discount: cheapEnough.discountPct, gate: ALERT_GATES.minDiscountPct },
 );
 
@@ -313,6 +314,81 @@ check(
 	"near-fair offer fails the discount gate",
 	!nearFair.eligible && nearFair.gateReason === "discount_below_gate",
 	{ discount: nearFair.discountPct, gate: ALERT_GATES.minDiscountPct },
+);
+
+// --- Discount curve --------------------------------------------------------
+// The headline discountPct, the gate and the value component all use the RAW
+// asking price against the local comparable median. The curve saturates:
+// 0% -> 50, 10% -> ~80, 20% -> ~95, 30%+ -> 100 (cap).
+function listingEstimate(fairPrice: number): ValuationEstimate {
+	const base = estimate(fairPrice, 0);
+	return {
+		...base,
+		confidence: {
+			...base.confidence,
+			level: "medium",
+			listingCount: 20,
+			timeAdjustedCount: 0,
+			totalCount: 20,
+		},
+	};
+}
+
+function valueAt(discountPct: number): number {
+	// asking 600k, fair chosen so raw discount is exactly discountPct
+	const fair = 600000 / (1 - discountPct / 100);
+	return scoreAlert(flat, estimate(fair), geo()).valueScore;
+}
+
+const v0 = valueAt(0);
+const v10 = valueAt(10);
+const v20 = valueAt(20);
+const v30 = valueAt(30);
+const v40 = valueAt(40);
+check(
+	"discount curve saturates: 0->50, 10->80, 20->95, 30+->100",
+	v0 === 50 && v10 === 80 && v20 === 95 && v30 === 100 && v40 === 100,
+	{ v0, v10, v20, v30, v40 },
+);
+check(
+	"first 10% of discount adds more than the next 10%",
+	v10 - v0 > v20 - v10 && v20 - v10 > v30 - v20,
+	{ step1: v10 - v0, step2: v20 - v10, step3: v30 - v20 },
+);
+
+const rcnBacked = scoreAlert(flat, estimate(700000), geo());
+const listingOnly = scoreAlert(flat, listingEstimate(700000), geo());
+check(
+	"headline discount is the raw asking price vs median",
+	Math.abs((rcnBacked.discountPct ?? 0) - 14.3) < 0.1 &&
+		Math.abs((listingOnly.discountPct ?? 0) - 14.3) < 0.1,
+	{ rcn: rcnBacked.discountPct, listing: listingOnly.discountPct },
+);
+check(
+	"same discount scores the same on RCN and listing-only comps",
+	rcnBacked.valueScore === listingOnly.valueScore,
+	{ rcn: rcnBacked.valueScore, listing: listingOnly.valueScore },
+);
+for (const [label, scored] of [
+	["rcn-backed", rcnBacked],
+	["listing-only", listingOnly],
+] as const) {
+	const expected = valueCurveScore((scored.discountPct ?? 0) / 100);
+	check(
+		`value score matches the raw discount curve (${label})`,
+		Math.abs(scored.valueScore - Math.round(expected)) <= 1,
+		{ valueScore: scored.valueScore, expected },
+	);
+}
+const belowGate = scoreAlert(flat, listingEstimate(650000), geo());
+check(
+	"offer under 10% below median fails the gate",
+	(belowGate.discountPct ?? 100) < 10 &&
+		belowGate.gateReason === "discount_below_gate",
+	{
+		discount: belowGate.discountPct,
+		gateReason: belowGate.gateReason,
+	},
 );
 
 // --- Bounds and determinism --------------------------------------------
@@ -365,8 +441,7 @@ const alerts = await db
 		minValue: sql<number>`min(${listingScores.valueScore})`,
 	})
 	.from(listingAlerts)
-	.innerJoin(listingScores, eq(listingAlerts.scoreId, listingScores.id))
-	.where(eq(listingScores.scoreVersion, SCORE_VERSION));
+	.innerJoin(listingScores, eq(listingAlerts.scoreId, listingScores.id));
 const alertStats = alerts[0];
 check(
 	"stored alerts respect the gates",

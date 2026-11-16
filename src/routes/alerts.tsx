@@ -42,8 +42,9 @@ function AlertsPage() {
 				<div>
 					<h1 className="text-xl font-semibold">Alerty dnia</h1>
 					<p className="text-sm text-gray-600">
-						Top 5% nowych ofert na sprzedaż, osobno dla regionu i segmentu.
-						Data: {data?.date ?? "..."}
+						Top 5% nowych ofert na sprzedaż, co najmniej 10% tańszych od mediany
+						podobnych z okolicy. Osobno dla regionu i segmentu. Data:{" "}
+						{data?.date ?? "..."}
 					</p>
 				</div>
 				<div className="flex flex-wrap items-end gap-3">
@@ -146,10 +147,10 @@ function AlertCard({ alert }: { alert: AlertDto }) {
 				<Metric label="Cena" value={alert.listing.price} suffix=" zł" />
 				<Metric label="Wycena" value={alert.fairPrice} suffix=" zł" />
 				<Metric
-					label="Poniżej wyceny"
+					label="Poniżej mediany okolicy"
 					value={discount}
 					suffix="%"
-					emphasis={(discount ?? 0) >= 15}
+					emphasis={(discount ?? 0) >= 10}
 				/>
 				<Metric
 					label="Pewność"

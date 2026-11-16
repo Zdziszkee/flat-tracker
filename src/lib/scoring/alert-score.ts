@@ -17,9 +17,9 @@ import {
 	DISTANCE_BANDS,
 	distanceScore,
 	ESTIMATE_CONFIDENCE,
-	NEGOTIATION_MARGIN,
 	SCORE_VERSION,
 	SEGMENT_WEIGHTS,
+	valueCurveScore,
 } from "./config";
 
 export interface ScoreParcelFeatures {
@@ -130,27 +130,26 @@ function valueComponent(
 			flags: ["no_comparable_estimate"],
 		};
 	}
-	// A buyer is expected to close 15% below the asking price when the fair
-	// value rests on real RCN transactions. When the fallback is asking-price
-	// listings, applying the full margin would double-count the wedge, so use
-	// a small margin instead.
 	const rcnCount = estimate?.confidence.rcnCount ?? 0;
-	const margin = rcnCount >= 3 ? NEGOTIATION_MARGIN : 0.05;
-	const expectedSale = asking * (1 - margin);
-	const discount = 1 - expectedSale / fair;
-	// Smooth saturation instead of a hard cap. A 20% discount is clearly
-	// better than 15%, and 35% is only marginally better than 30%.
-	const score = clamp(50 + 50 * Math.tanh(discount / 0.15));
+	const rawDiscount = 1 - asking / fair;
+	// Anchored, saturating curve on the raw discount below the local
+	// comparable median (VALUE_CURVE): 0% -> 50, 10% -> 80, 20% -> 95,
+	// 30%+ -> 100 cap. Same curve for RCN and listing-only comps. No
+	// negotiation margin is applied: the comparables already carry the
+	// asking-vs-transaction wedge (RCN comps are time-adjusted transactions,
+	// listing comps are asking prices like the offer itself), so adding a
+	// margin would double-count it.
+	const score = clamp(valueCurveScore(rawDiscount));
 	const reasons: Array<{ label: string; impact: number }> = [];
-	if (discount >= 0.03) {
+	if (rawDiscount >= 0.03) {
 		reasons.push({
-			label: `${Math.round(discount * 100)}% below fair value after the ${Math.round(margin * 100)}% negotiation margin`,
-			impact: Math.min(35, discount * 100),
+			label: `${Math.round(rawDiscount * 100)}% cheaper than the local comparable median`,
+			impact: Math.min(35, rawDiscount * 100),
 		});
-	} else if (discount <= -0.03) {
+	} else if (rawDiscount <= -0.03) {
 		reasons.push({
-			label: `${Math.round(Math.abs(discount) * 100)}% above fair value after the ${Math.round(margin * 100)}% negotiation margin`,
-			impact: -Math.min(35, Math.abs(discount) * 100),
+			label: `${Math.round(Math.abs(rawDiscount) * 100)}% above the local comparable median`,
+			impact: -Math.min(35, Math.abs(rawDiscount) * 100),
 		});
 	}
 	const level = estimate?.confidence.level ?? "low";
@@ -645,11 +644,13 @@ export function scoreAlert(
 	];
 	const asking = input.price;
 	const fair = estimate?.fairPrice ?? null;
-	const expectedSale =
-		asking != null ? asking * (1 - NEGOTIATION_MARGIN) : null;
+	// The headline discount is the raw asking price against the local
+	// comparable median, with NO negotiation margin. This is what the user
+	// sees and what the alert gate checks. The margin lives only inside the
+	// value component above.
 	const discountPct =
-		expectedSale != null && fair != null && fair > 0
-			? (1 - expectedSale / fair) * 100
+		asking != null && asking > 0 && fair != null && fair > 0
+			? (1 - asking / fair) * 100
 			: null;
 
 	let gateReason: string | null = null;

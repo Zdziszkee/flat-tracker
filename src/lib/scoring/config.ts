@@ -5,16 +5,14 @@
  * value requires a new `SCORE_VERSION` so stored scores stay auditable.
  */
 
-export const SCORE_VERSION = "2027.1";
-
-/** Buyer-side negotiation margin applied to the asking price. */
-export const NEGOTIATION_MARGIN = 0.15;
+export const SCORE_VERSION = "2027.3";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
 	minValueScore: 55,
 	minConfidence: 0.5,
-	minDiscountPct: 20,
+	/** Asking price must be at least this far below the local comparable median. */
+	minDiscountPct: 10,
 } as const;
 
 export type AlertSegment = "flat" | "house" | "plot";
@@ -81,6 +79,39 @@ export const DISTANCE_BANDS = {
 		[15000, 30],
 	],
 } as const satisfies Record<string, DistanceBands>;
+
+/**
+ * Value score anchors: raw discount below the local comparable median ->
+ * score. Piecewise linear between anchors, clamped at both ends. Strongly
+ * diminishing returns: the first 10% of discount adds 30 points, the next
+ * 10% adds 15, and the third only 5. 30%+ is the maximum, more adds nothing.
+ */
+export const VALUE_CURVE = [
+	[-0.3, 0],
+	[-0.2, 5],
+	[-0.1, 20],
+	[0, 50],
+	[0.1, 80],
+	[0.2, 95],
+	[0.3, 100],
+] as const satisfies ReadonlyArray<readonly [number, number]>;
+
+export function valueCurveScore(discount: number): number {
+	const first = VALUE_CURVE[0];
+	const last = VALUE_CURVE[VALUE_CURVE.length - 1];
+	if (!Number.isFinite(discount)) return 50;
+	if (discount <= first[0]) return first[1];
+	if (discount >= last[0]) return last[1];
+	for (let i = 1; i < VALUE_CURVE.length; i++) {
+		const prev = VALUE_CURVE[i - 1];
+		const next = VALUE_CURVE[i];
+		if (prev && next && discount <= next[0]) {
+			const t = (discount - prev[0]) / (next[0] - prev[0]);
+			return prev[1] + t * (next[1] - prev[1]);
+		}
+	}
+	return last[1];
+}
 
 /** Confidence assigned to a comparable set by its reported level. */
 export const ESTIMATE_CONFIDENCE = {
