@@ -16,13 +16,20 @@ const REGION_LABELS: Record<string, string> = {
 
 const SEGMENT_LABELS: Record<string, string> = {
 	flat: "Mieszkania",
-	house: "Domy",
+	house: "Domy z działką",
 	plot: "Działki",
 };
 
+const CATEGORY_TABS = [
+	{ id: "flat", label: "Mieszkania" },
+	{ id: "house", label: "Domy z działką" },
+	{ id: "plot", label: "Działki" },
+	{ id: "all", label: "Wszystkie" },
+] as const;
+
 function AlertsPage() {
 	const [region, setRegion] = useState("all");
-	const [segment, setSegment] = useState("all");
+	const [segment, setSegment] = useState("flat");
 	const { data, isLoading } = useAlerts({
 		region: region === "all" ? undefined : region,
 		segment: segment === "all" ? undefined : segment,
@@ -60,19 +67,6 @@ function AlertsPage() {
 							<option value="slaskie">Śląsk</option>
 						</select>
 					</label>
-					<label className="text-sm">
-						<span className="mb-1 block text-gray-600">Segment</span>
-						<select
-							className="rounded border px-2 py-1"
-							value={segment}
-							onChange={(event) => setSegment(event.target.value)}
-						>
-							<option value="all">Wszystkie</option>
-							<option value="flat">Mieszkania</option>
-							<option value="house">Domy</option>
-							<option value="plot">Działki</option>
-						</select>
-					</label>
 					<Link to="/" className="text-blue-600 underline">
 						Start
 					</Link>
@@ -80,6 +74,23 @@ function AlertsPage() {
 						Ogłoszenia
 					</Link>
 				</div>
+			</div>
+
+			<div className="mb-4 flex flex-wrap gap-2">
+				{CATEGORY_TABS.map((tab) => (
+					<button
+						key={tab.id}
+						type="button"
+						onClick={() => setSegment(tab.id)}
+						className={`rounded-full border px-4 py-1.5 text-sm font-medium ${
+							segment === tab.id
+								? "border-blue-600 bg-blue-600 text-white"
+								: "border-gray-300 bg-white text-gray-700 hover:border-blue-400"
+						}`}
+					>
+						{tab.label}
+					</button>
+				))}
 			</div>
 
 			{isLoading && <p className="text-gray-500">Ładowanie alertów...</p>}

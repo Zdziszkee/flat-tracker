@@ -5,7 +5,7 @@
  * value requires a new `SCORE_VERSION` so stored scores stay auditable.
  */
 
-export const SCORE_VERSION = "2027.3";
+export const SCORE_VERSION = "2027.4";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -25,10 +25,26 @@ export interface SegmentWeights {
 	risk: number;
 }
 
+/**
+ * Segment weights calibrated against the pooled hedonic literature
+ * (Boucher 2026, UQO WP21: 242 studies, 18,831 coefficients, extending
+ * Sirmans et al. 2005):
+ * - Flats: structural core (age, condition, floor) plus accessibility drive
+ *   most non-price variance. Green space premium averages near zero for
+ *   apartments (pooled CI spans zero), so green drops to 0.10 and property
+ *   rises to 0.15.
+ * - Houses: lot-size elasticity is only 0.09 once living area is
+ *   controlled, but garage +5.4%, garden +6.4%, parking +6.3% and building
+ *   condition +7.4% are all structural, so property rises to 0.25.
+ * - Plots: no building exists, buildability (zoning, media, road access)
+ *   IS the product, so property dominates the non-price side at 0.35.
+ * Value stays the largest weight everywhere: the alert exists to surface
+ * mispricing, amenities only break ties and filter traps.
+ */
 export const SEGMENT_WEIGHTS: Record<AlertSegment, SegmentWeights> = {
-	flat: { value: 0.5, transit: 0.2, green: 0.15, property: 0.1, risk: 0.05 },
-	house: { value: 0.45, transit: 0.1, green: 0.25, property: 0.15, risk: 0.05 },
-	plot: { value: 0.4, transit: 0.1, green: 0.3, property: 0.15, risk: 0.05 },
+	flat: { value: 0.5, transit: 0.2, green: 0.1, property: 0.15, risk: 0.05 },
+	house: { value: 0.45, transit: 0.1, green: 0.15, property: 0.25, risk: 0.05 },
+	plot: { value: 0.4, transit: 0.05, green: 0.15, property: 0.35, risk: 0.05 },
 };
 
 /** Distance bands in metres. First band that contains the distance wins. */
