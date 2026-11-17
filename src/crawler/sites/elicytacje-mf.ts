@@ -1,10 +1,9 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-
 import type { Page } from "playwright";
 
 import { launchPersistentBrowserContext } from "../browser.ts";
 import type { CustomLaunchAdapter, Listing } from "../types.ts";
+import { createDetailCache } from "./detail-cache.ts";
+import { parseNumberText } from "./parse.ts";
 
 /**
  * eLicytacje KAS (elicytacje.mf.gov.pl) — the official Ministry of Finance
@@ -107,33 +106,10 @@ interface ScrapeResult {
 
 type DetailCache = Record<string, CachedRecord>;
 
-let cacheState: DetailCache | null = null;
-
-function loadCache(): DetailCache {
-	if (cacheState) return cacheState;
-	let parsed: DetailCache = {};
-	try {
-		parsed = JSON.parse(readFileSync(DETAIL_CACHE_PATH, "utf8")) as DetailCache;
-	} catch {
-		// Missing or corrupt cache: refetch details.
-	}
-	cacheState = parsed;
-	return parsed;
-}
-
-function saveCache(cache: DetailCache): void {
-	cacheState = cache;
-	mkdirSync(dirname(DETAIL_CACHE_PATH), { recursive: true });
-	writeFileSync(DETAIL_CACHE_PATH, JSON.stringify(cache));
-}
-
-function parseNumber(value: string | null | undefined): number | null {
-	if (!value) return null;
-	const n = Number.parseFloat(
-		value.replace(/[\s\u00a0]/g, "").replace(",", "."),
-	);
-	return Number.isFinite(n) ? n : null;
-}
+const detailCache = createDetailCache<CachedRecord>({
+	path: DETAIL_CACHE_PATH,
+	ttlDays: DETAIL_TTL_DAYS,
+});
 
 /** m² per unit stated in the value or in the parameter name ("(ha)"). */
 function areaFactor(text: string): number {
@@ -148,7 +124,7 @@ function areaFromText(
 	unitHint = "",
 ): number | null {
 	if (!value) return null;
-	const n = parseNumber(value);
+	const n = parseNumberText(value);
 	if (n === null) return null;
 	return n * areaFactor(`${value} ${unitHint}`);
 }
@@ -241,7 +217,7 @@ export function recordToListing(record: ElicytacjeRecord): Listing | null {
 	// would understate the market rate, so leave it null (the title says
 	// "Udział 1/2").
 	const isShare = /\budział/iu.test(record.title);
-	const rooms = parseNumber(
+	const rooms = parseNumberText(
 		parameterValue(record, [/liczba pokoi/i, /liczba izb/i]),
 	);
 	const floor = parameterValue(record, [/^piętro$/i, /kondygnacja/i]);
@@ -347,14 +323,11 @@ export const elicytacjeMfAdapter: CustomLaunchAdapter = {
 	},
 
 	async extractListings(page: Page): Promise<Listing[]> {
-		const cache = loadCache();
-		const now = Date.now();
+		const cache = detailCache.load();
 		const known: Record<string, string> = {};
 		for (const [uuid, entry] of Object.entries(cache)) {
 			if (!entry.record || entry.record.uuid !== uuid) continue;
-			const fetched = Date.parse(entry.fetchedAt);
-			if (!Number.isFinite(fetched)) continue;
-			if (now - fetched > DETAIL_TTL_DAYS * 86_400_000) continue;
+			if (!detailCache.fresh(entry)) continue;
 			if (entry.state) known[uuid] = entry.state;
 		}
 
@@ -550,7 +523,7 @@ export const elicytacjeMfAdapter: CustomLaunchAdapter = {
 			const listing = recordToListing(record);
 			if (listing) listings.push(listing);
 		}
-		saveCache(nextCache);
+		detailCache.save(nextCache);
 		return listings;
 	},
 };

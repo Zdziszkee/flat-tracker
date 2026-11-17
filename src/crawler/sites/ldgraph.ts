@@ -1,5 +1,6 @@
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
+import { pageParamNumber } from "./parse.ts";
 
 /**
  * Generic LD+JSON listing adapter for portals whose feed is an `@graph` or
@@ -72,10 +73,7 @@ export function makeLdGraphAdapter(cfg: LdGraphConfig): CheerioAdapter {
 			// also the detail/date budget.
 			const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
 			if (!pageOnly) {
-				const current = Number.parseInt(
-					new URL(url).searchParams.get(cfg.pageParam) ?? String(firstPage),
-					10,
-				);
+				const current = pageParamNumber(url, cfg.pageParam) ?? firstPage;
 				const next = new URL(url);
 				next.searchParams.set(cfg.pageParam, String(current + 1));
 				await enqueue([next.toString()]);

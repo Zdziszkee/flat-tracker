@@ -198,6 +198,115 @@ async function harvestEmbeddedCache(
 	return found;
 }
 
+/** One property card as rendered by Booking's search results. */
+interface BookingCard {
+	externalId: string;
+	href: string;
+	title: string | null;
+	price: number | null;
+	rating: number | null;
+}
+
+/**
+ * Read the property cards currently in the DOM. The result list virtualizes,
+ * so callers re-run this after every load-more round instead of trusting a
+ * one-time snapshot.
+ */
+async function readCards(page: Page): Promise<BookingCard[]> {
+	return page.evaluate(() => {
+		const els = Array.from(
+			document.querySelectorAll<HTMLElement>('[data-testid="property-card"]'),
+		);
+		return els.map((card) => {
+			const title =
+				card.querySelector<HTMLElement>('[data-testid="title"]')?.innerText ??
+				null;
+			const link = card.querySelector<HTMLAnchorElement>(
+				'a[data-testid="title-link"], a[href*="booking.com/hotel"]',
+			);
+			const priceEl = card.querySelector<HTMLElement>(
+				'[data-testid="price-and-discounted-price"]',
+			);
+			const priceText = priceEl?.innerText ?? card.innerText;
+			const priceMatch = priceText.match(/([\d\s.,]+)\s*zł/i);
+			let price: number | null = null;
+			if (priceMatch) {
+				const n = Number(priceMatch[1].replace(/\s/g, "").replace(",", "."));
+				// Pinned window = exactly 7 nights; cards show the TOTAL for
+				// the stay, so normalize to nightly (Airbnb-comparable).
+				if (Number.isFinite(n) && n > 0) {
+					price = Math.round((n / 7) * 100) / 100;
+				}
+			}
+			const ratingEl = card.querySelector<HTMLElement>(
+				'[data-testid="review-score"]',
+			);
+			const ratingMatch = (ratingEl?.innerText ?? "").match(/([\d,]+)/);
+			const href = link?.href ?? "";
+			// Keep the legacy key format (`pl/<slug>`): rows already in the DB
+			// use it, so the coalesce-upsert enriches them in place instead of
+			// inserting near-duplicates under a new key.
+			const externalId = href.split("/hotel/")[1]?.split(".")[0] ?? href;
+			return {
+				externalId,
+				href,
+				title,
+				price,
+				rating: ratingMatch ? Number(ratingMatch[1].replace(",", ".")) : null,
+			};
+		});
+	});
+}
+
+/**
+ * Map rendered cards to listings, joining Booking's Apollo-cache geo facts by
+ * property slug (the externalId carries a `pl/` prefix; strip it for the
+ * lookup). `seen` de-duplicates across load-more rounds and city shards, and
+ * `fallbackUrl` is the URL used by a card without an anchor.
+ */
+function listingsFromCards(
+	cards: BookingCard[],
+	geo: Map<string, GeoFacts>,
+	seen: Set<string>,
+	fallbackUrl: string,
+): Listing[] {
+	const listings: Listing[] = [];
+	for (const card of cards) {
+		if (!card.externalId || seen.has(card.externalId)) continue;
+		seen.add(card.externalId);
+		const facts = geo.get(card.externalId.replace(/^pl\//, ""));
+		listings.push({
+			source: "booking",
+			externalId: card.externalId,
+			url: card.href || fallbackUrl,
+			title: card.title ?? "Booking listing",
+			price: card.price,
+			pricePerM2: null,
+			areaM2: null,
+			rooms: null,
+			floor: null,
+			district: null,
+			address:
+				facts?.address && facts?.city
+					? `${facts.address}, ${facts.city}`
+					: (facts?.address ?? facts?.city ?? null),
+			description: null,
+			heatingType: null,
+			propertyType: null,
+			features: null,
+			lat: facts?.lat ?? null,
+			lng: facts?.lng ?? null,
+			listedAt: null,
+			scrapedAt: new Date().toISOString(),
+			offerType: "short_term_rental",
+			pricePeriod: "night",
+			rating: card.rating ?? facts?.rating ?? null,
+			reviewsCount: facts?.reviewsCount ?? null,
+		});
+	}
+	return listings;
+}
+
 /**
  * Region-wide search for one covered voivodeship. Used as the DELTA PROBE:
  * its first batch is the market fingerprint — when every card on it is
@@ -294,81 +403,12 @@ export const bookingAdapter: CustomLaunchAdapter = {
 			const regionSeen = new Set<string>();
 			const regionGeo = new Map<string, GeoFacts>();
 			await harvestEmbeddedCache(page, regionGeo);
-			const regionBatch: Listing[] = [];
-			const cards = await page.evaluate(() => {
-				const els = Array.from(
-					document.querySelectorAll<HTMLElement>(
-						'[data-testid="property-card"]',
-					),
-				);
-				return els.map((card) => {
-					const title =
-						card.querySelector<HTMLElement>('[data-testid="title"]')
-							?.innerText ?? null;
-					const link = card.querySelector<HTMLAnchorElement>(
-						'a[data-testid="title-link"], a[href*="booking.com/hotel"]',
-					);
-					const priceEl = card.querySelector<HTMLElement>(
-						'[data-testid="price-and-discounted-price"]',
-					);
-					const priceText = priceEl?.innerText ?? card.innerText;
-					const priceMatch = priceText.match(/([\d\s.,]+)\s*zł/i);
-					const price =
-						priceMatch &&
-						(() => {
-							const n = Number(
-								priceMatch[1].replace(/\s/g, "").replace(",", "."),
-							);
-							// Pinned window = exactly 7 nights; cards show the TOTAL
-							// for the stay — normalize to nightly (Airbnb-comparable).
-							return Number.isFinite(n) && n > 0
-								? Math.round((n / 7) * 100) / 100
-								: null;
-						})();
-					const ratingEl = card.querySelector<HTMLElement>(
-						'[data-testid="review-score"]',
-					);
-					const ratingMatch = (ratingEl?.innerText ?? "").match(/([\d,]+)/);
-					const href = link?.href ?? "";
-					const externalId = href.split("/hotel/")[1]?.split(".")[0] ?? href;
-					return { externalId, href, title, price, ratingMatch };
-				});
-			});
-			for (const c of cards) {
-				if (!c.externalId || regionSeen.has(c.externalId)) continue;
-				regionSeen.add(c.externalId);
-				const facts = regionGeo.get(c.externalId.replace(/^pl\//, ""));
-				regionBatch.push({
-					source: "booking",
-					externalId: c.externalId,
-					url: c.href || "https://www.booking.com",
-					title: c.title ?? "Booking listing",
-					price: c.price,
-					pricePerM2: null,
-					areaM2: null,
-					rooms: null,
-					floor: null,
-					district: null,
-					address:
-						facts?.address && facts?.city
-							? `${facts.address}, ${facts.city}`
-							: (facts?.address ?? facts?.city ?? null),
-					description: null,
-					heatingType: null,
-					propertyType: null,
-					features: null,
-					lat: facts?.lat ?? null,
-					lng: facts?.lng ?? null,
-					listedAt: null,
-					scrapedAt: new Date().toISOString(),
-					offerType: "short_term_rental" as const,
-					pricePeriod: "night" as const,
-					rating: c.ratingMatch
-						? Number(c.ratingMatch[1].replace(",", "."))
-						: (facts?.rating ?? null),
-					reviewsCount: facts?.reviewsCount ?? null,
-				});
-			}
+			const regionBatch = listingsFromCards(
+				await readCards(page),
+				regionGeo,
+				regionSeen,
+				"https://www.booking.com",
+			);
 
 			// When the ENTIRE first batch is already stored, this region is
 			// unchanged: keep the batch (the DB upsert refreshes prices and ratings
@@ -465,94 +505,7 @@ async function drainCity(
 	}
 
 	const collect = async () => {
-		const cards = await page.evaluate(() => {
-			const els = Array.from(
-				document.querySelectorAll<HTMLElement>('[data-testid="property-card"]'),
-			);
-			return els.map((card) => {
-				const title =
-					card.querySelector<HTMLElement>('[data-testid="title"]')?.innerText ??
-					null;
-				const link = card.querySelector<HTMLAnchorElement>(
-					'a[data-testid="title-link"], a[href*="booking.com/hotel"]',
-				);
-				const priceEl = card.querySelector<HTMLElement>(
-					'[data-testid="price-and-discounted-price"]',
-				);
-				const priceText = priceEl?.innerText ?? card.innerText;
-				const priceMatch = priceText.match(/([\d\s.,]+)\s*zł/i);
-				const price =
-					priceMatch &&
-					(() => {
-						const n = Number(
-							priceMatch[1].replace(/\s/g, "").replace(",", "."),
-						);
-						// Pinned window = exactly 7 nights; cards show the TOTAL
-						// for the stay — normalize to nightly (Airbnb-comparable).
-						return Number.isFinite(n) && n > 0
-							? Math.round((n / 7) * 100) / 100
-							: null;
-					})();
-				const ratingEl = card.querySelector<HTMLElement>(
-					'[data-testid="review-score"]',
-				);
-				const ratingMatch = (ratingEl?.innerText ?? "").match(/([\d,]+)/);
-				const href = link?.href ?? "";
-				// Keep the legacy key format (`pl/<slug>`): rows already in
-				// the DB use it, so the coalesce-upsert enriches them in
-				// place instead of inserting near-duplicates under a new key.
-				const externalId = href.split("/hotel/")[1]?.split(".")[0] ?? href;
-
-				return {
-					source: "booking",
-					externalId,
-					url: href || location.href,
-					title: title ?? "Booking listing",
-					price,
-					ratingFromCard: ratingMatch
-						? Number(ratingMatch[1].replace(",", "."))
-						: null,
-					listedAt: null as string | null,
-				};
-			});
-		});
-		for (const c of cards) {
-			if (!c.externalId || seen.has(c.externalId)) continue;
-			seen.add(c.externalId);
-			// Join Apollo-cache facts by slug (the externalId carries a
-			// `pl/` prefix; strip it for the lookup). Rating may appear only
-			// on the card or only in the cache: prefer whichever exists.
-			const facts = geo.get(c.externalId.replace(/^pl\//, ""));
-			const rating = c.ratingFromCard ?? facts?.rating ?? null;
-			all.push({
-				source: "booking",
-				externalId: c.externalId,
-				url: c.url,
-				title: c.title,
-				price: c.price,
-				pricePerM2: null,
-				areaM2: null,
-				rooms: null,
-				floor: null,
-				district: null,
-				address:
-					facts?.address && facts?.city
-						? `${facts.address}, ${facts.city}`
-						: (facts?.address ?? facts?.city ?? null),
-				description: null,
-				heatingType: null,
-				propertyType: null,
-				features: null,
-				lat: facts?.lat ?? null,
-				lng: facts?.lng ?? null,
-				listedAt: c.listedAt,
-				scrapedAt: new Date().toISOString(),
-				offerType: "short_term_rental" as const,
-				pricePeriod: "night" as const,
-				rating,
-				reviewsCount: facts?.reviewsCount ?? null,
-			});
-		}
+		all.push(...listingsFromCards(await readCards(page), geo, seen, url));
 	};
 
 	await collect();

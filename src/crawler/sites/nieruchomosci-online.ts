@@ -1,5 +1,3 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { REGIONS } from "../regions.ts";
 import type { Listing } from "../types.ts";
 import {
@@ -7,6 +5,7 @@ import {
 	minedStreetLooksReal,
 	parseAddressFromText,
 } from "./address.ts";
+import { createDetailCache, enqueueDetailPass } from "./detail-cache.ts";
 import { findLdNodes, makeLdGraphAdapter } from "./ldgraph.ts";
 import { num, str } from "./ldoffer.ts";
 import {
@@ -27,39 +26,15 @@ interface CachedDetail {
 	fetchedAt: string;
 }
 
-let detailCacheState: Record<string, CachedDetail> | null = null;
-
-function detailCachePath(): string {
-	return (
+const detailCache = createDetailCache<CachedDetail>({
+	path: () =>
 		process.env.NIERUCHOMOSCI_ONLINE_DETAIL_CACHE ??
-		"data/crawler/nieruchomosci-online-details.json"
-	);
-}
-
-function loadDetailCache(): Record<string, CachedDetail> {
-	if (detailCacheState) return detailCacheState;
-	let parsed: Record<string, Partial<CachedDetail>> = {};
-	try {
-		parsed = JSON.parse(readFileSync(detailCachePath(), "utf8"));
-	} catch {
-		// Missing or corrupt cache: start empty, details simply re-fetch.
-	}
-	const cache: Record<string, CachedDetail> = {};
-	for (const [id, entry] of Object.entries(parsed)) {
-		cache[id] = {
-			listedAt: entry.listedAt ?? null,
-			fetchedAt: entry.fetchedAt ?? "",
-		};
-	}
-	detailCacheState = cache;
-	return cache;
-}
-
-function saveDetailCache(cache: Record<string, CachedDetail>): void {
-	const path = detailCachePath();
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, JSON.stringify(cache));
-}
+		"data/crawler/nieruchomosci-online-details.json",
+	normalize: (entry) => ({
+		listedAt: typeof entry.listedAt === "string" ? entry.listedAt : null,
+		fetchedAt: typeof entry.fetchedAt === "string" ? entry.fetchedAt : "",
+	}),
+});
 
 function externalIdOf(url: string): string {
 	return url.match(/(\d+)\.html/)?.[1] ?? url;
@@ -106,20 +81,13 @@ export const nieruchomosciOnlineAdapter = makeLdGraphAdapter({
 			return matches[0] ?? null;
 		},
 		toListing: (node, url) => detailToListing(node, url),
-		enqueueFrom: (listings) => {
-			const cache = loadDetailCache();
-			const urls: string[] = [];
-			for (const listing of listings) {
-				const cached = cache[listing.externalId];
-				if (cached) {
+		enqueueFrom: (listings) =>
+			enqueueDetailPass(listings, detailCache.load(), {
+				budget: DETAIL_BUDGET_PER_PAGE,
+				apply: (listing, cached) => {
 					if (!listing.listedAt) listing.listedAt = cached.listedAt;
-					continue;
-				}
-				urls.push(listing.url);
-				if (urls.length >= DETAIL_BUDGET_PER_PAGE) break;
-			}
-			return urls;
-		},
+				},
+			}),
 	},
 });
 
@@ -185,7 +153,7 @@ function offerToListing(
 
 	return {
 		source: "nieruchomosci-online",
-		externalId: url.match(/(\d+)\.html/)?.[1] ?? url,
+		externalId: externalIdOf(url),
 		url,
 		title,
 		price,
@@ -298,12 +266,7 @@ function detailToListing(
 		pricePeriod: null,
 	};
 
-	const cache = loadDetailCache();
-	cache[externalId] = {
-		listedAt,
-		fetchedAt: new Date().toISOString(),
-	};
-	saveDetailCache(cache);
+	detailCache.store(externalId, { listedAt });
 	return listing;
 }
 

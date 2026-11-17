@@ -1,8 +1,8 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { REGIONS, regionForPoint } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
+import { createDetailCache, enqueueDetailPass } from "./detail-cache.ts";
 import { num, str } from "./ldoffer.ts";
+import { parseWindowState } from "./page-state.ts";
 
 /**
  * The list state omits the posting date; the detail page's
@@ -17,39 +17,15 @@ interface CachedOffer {
 	fetchedAt: string;
 }
 
-let offerCacheState: Record<string, CachedOffer> | null = null;
-
-function offerCachePath(): string {
-	return (
+const offerCache = createDetailCache<CachedOffer>({
+	path: () =>
 		process.env.RYNEKPIERWOTNY_OFFER_CACHE ??
-		"data/crawler/rynekpierwotny-offers.json"
-	);
-}
-
-function loadOfferCache(): Record<string, CachedOffer> {
-	if (offerCacheState) return offerCacheState;
-	let parsed: Record<string, Partial<CachedOffer>> = {};
-	try {
-		parsed = JSON.parse(readFileSync(offerCachePath(), "utf8"));
-	} catch {
-		// Missing or corrupt cache: start empty, details simply re-fetch.
-	}
-	const cache: Record<string, CachedOffer> = {};
-	for (const [id, entry] of Object.entries(parsed)) {
-		cache[id] = {
-			listedAt: entry.listedAt ?? null,
-			fetchedAt: entry.fetchedAt ?? "",
-		};
-	}
-	offerCacheState = cache;
-	return cache;
-}
-
-function saveOfferCache(cache: Record<string, CachedOffer>): void {
-	const path = offerCachePath();
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, JSON.stringify(cache));
-}
+		"data/crawler/rynekpierwotny-offers.json",
+	normalize: (entry) => ({
+		listedAt: typeof entry.listedAt === "string" ? entry.listedAt : null,
+		fetchedAt: typeof entry.fetchedAt === "string" ? entry.fetchedAt : "",
+	}),
+});
 
 /**
  * Rynekpierwotny lists new-development projects (osiedla), not individual
@@ -74,19 +50,14 @@ export const rynekpierwotnyAdapter: CheerioAdapter = {
 	firstPageOnlyRequests: REGIONS.length * 2 * (1 + DETAIL_BUDGET_PER_PAGE),
 
 	async extractHtml(html, url, enqueue) {
-		const state = parseInitialState(html);
+		const state = parseWindowState<RpState>(html);
 		const detailOffer = state?.offerDetail?.offer;
 		if (/\/oferty\//u.test(url) && detailOffer) {
 			const listing = offerToListing(detailOffer, url);
 			if (!listing) return [];
 			const listedAt = detailListedAt(detailOffer);
 			listing.listedAt = listedAt;
-			const cache = loadOfferCache();
-			cache[listing.externalId] = {
-				listedAt,
-				fetchedAt: new Date().toISOString(),
-			};
-			saveOfferCache(cache);
+			offerCache.store(listing.externalId, { listedAt });
 			return [listing];
 		}
 
@@ -97,18 +68,12 @@ export const rynekpierwotnyAdapter: CheerioAdapter = {
 			const listing = offerToListing(offer);
 			if (listing) listings.push(listing);
 		}
-		const cache = loadOfferCache();
-		const detailUrls: string[] = [];
-		for (const listing of listings) {
-			const cached = cache[listing.externalId];
-			if (cached) {
+		const detailUrls = enqueueDetailPass(listings, offerCache.load(), {
+			budget: DETAIL_BUDGET_PER_PAGE,
+			apply: (listing, cached) => {
 				if (!listing.listedAt) listing.listedAt = cached.listedAt;
-				continue;
-			}
-			if (detailUrls.length < DETAIL_BUDGET_PER_PAGE && listing.url) {
-				detailUrls.push(listing.url);
-			}
-		}
+			},
+		});
 		if (detailUrls.length > 0) await enqueue(detailUrls);
 
 		// Follow the canonical "next" link until the list is exhausted
@@ -176,50 +141,6 @@ interface RpOffer {
 		hide_publish_date?: boolean;
 	};
 	create_date?: string;
-}
-
-function parseInitialState(html: string): RpState | null {
-	const i = html.indexOf("__INITIAL_STATE__");
-	if (i < 0) return null;
-	const eq = html.indexOf("=", i);
-	if (eq < 0) return null;
-	const raw = html.slice(eq + 1).trimStart();
-	const json = extractBalancedObject(raw);
-	if (!json) return null;
-	try {
-		return JSON.parse(json) as RpState;
-	} catch {
-		return null;
-	}
-}
-
-/**
- * Extract the first balanced {...} object from a JS snippet. The page's
- * script tag contains more JS after the state object, so a naive
- * `lastIndexOf("}")` can grab a brace from a later statement.
- */
-function extractBalancedObject(raw: string): string | null {
-	let depth = 0;
-	let inString = false;
-	let escaped = false;
-	for (let i = 0; i < raw.length; i++) {
-		const c = raw[i];
-		if (inString) {
-			if (escaped) escaped = false;
-			else if (c === "\\") escaped = true;
-			else if (c === '"') inString = false;
-			continue;
-		}
-		if (c === '"') {
-			inString = true;
-		} else if (c === "{") {
-			depth++;
-		} else if (c === "}") {
-			depth--;
-			if (depth === 0) return raw.slice(0, i + 1);
-		}
-	}
-	return null;
 }
 
 /** Published date, or the record creation date when the vendor hides it. */

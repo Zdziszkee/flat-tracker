@@ -1,11 +1,11 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, CheerioSelection, Listing } from "../types.ts";
 import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
+import { createDetailCache, enqueueDetailPass } from "./detail-cache.ts";
 import { cleanText } from "./html-entities.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
 import { num, str } from "./ldoffer.ts";
+import { absoluteUrl, areaFromText, priceFromText } from "./parse.ts";
 import { propertyTypeFromListingUrl } from "./property-type.ts";
 
 /**
@@ -28,7 +28,6 @@ import { propertyTypeFromListingUrl } from "./property-type.ts";
 
 const BASE = "https://adresowo.pl";
 const DETAIL_BUDGET_PER_PAGE = 8;
-const DETAIL_CACHE_PATH = "data/crawler/adresowo-details.json";
 const CATEGORIES = ["mieszkania", "domy", "dzialki"] as const;
 /** Adresowo's voivodeship path codes (`fma`/`fsl`), not the portal slugs. */
 const REGION_CODES: Record<string, string> = {
@@ -50,47 +49,21 @@ interface CachedDetail {
 	floor: string | null;
 }
 
-let detailCacheState: Record<string, CachedDetail> | null = null;
-
-function loadDetailCache(): Record<string, CachedDetail> {
-	if (detailCacheState) return detailCacheState;
-	let parsed: Record<string, Partial<CachedDetail>> = {};
-	try {
-		parsed = JSON.parse(readFileSync(DETAIL_CACHE_PATH, "utf8"));
-	} catch {
-		// Missing or corrupt cache: start empty, details simply re-fetch.
-	}
-	const cache: Record<string, CachedDetail> = {};
-	for (const [id, entry] of Object.entries(parsed)) {
-		cache[id] = {
-			fetchedAt: entry.fetchedAt ?? "",
-			lat: typeof entry.lat === "number" ? entry.lat : null,
-			lng: typeof entry.lng === "number" ? entry.lng : null,
-			address: entry.address ?? null,
-			description: entry.description ?? null,
-			title: entry.title ?? null,
-			areaM2: typeof entry.areaM2 === "number" ? entry.areaM2 : null,
-			rooms: typeof entry.rooms === "number" ? entry.rooms : null,
-			floor: entry.floor ?? null,
-		};
-	}
-	detailCacheState = cache;
-	return cache;
-}
-
-function saveDetailCache(cache: Record<string, CachedDetail>): void {
-	mkdirSync(dirname(DETAIL_CACHE_PATH), { recursive: true });
-	writeFileSync(DETAIL_CACHE_PATH, JSON.stringify(cache));
-}
-
-function absoluteUrl(href: string | null | undefined): string | null {
-	if (!href) return null;
-	try {
-		return new URL(href, BASE).href;
-	} catch {
-		return null;
-	}
-}
+const detailCache = createDetailCache<CachedDetail>({
+	path: "data/crawler/adresowo-details.json",
+	normalize: (entry) => ({
+		fetchedAt: typeof entry.fetchedAt === "string" ? entry.fetchedAt : "",
+		lat: typeof entry.lat === "number" ? entry.lat : null,
+		lng: typeof entry.lng === "number" ? entry.lng : null,
+		address: typeof entry.address === "string" ? entry.address : null,
+		description:
+			typeof entry.description === "string" ? entry.description : null,
+		title: typeof entry.title === "string" ? entry.title : null,
+		areaM2: typeof entry.areaM2 === "number" ? entry.areaM2 : null,
+		rooms: typeof entry.rooms === "number" ? entry.rooms : null,
+		floor: typeof entry.floor === "string" ? entry.floor : null,
+	}),
+});
 
 function externalIdOf(url: string): string {
 	try {
@@ -98,22 +71,6 @@ function externalIdOf(url: string): string {
 	} catch {
 		return url;
 	}
-}
-
-function parseNumberText(value: string | null | undefined): number | null {
-	if (!value) return null;
-	const n = Number.parseFloat(
-		value.replace(/[\s\u00a0]/g, "").replace(",", "."),
-	);
-	return Number.isFinite(n) ? n : null;
-}
-
-function priceFromText(text: string): number | null {
-	return parseNumberText(text.match(/([\d\s\u00a0]+)\s*zł/iu)?.[1]);
-}
-
-function areaFromText(text: string): number | null {
-	return parseNumberText(text.match(/([\d\s.,]+)\s*m[²2]/iu)?.[1]);
 }
 
 function roomsFromText(text: string): number | null {
@@ -154,7 +111,7 @@ function cardToListing(
 	pageUrl: string,
 ): Listing | null {
 	const link = card.find('a[href^="/o/"]').eq(0);
-	const url = absoluteUrl(link.attr("href"));
+	const url = absoluteUrl(link.attr("href"), BASE);
 	if (!url) return null;
 
 	// The anchor starts with an empty full-card overlay span; the two
@@ -263,7 +220,7 @@ function detailToListing(
 	const address = cleanText(street);
 
 	const canonical =
-		absoluteUrl($('link[rel="canonical"]').eq(0).attr("href")) ?? url;
+		absoluteUrl($('link[rel="canonical"]').eq(0).attr("href"), BASE) ?? url;
 	const propertyType = propertyTypeFromListingUrl(url);
 
 	const listing: Listing = {
@@ -294,9 +251,7 @@ function detailToListing(
 		scrapedAt: new Date().toISOString(),
 	};
 
-	const cache = loadDetailCache();
-	cache[listing.externalId] = {
-		fetchedAt: new Date().toISOString(),
+	detailCache.store(listing.externalId, {
 		lat: listing.lat,
 		lng: listing.lng,
 		address: listing.address,
@@ -305,8 +260,7 @@ function detailToListing(
 		areaM2: listing.areaM2,
 		rooms: listing.rooms,
 		floor: listing.floor,
-	};
-	saveDetailCache(cache);
+	});
 
 	return listing;
 }
@@ -344,13 +298,11 @@ export const adresowoAdapter: CheerioAdapter = {
 
 		// One detail fetch per uncached offer, capped per list page so the
 		// backlog drains over runs instead of crowding out pagination.
-		const cache = loadDetailCache();
-		const detailUrls: string[] = [];
-		for (const listing of listings) {
-			const cached = cache[listing.externalId];
-			if (cached) {
-				// A previous run already enriched this offer; re-apply the
-				// detail fields so a list-only crawl cannot wipe them.
+		const detailUrls = enqueueDetailPass(listings, detailCache.load(), {
+			budget: DETAIL_BUDGET_PER_PAGE,
+			// A previous run already enriched this offer; re-apply the detail
+			// fields so a list-only crawl cannot wipe them.
+			apply: (listing, cached) => {
 				listing.lat = cached.lat ?? listing.lat;
 				listing.lng = cached.lng ?? listing.lng;
 				listing.address = cached.address ?? listing.address;
@@ -359,17 +311,14 @@ export const adresowoAdapter: CheerioAdapter = {
 				listing.areaM2 = cached.areaM2 ?? listing.areaM2;
 				listing.rooms = cached.rooms ?? listing.rooms;
 				listing.floor = cached.floor ?? listing.floor;
-				continue;
-			}
-			if (detailUrls.length >= DETAIL_BUDGET_PER_PAGE) break;
-			detailUrls.push(listing.url);
-		}
+			},
+		});
 		if (detailUrls.length > 0) await enqueue(detailUrls);
 
 		const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
 		if (!pageOnly) {
 			const next = $('link[rel="next"]').eq(0).attr("href");
-			const nextUrl = absoluteUrl(next);
+			const nextUrl = absoluteUrl(next, BASE);
 			if (nextUrl) await enqueue([nextUrl]);
 		}
 

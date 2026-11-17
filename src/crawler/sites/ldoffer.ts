@@ -2,6 +2,7 @@ import type { PropertyKind } from "#/lib/property-kind";
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { formatAddressForGeocode } from "./address.ts";
 import { findLdNodes } from "./ldjson.ts";
+import { pageParamNumber } from "./parse.ts";
 import { propertyTypeFromValue } from "./property-type.ts";
 
 /**
@@ -156,7 +157,7 @@ export function makeLdOfferAdapter(cfg: LdOfferConfig): CheerioAdapter {
 			// also the detail/date budget.
 			const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
 			if (!pageOnly) {
-				const current = matchPage(url, cfg.pageParam) ?? firstPage;
+				const current = pageParamNumber(url, cfg.pageParam) ?? firstPage;
 				const next = new URL(url);
 				next.searchParams.set(cfg.pageParam, String(current + 1));
 				await enqueue([next.toString()]);
@@ -189,11 +190,6 @@ function extractOfferNodes(html: string): Array<Record<string, unknown>> {
 	);
 }
 
-function matchPage(url: string, param: string): number | null {
-	const m = url.match(new RegExp(`[?&]${param}=(\\d+)`));
-	return m ? Number.parseInt(m[1], 10) : null;
-}
-
 export function num(value: unknown): number | null {
 	if (typeof value === "number") return Number.isFinite(value) ? value : null;
 	if (typeof value === "string") {
@@ -205,4 +201,37 @@ export function num(value: unknown): number | null {
 
 export function str(value: unknown): string | null {
 	return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/**
+ * `[{name, value}]` property lists (schema.org `additionalProperty` /
+ * `amenityFeature`) flattened into one lower-cased key map, so adapters can
+ * read attributes by name without re-scanning the array.
+ */
+export function pairsToRecord(value: unknown): Record<string, unknown> {
+	const out: Record<string, unknown> = {};
+	if (!Array.isArray(value)) return out;
+	for (const entry of value) {
+		if (!entry || typeof entry !== "object") continue;
+		const record = entry as Record<string, unknown>;
+		const name = str(record.name);
+		if (!name) continue;
+		out[name.toLowerCase()] = record.value ?? true;
+	}
+	return out;
+}
+
+/** schema.org `image` (string or array) -> count plus the first URL. */
+export function imageInfo(value: unknown): {
+	count: number | null;
+	primary: string | null;
+} {
+	if (typeof value === "string") return { count: 1, primary: value };
+	if (Array.isArray(value)) {
+		const first = value.find(
+			(entry): entry is string => typeof entry === "string",
+		);
+		return { count: value.length, primary: first ?? null };
+	}
+	return { count: null, primary: null };
 }

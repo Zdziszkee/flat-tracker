@@ -1,10 +1,10 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, CheerioSelection, Listing } from "../types.ts";
+import { createDetailCache, type DetailCacheEntry } from "./detail-cache.ts";
 import { cleanText } from "./html-entities.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
 import { num, str } from "./ldoffer.ts";
+import { absoluteUrl } from "./parse.ts";
 import {
 	propertyTypeFromListingUrl,
 	propertyTypeFromValue,
@@ -36,49 +36,13 @@ const CATEGORIES = ["mieszkania", "domy", "dzialki"] as const;
 
 type Selector = (selector: string | unknown) => CheerioSelection;
 
-interface CachedInvestment {
-	fetchedAt: string;
-}
-
-let cacheState: Record<string, CachedInvestment> | null = null;
-
-function loadCache(): Record<string, CachedInvestment> {
-	if (cacheState) return cacheState;
-	let parsed: Record<string, Partial<CachedInvestment>> = {};
-	try {
-		parsed = JSON.parse(readFileSync(DETAIL_CACHE_PATH, "utf8"));
-	} catch {
-		// Missing or corrupt cache: start empty, details simply re-fetch.
-	}
-	const cache: Record<string, CachedInvestment> = {};
-	for (const [id, entry] of Object.entries(parsed)) {
-		cache[id] = { fetchedAt: entry.fetchedAt ?? "" };
-	}
-	cacheState = cache;
-	return cache;
-}
-
-function saveCache(cache: Record<string, CachedInvestment>): void {
-	mkdirSync(dirname(DETAIL_CACHE_PATH), { recursive: true });
-	writeFileSync(DETAIL_CACHE_PATH, JSON.stringify(cache));
-}
-
-function cacheFresh(entry: CachedInvestment | undefined): boolean {
-	if (!entry?.fetchedAt) return false;
-	const fetched = Date.parse(entry.fetchedAt);
-	return Number.isFinite(fetched)
-		? Date.now() - fetched < DETAIL_TTL_DAYS * 86_400_000
-		: false;
-}
-
-function absoluteUrl(href: string | null | undefined): string | null {
-	if (!href) return null;
-	try {
-		return new URL(href, BASE).href;
-	} catch {
-		return null;
-	}
-}
+const detailCache = createDetailCache<DetailCacheEntry>({
+	path: DETAIL_CACHE_PATH,
+	ttlDays: DETAIL_TTL_DAYS,
+	normalize: (entry) => ({
+		fetchedAt: typeof entry.fetchedAt === "string" ? entry.fetchedAt : "",
+	}),
+});
 
 /** Last `,i<digits>`/`,<digits>` segment of a TabelaOfert listing URL. */
 function listingId(url: string): string | null {
@@ -158,7 +122,7 @@ function offerToListing(
 	context: OfferContext,
 ): Listing | null {
 	const rawUrl = str(offer.url);
-	const url = absoluteUrl(rawUrl);
+	const url = absoluteUrl(rawUrl, BASE);
 	if (!url) return null;
 	const externalId = listingId(url);
 	if (!externalId) return null;
@@ -312,11 +276,7 @@ export const tabelaofertAdapter: CheerioAdapter = {
 				if (listing) listings.push(listing);
 			}
 			if (context.investmentId) {
-				const cache = loadCache();
-				cache[context.investmentId] = {
-					fetchedAt: new Date().toISOString(),
-				};
-				saveCache(cache);
+				detailCache.store(context.investmentId, {});
 			}
 			return listings;
 		}
@@ -325,16 +285,15 @@ export const tabelaofertAdapter: CheerioAdapter = {
 		// for their unit-level detail page.
 		const context = contextOf(product, url, category);
 		const listings: Listing[] = [];
-		const cache = loadCache();
 		const detailUrls: string[] = [];
 		for (const offer of productOffers(product)) {
-			const offerUrl = absoluteUrl(str(offer.url));
+			const offerUrl = absoluteUrl(str(offer.url), BASE);
 			if (!offerUrl) continue;
 			if (isInvestmentUrl(offerUrl)) {
 				const id = listingId(offerUrl);
 				if (
 					id &&
-					!cacheFresh(cache[id]) &&
+					!detailCache.fresh(detailCache.get(id)) &&
 					detailUrls.length < DETAIL_BUDGET_PER_PAGE
 				) {
 					detailUrls.push(offerUrl);
@@ -349,7 +308,7 @@ export const tabelaofertAdapter: CheerioAdapter = {
 		const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
 		if (!pageOnly) {
 			const next = $('link[rel="next"]').eq(0).attr("href");
-			const nextUrl = absoluteUrl(next);
+			const nextUrl = absoluteUrl(next, BASE);
 			if (nextUrl) await enqueue([nextUrl]);
 		}
 

@@ -1,10 +1,10 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { regionsForPoint } from "../regions.ts";
 import type { CheerioAdapter, CheerioSelection, Listing } from "../types.ts";
+import { createDetailCache } from "./detail-cache.ts";
 import { cleanText } from "./html-entities.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
 import { num, str } from "./ldoffer.ts";
+import { absoluteUrl, parseNumberText } from "./parse.ts";
 
 /**
  * Mapa Licytacji (mapalicytacji.pl) — a public aggregator of Polish
@@ -62,41 +62,10 @@ interface CachedDetail {
 	listing: Listing;
 }
 
-let cacheState: Record<string, CachedDetail> | null = null;
-
-function loadCache(): Record<string, CachedDetail> {
-	if (cacheState) return cacheState;
-	let parsed: Record<string, CachedDetail> = {};
-	try {
-		parsed = JSON.parse(readFileSync(DETAIL_CACHE_PATH, "utf8"));
-	} catch {
-		// Missing or corrupt cache: start empty, details simply re-fetch.
-	}
-	cacheState = parsed;
-	return parsed;
-}
-
-function saveCache(cache: Record<string, CachedDetail>): void {
-	mkdirSync(dirname(DETAIL_CACHE_PATH), { recursive: true });
-	writeFileSync(DETAIL_CACHE_PATH, JSON.stringify(cache));
-}
-
-function cacheFresh(entry: CachedDetail | undefined): boolean {
-	if (!entry?.fetchedAt) return false;
-	const fetched = Date.parse(entry.fetchedAt);
-	return Number.isFinite(fetched)
-		? Date.now() - fetched < DETAIL_TTL_DAYS * 86_400_000
-		: false;
-}
-
-function absoluteUrl(href: string | null | undefined): string | null {
-	if (!href) return null;
-	try {
-		return new URL(href, BASE).href;
-	} catch {
-		return null;
-	}
-}
+const detailCache = createDetailCache<CachedDetail>({
+	path: DETAIL_CACHE_PATH,
+	ttlDays: DETAIL_TTL_DAYS,
+});
 
 function externalIdOf(url: string, type: string): string {
 	const parts = new URL(url).pathname.split("/").filter(Boolean);
@@ -105,14 +74,6 @@ function externalIdOf(url: string, type: string): string {
 	// has only one segment after the prefix.
 	const id = parts[1] ?? parts[0] ?? url;
 	return `${type}:${id}`;
-}
-
-function parseNumberText(value: string | null | undefined): number | null {
-	if (!value) return null;
-	const n = Number.parseFloat(
-		value.replace(/[\s\u00a0]/g, "").replace(",", "."),
-	);
-	return Number.isFinite(n) ? n : null;
 }
 
 function priceFromText(text: string): number | null {
@@ -448,12 +409,7 @@ function detailToListing(
 		scrapedAt: new Date().toISOString(),
 	};
 
-	const cache = loadCache();
-	cache[listing.externalId] = {
-		fetchedAt: new Date().toISOString(),
-		listing,
-	};
-	saveCache(cache);
+	detailCache.store(listing.externalId, { listing });
 
 	return listing;
 }
@@ -482,7 +438,6 @@ export const mapalicytacjiAdapter: CheerioAdapter = {
 		if (!seed) return [];
 
 		const listings: Listing[] = [];
-		const cache = loadCache();
 		const detailUrls: string[] = [];
 		const seen = new Set<string>();
 		$("article.card a[href]").each((_, el) => {
@@ -490,14 +445,14 @@ export const mapalicytacjiAdapter: CheerioAdapter = {
 			const href = anchor.attr("href");
 			if (!href) return;
 			if (!/^\/(?:przetarg|licytacja|nieruchomosc)-/u.test(href)) return;
-			const detailUrl = absoluteUrl(href);
+			const detailUrl = absoluteUrl(href, BASE);
 			if (!detailUrl) return;
 			if (seen.has(detailUrl)) return;
 			seen.add(detailUrl);
 			const type = auctionTypeFromUrl(detailUrl, seed.type);
 			const id = externalIdOf(detailUrl, type);
-			const cached = cache[id];
-			if (cached?.listing && cacheFresh(cached)) {
+			const cached = detailCache.get(id);
+			if (cached?.listing && detailCache.fresh(cached)) {
 				listings.push(cached.listing);
 				return;
 			}
@@ -508,7 +463,7 @@ export const mapalicytacjiAdapter: CheerioAdapter = {
 		if (detailUrls.length > 0) await enqueue(detailUrls);
 
 		const next = $('a[rel="next"]').eq(0).attr("href");
-		const nextUrl = absoluteUrl(next);
+		const nextUrl = absoluteUrl(next, BASE);
 		if (nextUrl) await enqueue([nextUrl]);
 
 		return listings;

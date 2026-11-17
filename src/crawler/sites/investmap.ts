@@ -1,7 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { REGIONS, regionForPoint } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
+import { createDetailCache } from "./detail-cache.ts";
 import { propertyTypeFromValue } from "./property-type.ts";
 
 /**
@@ -148,47 +147,30 @@ export interface CachedInvestment {
 	constructionEndDate: string | null;
 }
 
-let investmentCacheState: Record<string, CachedInvestment> | null = null;
-
 /** Per-investment timeline cache (data/crawler/investmap-investments.json,
  * overridable via INVESTMAP_INVESTMENT_CACHE for the validator): keyed by
  * investment id, it records the published `finish` pair and when the
  * detail endpoint last answered, so re-crawls only refetch what is new or
  * older than DETAIL_REFRESH_DAYS and list-page rows keep the timeline
  * without a refetch. */
-function investmentCachePath(): string {
-	return (
+const investmentCache = createDetailCache<CachedInvestment>({
+	path: () =>
 		process.env.INVESTMAP_INVESTMENT_CACHE ??
-		"data/crawler/investmap-investments.json"
-	);
-}
-
-function loadInvestmentCache(): Record<string, CachedInvestment> {
-	if (investmentCacheState) return investmentCacheState;
-	let parsed: Record<string, Partial<CachedInvestment>> = {};
-	try {
-		parsed = JSON.parse(readFileSync(investmentCachePath(), "utf8"));
-	} catch {
-		// Missing or corrupt cache: start empty, investments simply refetch.
-	}
-	const cache: Record<string, CachedInvestment> = {};
-	for (const [id, entry] of Object.entries(parsed)) {
-		cache[id] = {
-			fetchedAt: entry.fetchedAt ?? "",
-			updatedAt: entry.updatedAt ?? null,
-			constructionEndLabel: entry.constructionEndLabel ?? null,
-			constructionEndDate: entry.constructionEndDate ?? null,
-		};
-	}
-	investmentCacheState = cache;
-	return cache;
-}
-
-function saveInvestmentCache(cache: Record<string, CachedInvestment>): void {
-	const path = investmentCachePath();
-	mkdirSync(dirname(path), { recursive: true });
-	writeFileSync(path, JSON.stringify(cache));
-}
+		"data/crawler/investmap-investments.json",
+	ttlDays: DETAIL_REFRESH_DAYS,
+	normalize: (entry) => ({
+		fetchedAt: typeof entry.fetchedAt === "string" ? entry.fetchedAt : "",
+		updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : null,
+		constructionEndLabel:
+			typeof entry.constructionEndLabel === "string"
+				? entry.constructionEndLabel
+				: null,
+		constructionEndDate:
+			typeof entry.constructionEndDate === "string"
+				? entry.constructionEndDate
+				: null,
+	}),
+});
 
 /**
  * The published timeline, verbatim. `finish.title` is kept as-is ("I kw.
@@ -364,9 +346,7 @@ export const investmapAdapter: CheerioAdapter = {
 			const inv = detail.investment;
 			if (!inv?.id) return [];
 			const timeline = timelineOf(inv);
-			const cache = loadInvestmentCache();
-			cache[String(inv.id)] = timeline;
-			saveInvestmentCache(cache);
+			investmentCache.put(String(inv.id), timeline);
 			// No city slug on a detail request: fall back to the region the
 			// coordinates sit in (Kraków for Małopolska, Katowice for Śląsk).
 			const lat = inv.location?.lat;
@@ -393,9 +373,8 @@ export const investmapAdapter: CheerioAdapter = {
 
 		const investments = data.list ?? [];
 		const listings: Listing[] = [];
-		const cache = loadInvestmentCache();
+		const cache = investmentCache.load();
 		const toFetch: string[] = [];
-		const now = Date.now();
 		const defaultCity = cityNameForSlug(citySlugFromUrl(url));
 		for (const inv of investments) {
 			const cached = cache[String(inv.id)] ?? null;
@@ -411,11 +390,9 @@ export const investmapAdapter: CheerioAdapter = {
 			// Timeline refresh gate: never cached (new investment) or the
 			// cached fetch aged past DETAIL_REFRESH_DAYS (quarter-precision
 			// data moves slowly; a monthly refetch is plenty).
-			const fetchedAt = cached ? Date.parse(cached.fetchedAt) : Number.NaN;
-			const stale =
-				!Number.isFinite(fetchedAt) ||
-				now - fetchedAt > DETAIL_REFRESH_DAYS * 86_400_000;
-			if (stale) toFetch.push(`${DETAIL_BASE}?id=${inv.id}`);
+			if (!investmentCache.fresh(cached)) {
+				toFetch.push(`${DETAIL_BASE}?id=${inv.id}`);
+			}
 		}
 		if (toFetch.length > 0) await enqueue(toFetch);
 

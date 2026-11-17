@@ -2,6 +2,7 @@ import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, Listing } from "../types.ts";
 import { cleanText } from "./html-entities.ts";
 import { num, str } from "./ldoffer.ts";
+import { parseWindowState } from "./page-state.ts";
 import { propertyTypeFromValue } from "./property-type.ts";
 
 /**
@@ -86,46 +87,6 @@ interface GhState {
 			pageCount?: number | string | null;
 		} | null;
 	} | null;
-}
-
-/** Extract the first balanced object assigned to `window.__INITIAL_STATE__`. */
-function parseState(html: string): GhState | null {
-	const marker = html.indexOf("window.__INITIAL_STATE__");
-	if (marker < 0) return null;
-	const eq = html.indexOf("=", marker);
-	if (eq < 0) return null;
-	const raw = html.slice(eq + 1).trimStart();
-	const json = extractBalancedObject(raw);
-	if (!json) return null;
-	try {
-		return JSON.parse(json) as GhState;
-	} catch {
-		return null;
-	}
-}
-
-function extractBalancedObject(raw: string): string | null {
-	let depth = 0;
-	let inString = false;
-	let escaped = false;
-	for (let i = 0; i < raw.length; i++) {
-		const c = raw[i];
-		if (inString) {
-			if (escaped) escaped = false;
-			else if (c === "\\") escaped = true;
-			else if (c === '"') inString = false;
-			continue;
-		}
-		if (c === '"') {
-			inString = true;
-		} else if (c === "{") {
-			depth++;
-		} else if (c === "}") {
-			depth--;
-			if (depth === 0) return raw.slice(0, i + 1);
-		}
-	}
-	return null;
 }
 
 function offerUrl(slug: string | null): string | null {
@@ -240,7 +201,7 @@ export const gethomeAdapter: CheerioAdapter = {
 	firstPageOnlyRequests: REGIONS.length * 2,
 
 	async extractHtml(html, url, enqueue) {
-		const state = parseState(html);
+		const state = parseWindowState<GhState>(html);
 		const page = state?.offerList?.offers;
 		const offers = page?.offers ?? [];
 

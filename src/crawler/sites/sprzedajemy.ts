@@ -1,5 +1,3 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, CheerioSelection, Listing } from "../types.ts";
 import {
@@ -7,9 +5,16 @@ import {
 	minedStreetLooksReal,
 	parseAddressFromText,
 } from "./address.ts";
+import { createDetailCache, enqueueDetailPass } from "./detail-cache.ts";
 import { cleanText } from "./html-entities.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
 import { str } from "./ldoffer.ts";
+import {
+	absoluteUrl,
+	areaFromText,
+	parseNumberText,
+	priceFromText,
+} from "./parse.ts";
 import { propertyTypeFromListingUrl } from "./property-type.ts";
 
 /**
@@ -32,7 +37,6 @@ import { propertyTypeFromListingUrl } from "./property-type.ts";
 
 const BASE = "https://sprzedajemy.pl";
 const DETAIL_BUDGET_PER_PAGE = 8;
-const DETAIL_CACHE_PATH = "data/crawler/sprzedajemy-details.json";
 const CATEGORIES = ["mieszkania", "domy", "grunty-i-dzialki"] as const;
 
 type Selector = (selector: string | unknown) => CheerioSelection;
@@ -49,66 +53,25 @@ interface CachedDetail {
 	propertyType: string | null;
 }
 
-let detailCacheState: Record<string, CachedDetail> | null = null;
-
-function loadDetailCache(): Record<string, CachedDetail> {
-	if (detailCacheState) return detailCacheState;
-	let parsed: Record<string, Partial<CachedDetail>> = {};
-	try {
-		parsed = JSON.parse(readFileSync(DETAIL_CACHE_PATH, "utf8"));
-	} catch {
-		// Missing or corrupt cache: start empty, details simply re-fetch.
-	}
-	const cache: Record<string, CachedDetail> = {};
-	for (const [id, entry] of Object.entries(parsed)) {
-		cache[id] = {
-			fetchedAt: entry.fetchedAt ?? "",
-			lat: typeof entry.lat === "number" ? entry.lat : null,
-			lng: typeof entry.lng === "number" ? entry.lng : null,
-			address: entry.address ?? null,
-			description: entry.description ?? null,
-			areaM2: typeof entry.areaM2 === "number" ? entry.areaM2 : null,
-			rooms: typeof entry.rooms === "number" ? entry.rooms : null,
-			floor: entry.floor ?? null,
-			propertyType: entry.propertyType ?? null,
-		};
-	}
-	detailCacheState = cache;
-	return cache;
-}
-
-function saveDetailCache(cache: Record<string, CachedDetail>): void {
-	mkdirSync(dirname(DETAIL_CACHE_PATH), { recursive: true });
-	writeFileSync(DETAIL_CACHE_PATH, JSON.stringify(cache));
-}
-
-function absoluteUrl(href: string | null | undefined): string | null {
-	if (!href) return null;
-	try {
-		return new URL(href, BASE).href;
-	} catch {
-		return null;
-	}
-}
+const detailCache = createDetailCache<CachedDetail>({
+	path: "data/crawler/sprzedajemy-details.json",
+	normalize: (entry) => ({
+		fetchedAt: typeof entry.fetchedAt === "string" ? entry.fetchedAt : "",
+		lat: typeof entry.lat === "number" ? entry.lat : null,
+		lng: typeof entry.lng === "number" ? entry.lng : null,
+		address: typeof entry.address === "string" ? entry.address : null,
+		description:
+			typeof entry.description === "string" ? entry.description : null,
+		areaM2: typeof entry.areaM2 === "number" ? entry.areaM2 : null,
+		rooms: typeof entry.rooms === "number" ? entry.rooms : null,
+		floor: typeof entry.floor === "string" ? entry.floor : null,
+		propertyType:
+			typeof entry.propertyType === "string" ? entry.propertyType : null,
+	}),
+});
 
 function externalIdOf(url: string): string | null {
 	return url.match(/-nr(\d+)(?:[?#/]|$)/u)?.[1] ?? null;
-}
-
-function parseNumberText(value: string | null | undefined): number | null {
-	if (!value) return null;
-	const n = Number.parseFloat(
-		value.replace(/[\s\u00a0]/g, "").replace(",", "."),
-	);
-	return Number.isFinite(n) ? n : null;
-}
-
-function priceFromText(text: string): number | null {
-	return parseNumberText(text.match(/([\d\s\u00a0]+)\s*zł/iu)?.[1]);
-}
-
-function areaFromText(text: string): number | null {
-	return parseNumberText(text.match(/([\d\s.,]+)\s*m[²2]/iu)?.[1]);
 }
 
 function roomsFromText(text: string): number | null {
@@ -176,7 +139,7 @@ function cardToListing(
 	const link =
 		card.find("h2.title a").eq(0).attr("href") ??
 		card.find("a.offerLink").eq(0).attr("href");
-	const url = absoluteUrl(link);
+	const url = absoluteUrl(link, BASE);
 	if (!url) return null;
 	const externalId = externalIdOf(url);
 	if (!externalId) return null;
@@ -367,9 +330,7 @@ function detailToListing(
 		scrapedAt: new Date().toISOString(),
 	};
 
-	const cache = loadDetailCache();
-	cache[listing.externalId] = {
-		fetchedAt: new Date().toISOString(),
+	detailCache.store(listing.externalId, {
 		lat: listing.lat,
 		lng: listing.lng,
 		address: listing.address,
@@ -378,8 +339,7 @@ function detailToListing(
 		rooms: listing.rooms,
 		floor: listing.floor,
 		propertyType: listing.propertyType,
-	};
-	saveDetailCache(cache);
+	});
 
 	return listing;
 }
@@ -411,11 +371,9 @@ export const sprzedajemyAdapter: CheerioAdapter = {
 			if (listing) listings.push(listing);
 		});
 
-		const cache = loadDetailCache();
-		const detailUrls: string[] = [];
-		for (const listing of listings) {
-			const cached = cache[listing.externalId];
-			if (cached) {
+		const detailUrls = enqueueDetailPass(listings, detailCache.load(), {
+			budget: DETAIL_BUDGET_PER_PAGE,
+			apply: (listing, cached) => {
 				listing.lat = cached.lat ?? listing.lat;
 				listing.lng = cached.lng ?? listing.lng;
 				listing.address = cached.address ?? listing.address;
@@ -424,17 +382,14 @@ export const sprzedajemyAdapter: CheerioAdapter = {
 				listing.rooms = cached.rooms ?? listing.rooms;
 				listing.floor = cached.floor ?? listing.floor;
 				listing.propertyType = cached.propertyType ?? listing.propertyType;
-				continue;
-			}
-			if (detailUrls.length >= DETAIL_BUDGET_PER_PAGE) break;
-			detailUrls.push(listing.url);
-		}
+			},
+		});
 		if (detailUrls.length > 0) await enqueue(detailUrls);
 
 		const pageOnly = this.firstPageOnly === true && !this.alwaysFullCrawl;
 		if (!pageOnly) {
 			const next = $("li.next a").eq(0).attr("href");
-			const nextUrl = absoluteUrl(next);
+			const nextUrl = absoluteUrl(next, BASE);
 			if (nextUrl) await enqueue([nextUrl]);
 		}
 

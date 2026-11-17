@@ -6,38 +6,11 @@ import {
 	parseAddressFromText,
 } from "./address.ts";
 import { findLdNodes, hasLdType, makeLdGraphAdapter } from "./ldgraph.ts";
-import { num, str } from "./ldoffer.ts";
+import { imageInfo, num, pairsToRecord, str } from "./ldoffer.ts";
 import {
 	propertyTypeFromListingUrl,
 	propertyTypeFromValue,
 } from "./property-type.ts";
-
-function pairsToRecord(value: unknown): Record<string, unknown> {
-	const out: Record<string, unknown> = {};
-	if (!Array.isArray(value)) return out;
-	for (const entry of value) {
-		if (!entry || typeof entry !== "object") continue;
-		const record = entry as Record<string, unknown>;
-		const name = str(record.name);
-		if (!name) continue;
-		out[name.toLowerCase()] = record.value ?? true;
-	}
-	return out;
-}
-
-function imageInfo(value: unknown): {
-	count: number | null;
-	primary: string | null;
-} {
-	if (typeof value === "string") return { count: 1, primary: value };
-	if (Array.isArray(value)) {
-		const first = value.find(
-			(entry): entry is string => typeof entry === "string",
-		);
-		return { count: value.length, primary: first ?? null };
-	}
-	return { count: null, primary: null };
-}
 
 /**
  * Domiporta embeds its results as an ItemList inside an @graph LD+JSON
