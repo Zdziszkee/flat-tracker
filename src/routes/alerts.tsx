@@ -1,10 +1,39 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { ExternalLink, Map as MapIcon, SearchX } from "lucide-react";
 import { useState } from "react";
 
+import { Badge } from "#/components/ui/badge";
+import { Button } from "#/components/ui/button";
+import {
+	Card,
+	CardAction,
+	CardContent,
+	CardDescription,
+	CardFooter,
+	CardHeader,
+	CardTitle,
+} from "#/components/ui/card";
+import {
+	Empty,
+	EmptyDescription,
+	EmptyHeader,
+	EmptyMedia,
+	EmptyTitle,
+} from "#/components/ui/empty";
+import { Label } from "#/components/ui/label";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "#/components/ui/select";
+import { Skeleton } from "#/components/ui/skeleton";
 import { useAlerts } from "#/hooks/use-alerts";
 import { formatNumber } from "#/lib/format";
 import type { ListingSearch } from "#/lib/listing-features";
 import type { AlertSegment } from "#/lib/scoring/config";
+import { cn } from "#/lib/utils";
 import type { AlertDto } from "#/types/alerts";
 
 export const Route = createFileRoute("/alerts")({
@@ -60,7 +89,7 @@ function AlertsPage() {
 			<div className="mb-4 flex flex-wrap items-end justify-between gap-3">
 				<div>
 					<h1 className="text-balance text-xl font-semibold">Alerty dnia</h1>
-					<p className="text-sm text-gray-600">
+					<p className="text-sm text-muted-foreground">
 						Top 5% ofert na sprzedaż w trzech segmentach: mieszkania, domy i
 						działki. Co najmniej 10% taniej od mediany podobnych z okolicy,
 						osobno dla regionu i segmentu. Nowe oferty są oceniane po każdym
@@ -68,39 +97,31 @@ function AlertsPage() {
 					</p>
 				</div>
 				<div className="flex flex-wrap items-end gap-3">
-					<label className="text-sm">
-						<span className="mb-1 block text-gray-600">Region</span>
-						<select
-							name="region"
-							className="rounded border bg-white px-2 py-1 text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-							value={region}
-							onChange={(event) => setRegion(event.target.value)}
-						>
-							<option value="all">Wszystkie</option>
-							<option value="malopolskie">Małopolska</option>
-							<option value="slaskie">Śląsk</option>
-						</select>
-					</label>
-					<Link
-						to="/"
-						className="rounded text-blue-600 underline hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-					>
-						Start
-					</Link>
-					<Link
-						to="/listings"
-						className="rounded text-blue-600 underline hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-					>
-						Ogłoszenia
-					</Link>
+					<div className="flex flex-col gap-1">
+						<Label className="text-xs text-muted-foreground">Region</Label>
+						<Select value={region} onValueChange={setRegion}>
+							<SelectTrigger className="w-[160px]" aria-label="Region">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="all">Wszystkie</SelectItem>
+								<SelectItem value="malopolskie">Małopolska</SelectItem>
+								<SelectItem value="slaskie">Śląsk</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
+					<Button variant="link" size="sm" asChild>
+						<Link to="/">Start</Link>
+					</Button>
+					<Button variant="link" size="sm" asChild>
+						<Link to="/listings">Ogłoszenia</Link>
+					</Button>
 				</div>
 			</div>
 
-			{isLoading && (
-				<output className="block text-gray-500">Ładowanie alertów…</output>
-			)}
+			{isLoading && <output className="sr-only">Ładowanie alertów…</output>}
 
-			<div className="space-y-8">
+			<div className="flex flex-col gap-8">
 				{SECTIONS.map(({ segment, label, mapKind }) => {
 					const alerts = bySegment.get(segment) ?? [];
 					return (
@@ -110,16 +131,28 @@ function AlertsPage() {
 								className="mb-2 text-lg font-semibold"
 							>
 								{label}{" "}
-								<span className="text-sm font-normal text-gray-500 tabular-nums">
+								<span className="text-sm font-normal text-muted-foreground tabular-nums">
 									· top 5% · {offerCount(alerts.length)}
 								</span>
 							</h2>
-							{alerts.length === 0 ? (
-								<p className="rounded border border-dashed p-6 text-sm text-gray-500">
-									{isLoading
-										? "Ładowanie…"
-										: "Brak ofert spełniających progi w tym segmencie. Lista uzupełnia się automatycznie po każdym odświeżeniu danych."}
-								</p>
+							{isLoading ? (
+								<div className="grid gap-3 xl:grid-cols-2">
+									<Skeleton className="h-64 rounded-xl" />
+									<Skeleton className="h-64 rounded-xl" />
+								</div>
+							) : alerts.length === 0 ? (
+								<Empty className="border border-border">
+									<EmptyHeader>
+										<EmptyMedia variant="icon">
+											<SearchX aria-hidden="true" />
+										</EmptyMedia>
+										<EmptyTitle>Brak alertów w tym segmencie</EmptyTitle>
+										<EmptyDescription>
+											Brak ofert spełniających progi w tym segmencie. Lista
+											uzupełnia się automatycznie po każdym odświeżeniu danych.
+										</EmptyDescription>
+									</EmptyHeader>
+								</Empty>
 							) : (
 								<RegionGroups alerts={alerts} mapKind={mapKind} />
 							)}
@@ -156,16 +189,16 @@ function RegionGroups({
 	const grouped = regions.length > 1;
 
 	return (
-		<div className="space-y-4">
+		<div className="flex flex-col gap-4">
 			{regions.map((region) => {
 				const regionAlerts = byRegion.get(region) ?? [];
 				const label = REGION_LABELS[region] ?? region;
 				return (
 					<div key={region}>
 						{grouped && (
-							<h3 className="mb-2 text-sm font-semibold text-gray-700">
+							<h3 className="mb-2 text-sm font-semibold">
 								{label}{" "}
-								<span className="font-normal text-gray-500 tabular-nums">
+								<span className="font-normal text-muted-foreground tabular-nums">
 									· {offerCount(regionAlerts.length)}
 								</span>
 							</h3>
@@ -214,115 +247,118 @@ function AlertCard({
 			? alert.listing.price / alert.listing.areaM2
 			: null);
 	return (
-		<article className="rounded border bg-white p-4 shadow-sm">
-			<div className="flex items-start justify-between gap-3">
-				<div className="min-w-0">
-					<div className="text-xs text-gray-500">
-						#{alert.rank} · {REGION_LABELS[alert.region] ?? alert.region}
-					</div>
+		<Card className="gap-4 py-4">
+			<CardHeader className="px-4">
+				<CardDescription className="text-xs">
+					#{alert.rank} · {REGION_LABELS[alert.region] ?? alert.region}
+				</CardDescription>
+				<CardTitle className="leading-snug">
 					<a
 						href={alert.listing.url}
 						target="_blank"
 						rel="noreferrer"
 						aria-label={`Otwórz ofertę „${alert.listing.title}” w nowej karcie (${alert.listing.source})`}
-						className="block break-words font-medium hover:text-blue-600 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+						className="break-words rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					>
 						{alert.listing.title}
 					</a>
-					<div className="mt-1 break-words text-sm text-gray-600">
-						{alert.listing.district ?? alert.listing.city ?? "brak dzielnicy"} ·{" "}
-						{alert.listing.areaM2 != null
-							? `${formatNumber(Math.round(alert.listing.areaM2))} m²`
-							: "brak metrażu"}{" "}
-						· {alert.listing.rooms ?? "?"} pok.
-					</div>
-				</div>
-				<div className="shrink-0 text-right">
+				</CardTitle>
+				<CardDescription className="break-words">
+					{alert.listing.district ?? alert.listing.city ?? "brak dzielnicy"} ·{" "}
+					{alert.listing.areaM2 != null
+						? `${formatNumber(Math.round(alert.listing.areaM2))} m²`
+						: "brak metrażu"}{" "}
+					· {alert.listing.rooms ?? "?"} pok.
+				</CardDescription>
+				<CardAction className="text-right">
 					<div className="text-2xl font-semibold tabular-nums">
 						{alert.score.toFixed(1)}
 					</div>
-					<div className="text-xs text-gray-500">score</div>
+					<div className="text-xs text-muted-foreground">score</div>
+				</CardAction>
+			</CardHeader>
+
+			<CardContent className="flex flex-col gap-3 px-4">
+				<div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+					<Metric label="Cena" value={alert.listing.price} suffix=" zł" />
+					<Metric label="Wycena" value={alert.fairPrice} suffix=" zł" />
+					<Metric
+						label="Poniżej mediany okolicy"
+						value={discount}
+						suffix="%"
+						emphasis={(discount ?? 0) >= 10}
+					/>
+					<Metric label="Cena za m²" value={askingM2} suffix=" zł/m²" />
+					<Metric label="Wycena za m²" value={alert.fairM2} suffix=" zł/m²" />
+					<Metric
+						label="Pewność"
+						value={(alert.confidence ?? 0) * 100}
+						suffix="%"
+					/>
 				</div>
-			</div>
 
-			<div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-				<Metric label="Cena" value={alert.listing.price} suffix=" zł" />
-				<Metric label="Wycena" value={alert.fairPrice} suffix=" zł" />
-				<Metric
-					label="Poniżej mediany okolicy"
-					value={discount}
-					suffix="%"
-					emphasis={(discount ?? 0) >= 10}
-				/>
-				<Metric label="Cena za m²" value={askingM2} suffix=" zł/m²" />
-				<Metric label="Wycena za m²" value={alert.fairM2} suffix=" zł/m²" />
-				<Metric
-					label="Pewność"
-					value={(alert.confidence ?? 0) * 100}
-					suffix="%"
-				/>
-			</div>
+				<div className="grid grid-cols-5 gap-1 text-center text-xs">
+					<ScorePill label="Cena" value={alert.valueScore} />
+					<ScorePill label="Transport" value={alert.transitScore} />
+					<ScorePill label="Zieleń" value={alert.greenScore} />
+					<ScorePill label="Nieruch." value={alert.propertyScore} />
+					<ScorePill label="Ryzyko" value={alert.riskScore} />
+				</div>
 
-			<div className="mt-3 grid grid-cols-5 gap-1 text-center text-xs">
-				<ScorePill label="Cena" value={alert.valueScore} />
-				<ScorePill label="Transport" value={alert.transitScore} />
-				<ScorePill label="Zieleń" value={alert.greenScore} />
-				<ScorePill label="Nieruch." value={alert.propertyScore} />
-				<ScorePill label="Ryzyko" value={alert.riskScore} />
-			</div>
-
-			<ul className="mt-3 space-y-1 text-sm">
-				{alert.reasons.slice(0, 4).map((reason) => (
-					<li
-						key={reason.label}
-						className={
-							reason.direction === "positive"
-								? "text-emerald-700"
-								: "text-red-700"
-						}
-					>
-						<span className="tabular-nums">
-							{reason.direction === "positive" ? "+" : ""}
-							{reason.impact.toFixed(1)}
-						</span>{" "}
-						· {reason.label}
-					</li>
-				))}
-			</ul>
-
-			{alert.flags.length > 0 && (
-				<div className="mt-2 flex flex-wrap gap-1">
-					{alert.flags.map((flag) => (
-						<span
-							key={flag}
-							className="rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800"
+				<ul className="flex flex-col gap-1 text-sm">
+					{alert.reasons.slice(0, 4).map((reason) => (
+						<li
+							key={reason.label}
+							className={cn(
+								reason.direction === "positive"
+									? "text-emerald-400"
+									: "text-red-400",
+							)}
 						>
-							{flag}
-						</span>
+							<span className="tabular-nums">
+								{reason.direction === "positive" ? "+" : ""}
+								{reason.impact.toFixed(1)}
+							</span>{" "}
+							· {reason.label}
+						</li>
 					))}
-				</div>
-			)}
+				</ul>
 
-			<div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-				<Link
-					to="/map"
-					search={mapSearchFor(alert, mapKind)}
-					className="rounded text-blue-600 underline hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-					aria-label={`Pokaż ofertę „${alert.listing.title}” na mapie`}
-				>
-					Pokaż na mapie
-				</Link>
-				<a
-					href={alert.listing.url}
-					target="_blank"
-					rel="noreferrer"
-					aria-label={`Otwórz ogłoszenie „${alert.listing.title}” w portalu ${alert.listing.source} (nowa karta)`}
-					className="rounded text-blue-600 underline hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-				>
-					Ogłoszenie w portalu <span aria-hidden="true">↗</span>
-				</a>
-			</div>
-		</article>
+				{alert.flags.length > 0 && (
+					<div className="flex flex-wrap gap-1">
+						{alert.flags.map((flag) => (
+							<Badge key={flag} variant="secondary">
+								{flag}
+							</Badge>
+						))}
+					</div>
+				)}
+			</CardContent>
+
+			<CardFooter className="flex-wrap gap-x-4 gap-y-1 px-4">
+				<Button variant="link" size="sm" className="h-auto p-0" asChild>
+					<Link
+						to="/map"
+						search={mapSearchFor(alert, mapKind)}
+						aria-label={`Pokaż ofertę „${alert.listing.title}” na mapie`}
+					>
+						<MapIcon aria-hidden="true" />
+						Pokaż na mapie
+					</Link>
+				</Button>
+				<Button variant="link" size="sm" className="h-auto p-0" asChild>
+					<a
+						href={alert.listing.url}
+						target="_blank"
+						rel="noreferrer"
+						aria-label={`Otwórz ogłoszenie „${alert.listing.title}” w portalu ${alert.listing.source} (nowa karta)`}
+					>
+						Ogłoszenie w portalu
+						<ExternalLink aria-hidden="true" />
+					</a>
+				</Button>
+			</CardFooter>
+		</Card>
 	);
 }
 
@@ -338,8 +374,8 @@ function Metric({
 	emphasis?: boolean;
 }) {
 	return (
-		<div className={emphasis ? "text-emerald-700" : ""}>
-			<div className="text-xs text-gray-500">{label}</div>
+		<div className={cn(emphasis && "text-emerald-400")}>
+			<div className="text-xs text-muted-foreground">{label}</div>
 			<div className="font-medium tabular-nums">
 				{value == null
 					? "—"
@@ -350,17 +386,21 @@ function Metric({
 }
 
 function ScorePill({ label, value }: { label: string; value: number }) {
-	const tone =
-		value >= 75
-			? "bg-emerald-50 text-emerald-800"
-			: value >= 50
-				? "bg-gray-50 text-gray-700"
-				: "bg-red-50 text-red-800";
 	return (
-		<div className={`rounded px-1 py-1 ${tone}`}>
-			<div className="text-[10px] uppercase tracking-wide">{label}</div>
-			<div className="font-semibold tabular-nums">{value}</div>
-		</div>
+		<Badge
+			variant="secondary"
+			className={cn(
+				"h-auto w-full flex-col gap-0 rounded-md px-1 py-1",
+				value >= 75
+					? "text-emerald-400"
+					: value < 50
+						? "text-red-400"
+						: undefined,
+			)}
+		>
+			<span className="text-[10px] uppercase tracking-wide">{label}</span>
+			<span className="font-semibold tabular-nums">{value}</span>
+		</Badge>
 	);
 }
 
