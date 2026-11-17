@@ -45,6 +45,54 @@ import type {
 import { apiUrl } from "./map/url";
 
 /**
+ * Scoped dark chrome for Mapbox's own DOM (popup shell, nav controls,
+ * attribution). mapbox-gl.css hardcodes white surfaces; styles.css is owned
+ * elsewhere, so MapView renders this once alongside the canvas. The popup
+ * overrides only apply to popups created with POPUP_CLASS.
+ */
+const MAP_DARK_CSS = `
+.ft-map-popup .mapboxgl-popup-content {
+	background-color: var(--popover);
+	color: var(--popover-foreground);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-lg);
+	box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+}
+.ft-map-popup .mapboxgl-popup-tip {
+	border-top-color: var(--popover);
+	border-bottom-color: var(--popover);
+	border-left-color: var(--popover);
+	border-right-color: var(--popover);
+}
+.mapboxgl-ctrl-group {
+	background-color: var(--popover);
+	border: 1px solid var(--border);
+}
+.mapboxgl-ctrl-group button + button {
+	border-top-color: var(--border);
+}
+.mapboxgl-ctrl-group button:not(:disabled):hover {
+	background-color: var(--accent);
+}
+.mapboxgl-ctrl-group .mapboxgl-ctrl-icon {
+	filter: invert(0.92);
+}
+.mapboxgl-ctrl-attrib {
+	background-color: color-mix(in oklab, var(--popover) 82%, transparent);
+	color: var(--muted-foreground);
+}
+.mapboxgl-ctrl-attrib a {
+	color: var(--muted-foreground);
+}
+.mapboxgl-ctrl-attrib-button {
+	filter: invert(0.92);
+}
+`;
+
+/** Every popup we create carries this class so MAP_DARK_CSS can theme it. */
+const POPUP_CLASS = "ft-map-popup";
+
+/**
  * The map source only needs geometry plus the compact feed properties. The
  * old feed put the whole listing DTO (attributes, features, transaction
  * stats) into every feature, which made Mapbox serialize ~66 MB twice on the
@@ -102,7 +150,7 @@ export default function MapView({
 
 	if (!TOKEN) {
 		return (
-			<div className="flex h-full items-center justify-center p-6 text-center text-sm text-red-700">
+			<div className="flex h-full items-center justify-center p-6 text-center text-sm text-destructive-foreground">
 				Brak klucza VITE_MAPBOX_TOKEN w .env.local — mapa nie działa bez tokena
 				Mapbox.
 			</div>
@@ -111,6 +159,7 @@ export default function MapView({
 
 	return (
 		<div className="relative h-full w-full">
+			<style>{MAP_DARK_CSS}</style>
 			<MapCanvas
 				source={source}
 				days={days}
@@ -123,7 +172,7 @@ export default function MapView({
 				occupancy={occupancyCells}
 			/>
 
-			<footer className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-4 rounded-lg bg-white/90 px-4 py-1.5 text-xs text-gray-600 shadow">
+			<footer className="pointer-events-none absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-4 rounded-lg bg-popover/90 px-4 py-1.5 text-xs text-muted-foreground shadow ring-1 ring-border backdrop-blur">
 				<span className="flex items-center gap-1">
 					<span className="inline-block h-2.5 w-2.5 rounded-sm bg-amber-500" />{" "}
 					budynek z historią RCN
@@ -143,16 +192,16 @@ export default function MapView({
 					działka z historią RCN
 				</span>
 				<span className="flex items-center gap-1">
-					<span className="inline-block h-1 w-4 rounded-full bg-slate-600 ring-1 ring-white" />{" "}
+					<span className="inline-block h-1 w-4 rounded-full bg-slate-300 ring-1 ring-slate-900" />{" "}
 					kolej
 				</span>
 				<span className="flex items-center gap-1">
-					<span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-900 ring-1 ring-white" />{" "}
+					<span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-100 ring-1 ring-slate-900" />{" "}
 					stacja kolejowa
 				</span>
 				{showOccupancy && (
 					<>
-						<span className="mx-1 h-3 w-px bg-gray-300" />
+						<span className="mx-1 h-3 w-px bg-border" />
 						<span className="flex items-center gap-1">
 							<span className="inline-block h-2.5 w-2.5 rounded-sm bg-blue-500" />{" "}
 							niskie
@@ -171,12 +220,12 @@ export default function MapView({
 						</span>
 					</>
 				)}
-				<span className="mx-1 h-3 w-px bg-gray-300" />
+				<span className="mx-1 h-3 w-px bg-border" />
 				<span className="flex items-center gap-1">
 					<span className="inline-block h-2.5 w-2.5 rounded-full bg-sky-600 ring-2 ring-white" />{" "}
 					liczba ofert w kółku (od zbliżenia 13 pojedyncze oferty)
 				</span>
-				<span className="text-gray-500">kolor kropki = źródło</span>
+				<span className="text-muted-foreground">kolor kropki = źródło</span>
 			</footer>
 		</div>
 	);
@@ -254,7 +303,13 @@ function MapCanvas({
 			bearing: -20,
 			maxBounds: MAP_MAX_BOUNDS,
 			config: {
-				basemap: { show3dLandmarks: false, show3dTrees: false },
+				// Dusk from the first frame: the dark UI must not open on a
+				// bright daytime basemap (the load handler re-asserts it).
+				basemap: {
+					lightPreset: "dusk",
+					show3dLandmarks: false,
+					show3dTrees: false,
+				},
 			},
 			accessToken: TOKEN,
 			// Keep the frame buffer for compositors/screenshots: without it,
@@ -416,11 +471,17 @@ function MapCanvas({
 		});
 
 		map.on("load", () => {
-			// Softer daytime light so the colorful Standard palette reads well.
+			// Dusk light matches the dark app chrome while keeping the
+			// Standard palette readable; night is the fallback for style
+			// versions without the dusk preset.
 			try {
-				map.setConfigProperty("basemap", "lightPreset", "day");
+				map.setConfigProperty("basemap", "lightPreset", "dusk");
 			} catch {
-				// Older style versions ignore config presets.
+				try {
+					map.setConfigProperty("basemap", "lightPreset", "night");
+				} catch {
+					// Older style versions ignore config presets.
+				}
 			}
 			// The constructor config already set the 3D detail off for the
 			// overview zoom; keep it in sync as the user zooms in and out.
@@ -548,8 +609,8 @@ function MapCanvas({
 						"text-allow-overlap": false,
 					},
 					paint: {
-						"text-color": "#3d3d3d",
-						"text-halo-color": "#ffffff",
+						"text-color": "#e2e8f0",
+						"text-halo-color": "#0f172a",
 						"text-halo-width": 1.5,
 					},
 				});
@@ -601,8 +662,9 @@ function MapCanvas({
 
 			// Railways + stations (generated src/data/region-railways.ts, see
 			// /api/railways): the basemap draws rails as faint grey — users
-			// asked for them to READ: white casing under a thick slate line,
-			// stations as near-black dots with names. One mixed source, layers split
+			// asked for them to READ: dark casing under a light slate line,
+			// stations as near-white dots with names (inverted for the dusk
+			// basemap). One mixed source, layers split
 			// by geometry type; under the listings so pins stay clickable.
 			map.addSource("railways", {
 				type: "geojson",
@@ -614,7 +676,7 @@ function MapCanvas({
 				source: "railways",
 				filter: ["==", ["geometry-type"], "LineString"],
 				paint: {
-					"line-color": "#ffffff",
+					"line-color": "#0f172a",
 					"line-opacity": 0.85,
 					"line-width": ["interpolate", ["linear"], ["zoom"], 8, 3, 18, 12],
 				},
@@ -625,7 +687,7 @@ function MapCanvas({
 				source: "railways",
 				filter: ["==", ["geometry-type"], "LineString"],
 				paint: {
-					"line-color": "#475569",
+					"line-color": "#cbd5e1",
 					"line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.5, 18, 8],
 				},
 			});
@@ -636,8 +698,8 @@ function MapCanvas({
 				filter: ["==", ["geometry-type"], "Point"],
 				paint: {
 					"circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 3.5, 16, 7],
-					"circle-color": "#0f172a",
-					"circle-stroke-color": "#ffffff",
+					"circle-color": "#e2e8f0",
+					"circle-stroke-color": "#0f172a",
 					"circle-stroke-width": 1.5,
 				},
 			});
@@ -655,8 +717,8 @@ function MapCanvas({
 					"text-allow-overlap": false,
 				},
 				paint: {
-					"text-color": "#0f172a",
-					"text-halo-color": "#ffffff",
+					"text-color": "#e2e8f0",
+					"text-halo-color": "#0f172a",
 					"text-halo-width": 1.5,
 				},
 			});
@@ -704,7 +766,7 @@ function MapCanvas({
 					year: year !== null && Number.isFinite(year) ? year : null,
 					city: typeof props.city === "string" ? props.city : null,
 				});
-				new mapboxgl.Popup({ maxWidth: "340px" })
+				new mapboxgl.Popup({ className: POPUP_CLASS, maxWidth: "340px" })
 					.setLngLat(event.lngLat)
 					.setHTML(html)
 					.addTo(map);
@@ -907,15 +969,16 @@ function MapCanvas({
 				if (!props || props.occupancyRate == null) return;
 				popupRef.current?.remove();
 				const popup = new mapboxgl.Popup({
+					className: POPUP_CLASS,
 					offset: 8,
 					closeButton: false,
 					maxWidth: "260px",
 				})
 					.setLngLat(e.lngLat)
 					.setHTML(
-						`<div class="min-w-48 space-y-1 text-sm">
+						`<div class="flex min-w-48 flex-col gap-1 text-sm">
 							<div class="font-semibold">Obłożenie STR</div>
-							<div class="text-gray-500">${props.lat.toFixed(3)}, ${props.lng.toFixed(3)}</div>
+							<div class="text-muted-foreground">${props.lat.toFixed(3)}, ${props.lng.toFixed(3)}</div>
 							<div class="flex justify-between gap-3 pt-1">
 								<span>Obłożenie</span>
 								<span class="font-medium">${props.occupancyRate.toFixed(1)}%</span>
@@ -994,6 +1057,7 @@ function MapCanvas({
 					.then((data: BuildingLookup) => {
 						popupRef.current?.remove();
 						const popup = new mapboxgl.Popup({
+							className: POPUP_CLASS,
 							offset: 16,
 							closeButton: false,
 							maxWidth: "340px",
@@ -1088,8 +1152,8 @@ function MapCanvas({
 					"text-letter-spacing": 0.05,
 				},
 				paint: {
-					"text-color": "#64748b",
-					"text-halo-color": "#ffffff",
+					"text-color": "#94a3b8",
+					"text-halo-color": "#0f172a",
 					"text-halo-width": 1.2,
 					"text-opacity": ["interpolate", ["linear"], ["zoom"], 15, 0, 15.6, 1],
 				},
@@ -1316,33 +1380,33 @@ function MapCanvas({
 						const isAr = area?.unit === "ar";
 						const areaHtml = area?.medianM2
 							? `<div class="mt-1 border-t pt-1 text-xs">
-									<div class="text-gray-500">Otoczenie (1 km, 5 lat): mediana <b>${(area.unit === "ar" ? Math.round(area.medianM2) : Math.round(area.medianM2 * 10) / 10).toLocaleString("pl-PL")} ${area.unit === "ar" ? "zł/ar" : "zł/m²"}</b> · ${area.txCount} transakcji (${area.txCount24m} w 24 mies.)</div>
-									${area.lastVsMedianPct != null ? `<div class="${area.lastVsMedianPct <= -15 ? "text-emerald-600" : area.lastVsMedianPct >= 15 ? "text-red-600" : "text-gray-600"}">Ostatnia transakcja: <b>${area.lastVsMedianPct > 0 ? "+" : ""}${area.lastVsMedianPct}%</b> vs mediana okolicy</div>` : ""}
+									<div class="text-muted-foreground">Otoczenie (1 km, 5 lat): mediana <b>${(area.unit === "ar" ? Math.round(area.medianM2) : Math.round(area.medianM2 * 10) / 10).toLocaleString("pl-PL")} ${area.unit === "ar" ? "zł/ar" : "zł/m²"}</b> · ${area.txCount} transakcji (${area.txCount24m} w 24 mies.)</div>
+									${area.lastVsMedianPct != null ? `<div class="${area.lastVsMedianPct <= -15 ? "text-emerald-400" : area.lastVsMedianPct >= 15 ? "text-red-400" : "text-muted-foreground"}">Ostatnia transakcja: <b>${area.lastVsMedianPct > 0 ? "+" : ""}${area.lastVsMedianPct}%</b> vs mediana okolicy</div>` : ""}
 								</div>`
 							: "";
-						const html = `<div class="min-w-56 p-1 text-sm">
+						const html = `<div class="flex min-w-56 flex-col gap-0.5 p-1 text-sm">
 							<div class="font-medium">Działka ${pid}</div>
-							${where ? `<div class="text-xs text-gray-500">${escapeHtml(where)}</div>` : ""}
-							${landLabel || areaAr != null ? `<div class="text-xs text-gray-600">${landLabel ? `działka ${landLabel}` : ""}${landLabel && areaAr != null ? " · " : ""}${areaAr != null ? `${areaAr.toLocaleString("pl-PL")} ar` : ""}</div>` : ""}
+							${where ? `<div class="text-xs text-muted-foreground">${escapeHtml(where)}</div>` : ""}
+							${landLabel || areaAr != null ? `<div class="text-xs text-muted-foreground">${landLabel ? `działka ${landLabel}` : ""}${landLabel && areaAr != null ? " · " : ""}${areaAr != null ? `${areaAr.toLocaleString("pl-PL")} ar` : ""}</div>` : ""}
 							${
 								s && s.txCount > 0
 									? `<div class="mt-1">${s.txCount} transakcji RCN · średnio ${fmtU(
 											s.avgPricePerM2,
 										)}</div>
-									<div class="text-gray-500">zakres ${fmtU(
+									<div class="text-muted-foreground">zakres ${fmtU(
 										s.minPricePerM2,
 									)} – ${fmtU(s.maxPricePerM2)}</div>
 									${
 										rows
-											? `<table class="mt-2 w-full text-xs"><thead><tr class="text-left text-gray-500"><th>data</th><th>cena</th><th>${unitLabel}</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+											? `<table class="mt-2 w-full text-xs"><thead><tr class="text-left text-muted-foreground"><th>data</th><th>cena</th><th>${unitLabel}</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
 											: ""
 									}`
-									: `<div class="mt-1 text-gray-500">Brak transakcji RCN na tej działce.</div>`
+									: `<div class="mt-1 text-muted-foreground">Brak transakcji RCN na tej działce.</div>`
 							}
 							${areaHtml}
 							${
 								area && area.basedOn.length > 0
-									? `<div class="mt-1 text-xs text-gray-500">na podstawie ${area.basedOn.length} transakcji w okolicy:</div><table class="w-full text-xs"><tbody>${area.basedOn
+									? `<div class="mt-1 text-xs text-muted-foreground">na podstawie ${area.basedOn.length} transakcji w okolicy:</div><table class="w-full text-xs"><tbody>${area.basedOn
 											.map(
 												(b) =>
 													`<tr><td>${b.date}</td><td class="text-right">${Math.round(b.price).toLocaleString("pl-PL")} zł</td><td class="text-right">${isAr ? `${Math.round(b.perUnit).toLocaleString("pl-PL")} zł/ar` : `${Math.round(b.perUnit)} zł/m²`}</td></tr>`,
@@ -1353,6 +1417,7 @@ function MapCanvas({
 						</div>`;
 						popupRef.current?.remove();
 						const popup = new mapboxgl.Popup({
+							className: POPUP_CLASS,
 							offset: 10,
 							closeButton: false,
 							maxWidth: "320px",
@@ -1388,6 +1453,7 @@ function MapCanvas({
 				const listing = point as MapListingDto;
 				popupRef.current?.remove();
 				const popup = new mapboxgl.Popup({
+					className: POPUP_CLASS,
 					offset: 16,
 					closeButton: false,
 					maxWidth: "360px",
@@ -1425,7 +1491,7 @@ function MapCanvas({
 								detail.offerType === "long_term_rental");
 						popup.setHTML(
 							wantValuation
-								? `${popupHtml(detail)}<div id="popup-valuation" class="text-gray-400 text-xs">Liczenie wyceny…</div>`
+								? `${popupHtml(detail)}<div id="popup-valuation" class="text-muted-foreground text-xs">Liczenie wyceny…</div>`
 								: popupHtml(detail),
 						);
 						fitPopup();
@@ -1447,7 +1513,7 @@ function MapCanvas({
 					.catch(() => {
 						if (popupRef.current === popup) {
 							popup.setHTML(
-								`${mapListingPopupHtml(listing)}<div class="text-xs text-red-600">Nie udało się pobrać szczegółów.</div>`,
+								`${mapListingPopupHtml(listing)}<div class="text-xs text-destructive-foreground">Nie udało się pobrać szczegółów.</div>`,
 							);
 							fitPopup();
 						}
