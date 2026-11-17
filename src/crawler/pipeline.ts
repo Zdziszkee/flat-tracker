@@ -1,5 +1,6 @@
 import { Data, Effect, Schedule, Schema } from "effect";
 
+import { briefError } from "#/lib/error-report";
 import { crawlSite } from "./crawler.ts";
 import { type SaveReport, saveListings } from "./db-sink.ts";
 import type { SiteAdapter } from "./types.ts";
@@ -16,6 +17,21 @@ export class CrawlError extends Data.TaggedError("CrawlError")<{
 	site: string;
 	cause: unknown;
 }> {}
+
+/**
+ * A `CrawlError` with its message filled in.
+ *
+ * `Effect.runPromise` throws a `FiberFailure` that prints the error's own
+ * message; a `Data.TaggedError` starts with an empty one, so every failure
+ * used to reach the log and `crawl_runs.error` as "An error has occurred".
+ * Setting the site and the deepest cause message keeps that first line
+ * useful even when nothing unwraps the cause.
+ */
+function crawlError(site: string, cause: unknown): CrawlError {
+	const error = new CrawlError({ site, cause });
+	error.message = `${site}: ${briefError(cause)}`;
+	return error;
+}
 
 /** Effect Schema for the output of a crawl run. */
 const ListingSchema = Schema.Struct({
@@ -84,7 +100,7 @@ const runCrawl = (
 
 		const result = yield* Effect.tryPromise({
 			try: () => crawlSite(adapter),
-			catch: (cause) => new CrawlError({ site: adapter.id, cause }),
+			catch: (cause) => crawlError(adapter.id, cause),
 		});
 
 		// Validate what the adapter produced before persisting.
@@ -95,7 +111,7 @@ const runCrawl = (
 				);
 				return Promise.resolve(decoded);
 			},
-			catch: (cause) => new CrawlError({ site: adapter.id, cause }),
+			catch: (cause) => crawlError(adapter.id, cause),
 		});
 
 		const saved = saveToDb
@@ -119,7 +135,7 @@ const saveEffect = (
 ): Effect.Effect<SaveReport, CrawlError> =>
 	Effect.tryPromise({
 		try: () => saveListings([...list]),
-		catch: (cause) => new CrawlError({ site, cause }),
+		catch: (cause) => crawlError(site, cause),
 	});
 
 /**

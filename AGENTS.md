@@ -177,9 +177,23 @@ driver (playwright-core launches its Firefox build), so the library stays;
 what is optional is Playwright's *browser download*. `camoufox-js` is a
 runtime dependency for that reason. Adapters that need a browser declare
 `launchBrowser` (`CustomLaunchAdapter`), which `crawler.ts` calls instead of
-letting Crawlee launch chromium. A failed crawl logs a single line (deepest
-cause); `CRAWL_DEBUG=1` prints the raw error, and the same line is what
-`crawl_runs.error` / `/sources` show.
+letting Crawlee launch chromium. A missing browser binary is not silent: the
+launcher throws `no browser installed: run bunx camoufox-js fetch ...`, so
+/sources shows the fix rather than Playwright's bare "Executable doesn't
+exist". `warnIfNoBrowser` still logs one line per refresh for the rendered
+sources.
+
+Crawl errors keep their cause chain. The pipeline is Effect and
+`Effect.runPromise` throws a `FiberFailure` whose own message is the generic
+"An error has occurred" (a `Data.TaggedError` starts with an empty message),
+so `src/lib/error-report.ts` unwraps the cause under Effect's
+`FiberFailure/Cause` symbol and walks nested `Error.cause` links. Every failed
+phase records two things: `crawl_runs.error` is the one-line actionable cause
+shown in the /sources table, and `crawl_runs.error_detail` is the full cause
+chain plus stack traces shown when the row is expanded (also carried live as
+`log` on the progress feed). The console keeps a single line; `CRAWL_DEBUG=1`
+additionally prints the detail. `pipeline.ts` also fills the `CrawlError`
+message itself, so a raw `console.error(fiberFailure)` is still informative.
 
 Crawling is triggered from the UI, not the terminal: the **/sources** page
 ("Refresh now" → `POST /api/refresh`) runs the same `refreshAll()` as the

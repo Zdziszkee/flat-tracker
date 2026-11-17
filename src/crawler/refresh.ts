@@ -3,6 +3,7 @@ import { Effect } from "effect";
 
 import { db } from "#/db/index";
 import { listings } from "#/db/schema";
+import { errorReport } from "#/lib/error-report";
 import { readJsonFile, writeJsonFile } from "#/lib/json-state";
 import { enrichAirbnbDetails } from "./airbnb-enrich.ts";
 import { warnIfNoBrowser } from "./browser.ts";
@@ -90,26 +91,37 @@ export interface RefreshSummary {
 }
 
 /**
- * One log line for a failed crawl. Effect wraps adapter errors in a
- * FiberFailure whose own message is just "An error has occurred"; the
- * actionable text (Playwright, WAF, HTTP) sits in the cause chain, which
- * used to be dumped as ~50 lines of stack into the dev server log. The same
- * one-liner is stored in `crawl_runs.error` and shown by /sources; set
- * CRAWL_DEBUG=1 for the untruncated error.
+ * Record one failed phase: a compact line for the table, the full cause
+ * chain and stack in `crawl_runs.error_detail`, and the same detail on the
+ * live progress feed. The console keeps a single line; CRAWL_DEBUG=1 adds
+ * the stacks.
  */
-function causeLine(err: unknown): string {
-	let cur: unknown = err;
-	for (let i = 0; i < 5 && cur instanceof Error && cur.cause; i++) {
-		cur = cur.cause;
-	}
-	const message = cur instanceof Error ? cur.message : String(cur);
-	return message.split("\n").find((line) => line.trim()) ?? message;
-}
-
-function fullErrorLog(err: unknown, compact: string): string {
-	const raw = err instanceof Error ? (err.stack ?? err.message) : String(err);
-	const log = raw.trim();
-	return log && log !== compact ? log : compact;
+async function recordFailure(opts: {
+	source: string;
+	startedAt: number;
+	err: unknown;
+	context: string;
+}): Promise<ReturnType<typeof errorReport>> {
+	const report = errorReport(opts.err, opts.context);
+	console.error(`[refresh] ${report.message}`);
+	if (process.env.CRAWL_DEBUG === "1") console.error(report.detail);
+	await recordCrawlRun({
+		source: opts.source,
+		startedAt: new Date(opts.startedAt),
+		finishedAt: new Date(),
+		pages: 0,
+		newCount: 0,
+		updatedCount: 0,
+		error: report.message,
+		errorDetail: report.detail,
+	});
+	setSourceProgress(opts.source, {
+		state: "failed",
+		finishedAt: new Date().toISOString(),
+		error: report.message,
+		log: report.detail,
+	});
+	return report;
 }
 
 type CrawlState = Record<string, string>;
@@ -290,17 +302,17 @@ export async function refreshAll(
 					elapsedSeconds: report.elapsedSeconds,
 				};
 			} catch (err) {
-				const error = causeLine(err);
-				const log = fullErrorLog(err, error);
-				console.error(`[refresh] crawl of "${adapter.id}" failed: ${error}`);
+				const report = errorReport(err, `crawl of "${adapter.id}" failed`);
+				console.error(`[refresh] ${report.message}`);
+				if (process.env.CRAWL_DEBUG === "1") console.error(report.detail);
+				const error = report.message;
 				// A thrown hard block (custom-launch adapters, WAF pages) also
 				// pauses the source instead of being retried by later runs.
-				if (blockStatus(error)) {
+				if (blockStatus(report.message, report.detail)) {
 					state[blockedKey] = new Date(
 						Date.now() + BLOCK_COOLDOWN_MS,
 					).toISOString();
 				}
-				if (process.env.CRAWL_DEBUG === "1") console.error(err);
 				await recordCrawlRun({
 					source: adapter.id,
 					startedAt: new Date(taskStarted),
@@ -309,12 +321,13 @@ export async function refreshAll(
 					newCount: 0,
 					updatedCount: 0,
 					error,
+					errorDetail: report.detail,
 				});
 				setSourceProgress(base.id, {
 					state: "failed",
 					finishedAt: new Date().toISOString(),
 					error,
-					log,
+					log: report.detail,
 				});
 				return {
 					site: adapter.id,
@@ -340,8 +353,8 @@ export async function refreshAll(
 				try {
 					sites[i] = await tasks[i]();
 				} catch (err) {
-					const error = causeLine(err);
-					const log = fullErrorLog(err, error);
+					const report = errorReport(err, "site task failed");
+					console.error(`[refresh] ${report.message}`);
 					sites[i] = {
 						site: siteAdapters[i]?.id ?? "unknown",
 						ok: false,
@@ -349,13 +362,13 @@ export async function refreshAll(
 						updatedListings: 0,
 						pages: 0,
 						elapsedSeconds: 0,
-						error,
+						error: report.message,
 					};
 					setSourceProgress(sites[i].site, {
 						state: "failed",
 						finishedAt: new Date().toISOString(),
-						error,
-						log,
+						error: report.message,
+						log: report.detail,
 					});
 				}
 			}
@@ -413,23 +426,11 @@ export async function refreshAll(
 				updatedCount: investments.updated,
 			});
 		} catch (err) {
-			const error = causeLine(err);
-			const log = fullErrorLog(err, error);
-			console.error(`[refresh] public investments failed: ${error}`);
-			await recordCrawlRun({
+			await recordFailure({
 				source: "public-investments",
-				startedAt: new Date(investmentsStarted),
-				finishedAt: new Date(),
-				pages: 0,
-				newCount: 0,
-				updatedCount: 0,
-				error,
-			});
-			setSourceProgress("public-investments", {
-				state: "failed",
-				finishedAt: new Date().toISOString(),
-				error,
-				log,
+				startedAt: investmentsStarted,
+				err,
+				context: "public investments failed",
 			});
 		}
 
@@ -460,23 +461,11 @@ export async function refreshAll(
 				newCount: finwire.rows,
 			});
 		} catch (err) {
-			const error = causeLine(err);
-			const log = fullErrorLog(err, error);
-			console.error(`[refresh] finwire import failed: ${error}`);
-			await recordCrawlRun({
+			await recordFailure({
 				source: "finwire",
-				startedAt: new Date(finwireStarted),
-				finishedAt: new Date(),
-				pages: 0,
-				newCount: 0,
-				updatedCount: 0,
-				error,
-			});
-			setSourceProgress("finwire", {
-				state: "failed",
-				finishedAt: new Date().toISOString(),
-				error,
-				log,
+				startedAt: finwireStarted,
+				err,
+				context: "finwire import failed",
 			});
 		}
 
@@ -760,21 +749,11 @@ export async function refreshAll(
 					: {}),
 			});
 		} catch (err) {
-			const error = causeLine(err);
-			console.error(`[refresh] scoring failed: ${error}`);
-			await recordCrawlRun({
+			await recordFailure({
 				source: "scoring",
-				startedAt: new Date(scoreT0),
-				finishedAt: new Date(),
-				pages: 0,
-				newCount: 0,
-				updatedCount: 0,
-				error,
-			});
-			setSourceProgress("scoring", {
-				state: "failed",
-				finishedAt: new Date().toISOString(),
-				error,
+				startedAt: scoreT0,
+				err,
+				context: "scoring failed",
 			});
 		}
 

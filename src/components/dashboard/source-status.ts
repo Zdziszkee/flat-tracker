@@ -9,7 +9,10 @@ export interface LastRun {
 	pages: number | null;
 	newCount: number | null;
 	updatedCount: number | null;
+	/** One-line cause for the row. */
 	error: string | null;
+	/** Full cause chain and stack traces, shown when the row is expanded. */
+	errorDetail: string | null;
 }
 
 export interface LiveState {

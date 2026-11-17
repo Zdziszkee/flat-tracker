@@ -52,6 +52,7 @@
     "validate:building-geometry": "tsx scripts/validate-building-geometry.ts",
     "validate:geocode": "tsx scripts/validate-geocode.ts",
     "validate:stats": "tsx scripts/validate-stats.ts",
+    "validate:errors": "tsx scripts/validate-error-report.ts",
     "validate:migrate": "tsx scripts/validate-migrate.ts",
     "validate:elicytacje": "tsx scripts/validate-elicytacje.ts",
     "validate:market-charts": "tsx scripts/validate-market-charts.ts",

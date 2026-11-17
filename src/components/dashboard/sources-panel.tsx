@@ -166,7 +166,14 @@ export function SourcesPanel() {
 							))}
 						{sources.map((s) => {
 							const error =
-								s.live?.error || s.live?.log || s.lastRun?.error || "";
+								s.live?.error || s.lastRun?.error || s.live?.log || "";
+							// The expanded panel wants the stack, not the one-liner: live
+							// progress carries it in `log`, finished runs in `errorDetail`.
+							const detail =
+								s.live?.log ||
+								s.lastRun?.errorDetail ||
+								s.lastRun?.error ||
+								error;
 							return (
 								<TableRow key={s.id}>
 									<TableCell className="max-w-0 px-4 py-2">
@@ -202,8 +209,8 @@ export function SourcesPanel() {
 													</span>
 												</CollapsibleTrigger>
 												<CollapsibleContent>
-													<pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-2 font-mono text-xs leading-relaxed">
-														{error}
+													<pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-2 font-mono text-xs leading-relaxed text-foreground">
+														{detail}
 													</pre>
 												</CollapsibleContent>
 											</Collapsible>

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-
 import { chromium } from "playwright";
 import { firefox } from "playwright-core";
+import { briefError } from "#/lib/error-report";
 
 /**
  * One browser stack for every JS-rendered source (booking,
@@ -24,14 +24,9 @@ import { firefox } from "playwright-core";
 type AppBrowser = import("playwright").Browser;
 type AppContext = import("playwright").BrowserContext;
 
-/** First line of the deepest cause, for one-line logs. */
-function brief(err: unknown): string {
-	let cur: unknown = err;
-	for (let i = 0; i < 5 && cur instanceof Error && cur.cause; i++)
-		cur = cur.cause;
-	const message = cur instanceof Error ? cur.message : String(cur);
-	return message.split("\n").find((line) => line.trim()) ?? message;
-}
+/** Actionable text when no browser binary is installed. */
+const NO_BROWSER_HINT =
+	"no browser installed: run `bunx camoufox-js fetch` (~660 MB), or `bunx playwright install chromium` as a fallback";
 
 let camoufox: Promise<Record<string, unknown> | null> | null = null;
 
@@ -68,11 +63,17 @@ export async function launchBrowser(headless = true): Promise<AppBrowser> {
 			})) as unknown as AppBrowser;
 		} catch (err) {
 			console.warn(
-				`[browser] camoufox launch failed, falling back to chromium: ${brief(err)}`,
+				`[browser] camoufox launch failed, falling back to chromium: ${briefError(err)}`,
 			);
 		}
 	}
-	return chromium.launch({ headless });
+	try {
+		return await chromium.launch({ headless });
+	} catch (err) {
+		// Playwright's own "Executable doesn't exist" is accurate but does not
+		// say what to do about it, and Effect would show only that sentence.
+		throw new Error(`${NO_BROWSER_HINT} (${briefError(err)})`, { cause: err });
+	}
 }
 
 /**
@@ -99,14 +100,18 @@ export async function launchPersistentBrowserContext(
 			});
 		} catch (err) {
 			console.warn(
-				`[browser] camoufox persistent launch failed, falling back to chromium: ${brief(err)}`,
+				`[browser] camoufox persistent launch failed, falling back to chromium: ${briefError(err)}`,
 			);
 		}
 	}
-	return chromium.launchPersistentContext(userDataDir, {
-		headless,
-		locale: "pl-PL",
-	});
+	try {
+		return await chromium.launchPersistentContext(userDataDir, {
+			headless,
+			locale: "pl-PL",
+		});
+	} catch (err) {
+		throw new Error(`${NO_BROWSER_HINT} (${briefError(err)})`, { cause: err });
+	}
 }
 
 /**
@@ -118,7 +123,6 @@ export async function warnIfNoBrowser(sites: string[]): Promise<void> {
 	if ((await camoufoxOptions()) || existsSync(chromium.executablePath()))
 		return;
 	console.warn(
-		`[crawler] no browser for ${sites.join(", ")}: run \`bunx camoufox-js fetch\` ` +
-			"(or `bunx playwright install chromium` as a fallback)",
+		`[crawler] no browser for ${sites.join(", ")}: ${NO_BROWSER_HINT}`,
 	);
 }

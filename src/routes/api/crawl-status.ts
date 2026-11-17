@@ -26,6 +26,7 @@ interface LastRun {
 	newCount: number | null;
 	updatedCount: number | null;
 	error: string | null;
+	errorDetail: string | null;
 }
 
 /**
@@ -72,6 +73,7 @@ export const Route = createFileRoute("/api/crawl-status")({
 						newCount: crawlRuns.newCount,
 						updatedCount: crawlRuns.updatedCount,
 						error: crawlRuns.error,
+						errorDetail: crawlRuns.errorDetail,
 					})
 					.from(crawlRuns)
 					.innerJoin(
@@ -93,6 +95,7 @@ export const Route = createFileRoute("/api/crawl-status")({
 						newCount: r.newCount,
 						updatedCount: r.updatedCount,
 						error: r.error,
+						errorDetail: r.errorDetail,
 					});
 				}
 

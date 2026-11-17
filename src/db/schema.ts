@@ -554,7 +554,10 @@ export const crawlRuns = sqliteTable(
 		pages: integer({ mode: "number" }),
 		newCount: integer("new_count", { mode: "number" }),
 		updatedCount: integer("updated_count", { mode: "number" }),
+		/** One-line cause, shown in the /sources table. */
 		error: text(),
+		/** Full cause chain and stack traces, shown when the row is expanded. */
+		errorDetail: text("error_detail"),
 	},
 	(t) => [index("crawl_runs_source_started_idx").on(t.source, t.startedAt)],
 );

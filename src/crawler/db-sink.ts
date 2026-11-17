@@ -363,6 +363,8 @@ export async function recordCrawlRun(run: {
 	newCount: number;
 	updatedCount: number;
 	error?: string | null;
+	/** Multi-line cause chain and stacks; /sources shows it on expand. */
+	errorDetail?: string | null;
 }): Promise<void> {
 	await db.insert(crawlRuns).values({
 		source: run.source,
@@ -372,6 +374,7 @@ export async function recordCrawlRun(run: {
 		newCount: run.newCount,
 		updatedCount: run.updatedCount,
 		error: run.error ?? null,
+		errorDetail: run.errorDetail ?? null,
 	});
 }
 

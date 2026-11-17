@@ -47,7 +47,13 @@ export function parseFinwireCityPage(
 	}
 	const raw = state[`cm-rcn-city:${slug}`];
 	if (!raw || typeof raw !== "object") return null;
-	const data = raw as {
+	// The page nests the series under `city` (and lists competitors under
+	// `peers`); older captures put the fields at the top level, so accept
+	// both shapes instead of failing the whole import on a layout change.
+	const record = raw as Record<string, unknown>;
+	const candidate = record.city ?? record;
+	if (!candidate || typeof candidate !== "object") return null;
+	const data = candidate as {
 		slug?: unknown;
 		name?: unknown;
 		latestQuarter?: unknown;
