@@ -60,6 +60,7 @@
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",
     "@tailwindcss/vite": "^4.1.18",
+    "@tanstack/ai": "^1.4.0",
     "@tanstack/charts": "^0.14.0",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-query": "latest",
@@ -121,6 +122,7 @@
   },
   "intent": {
     "skills": [
+      "@tanstack/ai",
       "@tanstack/react-start",
       "@tanstack/start-client-core",
       "@tanstack/start-server-core",

@@ -8,6 +8,10 @@ Before editing files for a substantial task:
 - Use the loaded `SKILL.md` guidance while making the change.
 - Monorepos: when working across packages, run the skill check from the workspace root and prefer the local skill for the package being changed.
 - Multiple matches: prefer the most specific local skill for the package or concern you are changing; load additional skills only when the task spans multiple packages or concerns.
+
+skills:
+  - task: "Building chat, tool calling, adapters, streaming or other AI features with TanStack AI"
+    load: "node_modules/@tanstack/ai/skills/ai-core/SKILL.md"
 <!-- intent-skills:end -->
 
 # Flat Tracker — Agent & Contributor Guide
