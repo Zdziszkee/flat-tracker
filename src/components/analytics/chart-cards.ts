@@ -74,7 +74,7 @@ export function buildChartCards(data: MarketCharts): ChartCard[] {
 		},
 		{
 			title: "13 · STR — cena nocna wg miesiąca",
-			subtitle: "czerwona = Airbnb, granatowa = Booking — sezonowość",
+			subtitle: "czerwona = Airbnb, niebieska = Booking — sezonowość",
 			key: "strPriceByMonth",
 		},
 		{
@@ -100,7 +100,7 @@ export function buildChartCards(data: MarketCharts): ChartCard[] {
 		},
 		{
 			title: "18 · Cena nocna wg miasta (Airbnb vs Booking)",
-			subtitle: "czerwona = Airbnb, granatowa = Booking",
+			subtitle: "czerwona = Airbnb, niebieska = Booking",
 			key: "nightlyByCity",
 		},
 		{
