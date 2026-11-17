@@ -800,7 +800,7 @@ export function publicInvestmentPopupHtml(
 }
 
 /** "28 lat", "3 lata", "1 rok". */
-export function ageLabel(year: number): string {
+function ageLabel(year: number): string {
 	const age = new Date().getFullYear() - year;
 	const mod10 = age % 10;
 	const mod100 = age % 100;

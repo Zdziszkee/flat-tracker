@@ -140,7 +140,7 @@ interface ImDetailResponse {
 }
 
 /** What the last successful detail fetch saw (and when). */
-export interface CachedInvestment {
+interface CachedInvestment {
 	fetchedAt: string;
 	updatedAt: string | null;
 	constructionEndLabel: string | null;
@@ -178,7 +178,7 @@ const investmentCache = createDetailCache<CachedInvestment>({
  * API emits ("2026-01-01"). A label without a date (or vice versa) is
  * still stored - what the source gives, nothing invented.
  */
-export function timelineOf(inv: ImInvestment): CachedInvestment {
+function timelineOf(inv: ImInvestment): CachedInvestment {
 	const rawLabel = inv.finish?.title;
 	const rawDate = inv.finish?.date;
 	const label =
@@ -270,7 +270,7 @@ function investmentToListings(
  * The status wording is derived, never stored: the source publishes no
  * construction status or start date.
  */
-export function investmentRow(
+function investmentRow(
 	inv: ImInvestment,
 	timeline: CachedInvestment | null,
 	defaultCity: string | null = null,

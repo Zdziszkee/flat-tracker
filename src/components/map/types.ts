@@ -3,8 +3,6 @@ import type { ListingDto, MapFeedPoint } from "#/types/listing";
 
 export type ApiListing = ListingDto;
 
-export type { BuildingLookup } from "#/types/transactions";
-
 /**
  * Mutable handle to the single open popup. The layer modules replace the
  * previous popup before opening their own, so only one is on screen.

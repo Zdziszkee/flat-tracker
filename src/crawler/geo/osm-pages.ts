@@ -9,10 +9,10 @@
  */
 
 /** Rows per page: one page parses in a short, non-blocking slice. */
-export const OSM_PAGE_SIZE = 50_000;
+const OSM_PAGE_SIZE = 50_000;
 
 /** Let queued HTTP work run between pages of a background build. */
-export function yieldToEventLoop(): Promise<void> {
+function yieldToEventLoop(): Promise<void> {
 	return new Promise<void>((resolve) => setImmediate(resolve));
 }
 

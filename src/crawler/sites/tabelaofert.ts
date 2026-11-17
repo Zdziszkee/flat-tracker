@@ -96,7 +96,7 @@ function propertiesMap(value: unknown): Record<string, unknown> {
 }
 
 /** "IV kwartał 2026" / "I kw. 2026" -> quarter-start ISO date. */
-export function quarterStart(label: string | null): string | null {
+function quarterStart(label: string | null): string | null {
 	if (!label) return null;
 	const quarter = label.match(/\b(I|II|III|IV)\s*(?:kw|kwarta[łl])/iu)?.[1];
 	const year = label.match(/\b(20\d{2})\b/u)?.[1];

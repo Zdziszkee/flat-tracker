@@ -210,7 +210,7 @@ export function parseEgibPage(xml: string): EgibParcel[] {
 }
 
 /** Parse "lat lon lat lon ..." (URN EPSG::4326 axis order) into {lat,lng}. */
-export function parsePosList(
+function parsePosList(
 	text: string,
 ): Array<{ lat: number; lng: number }> | null {
 	const nums = text.trim().split(/\s+/).map(Number);
