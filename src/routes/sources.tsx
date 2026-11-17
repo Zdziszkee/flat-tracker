@@ -1,6 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { InfoIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
+import { Alert, AlertDescription } from "#/components/ui/alert";
+import { Badge } from "#/components/ui/badge";
+import { Button } from "#/components/ui/button";
+import {
+	Card,
+	CardAction,
+	CardContent,
+	CardHeader,
+	CardTitle,
+} from "#/components/ui/card";
+import { Progress } from "#/components/ui/progress";
+import { Skeleton } from "#/components/ui/skeleton";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "#/components/ui/table";
 import { DEFAULT_LISTING_SEARCH } from "#/lib/listing-features";
+import { cn } from "#/lib/utils";
 
 interface LastRun {
 	startedAt: string | null;
@@ -74,29 +96,31 @@ function duration(
 	return `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s`;
 }
 
-function dotClass(s: SourceStatus): string {
+type StatusTone = "running" | "ok" | "error" | "idle";
+
+function statusTone(s: SourceStatus): StatusTone {
 	if (s.live) {
 		switch (s.live.state) {
 			case "running":
-				return "bg-blue-500 animate-pulse";
+				return "running";
 			case "failed":
-				return "bg-red-500";
+				return "error";
 			case "ok":
-				return "bg-green-500";
+				return "ok";
 			default:
-				return "bg-gray-400";
+				return "idle";
 		}
 	}
 	const last = s.lastRun;
-	if (!last) return "bg-gray-400";
-	if (last.error) return "bg-red-500";
+	if (!last) return "idle";
+	if (last.error) return "error";
 	if (
 		last.finishedAt &&
 		Date.now() - new Date(last.finishedAt).getTime() > STALE_MS
 	) {
-		return "bg-red-500";
+		return "error";
 	}
-	return "bg-green-500";
+	return "ok";
 }
 
 function statusLabel(s: SourceStatus): string {
@@ -122,6 +146,24 @@ function statusLabel(s: SourceStatus): string {
 		return "stale";
 	}
 	return "ok";
+}
+
+function StatusBadge({ source }: { source: SourceStatus }) {
+	const tone = statusTone(source);
+	return (
+		<Badge
+			variant={tone === "error" ? "destructive" : "secondary"}
+			className={cn(tone === "idle" && "bg-transparent border-border")}
+		>
+			{tone === "running" && (
+				<span
+					aria-hidden="true"
+					className="size-1.5 animate-pulse rounded-full bg-secondary-foreground"
+				/>
+			)}
+			{statusLabel(source)}
+		</Badge>
+	);
 }
 
 function metrics(s: SourceStatus): string {
@@ -152,9 +194,11 @@ function metrics(s: SourceStatus): string {
 
 export const Route = createFileRoute("/sources")({ component: SourcesPage });
 
+const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
+
 function SourcesPage() {
 	const queryClient = useQueryClient();
-	const { data } = useQuery<CrawlStatusResponse>({
+	const { data, isLoading } = useQuery<CrawlStatusResponse>({
 		queryKey: ["crawl-status"],
 		queryFn: () => fetch("/api/crawl-status").then((r) => r.json()),
 		refetchInterval: (query) => (query.state.data?.running ? 2000 : 15000),
@@ -179,111 +223,161 @@ function SourcesPage() {
 	).length;
 	const pct =
 		sources.length > 0 ? Math.round((doneCount / sources.length) * 100) : 0;
+	const refreshBusy = running || refresh.isPending;
 
 	return (
-		<div className="mx-auto max-w-4xl p-8">
-			<header className="flex items-center justify-between">
+		<div className="mx-auto flex max-w-4xl flex-col gap-6 p-8">
+			<header className="flex flex-wrap items-center justify-between gap-3">
 				<div>
 					<h1 className="text-2xl font-bold">Data sources</h1>
-					<p className="mt-1 text-sm text-gray-600">
+					<p className="mt-1 text-sm text-muted-foreground">
 						Last refresh per source. Sources older than 24h turn red.
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
-					<span className="text-sm text-gray-500">
+					<span className="text-sm text-muted-foreground">
 						{running ? "Refresh in progress…" : "Idle"}
 					</span>
-					<button
+					<Button
 						type="button"
 						onClick={() => refresh.mutate()}
-						disabled={running || refresh.isPending}
-						className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+						disabled={refreshBusy}
 					>
+						<RefreshCwIcon
+							data-icon="inline-start"
+							className={cn(refreshBusy && "animate-spin")}
+						/>
 						{running ? "Running…" : "Refresh now"}
-					</button>
+					</Button>
 				</div>
 			</header>
 
 			{running && (
-				<div className="mt-6 rounded-lg border border-blue-200 bg-blue-50 p-4">
-					<div className="flex items-center justify-between text-sm">
-						<span className="font-medium">
+				<Card className="gap-3 py-4">
+					<CardHeader className="px-4">
+						<CardTitle className="text-sm">
 							Phase: {data?.progress?.phase ?? "crawl"}
-						</span>
-						<span className="text-gray-600">
+						</CardTitle>
+						<CardAction className="text-sm text-muted-foreground tabular-nums">
 							{doneCount}/{sources.length} sources
-						</span>
-					</div>
-					<div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-blue-100">
-						<div
-							className="h-full rounded-full bg-blue-500 transition-all"
-							style={{ width: `${pct}%` }}
-						/>
-					</div>
-				</div>
+						</CardAction>
+					</CardHeader>
+					<CardContent className="px-4">
+						<Progress value={pct} aria-label="Refresh progress" />
+					</CardContent>
+				</Card>
 			)}
 
 			{refresh.data?.alreadyRunning && (
-				<p className="mt-3 text-sm text-amber-700">
-					A refresh is already running; showing its live progress.
-				</p>
+				<Alert>
+					<InfoIcon />
+					<AlertDescription>
+						A refresh is already running; showing its live progress.
+					</AlertDescription>
+				</Alert>
 			)}
 			{refresh.isError && (
-				<p className="mt-3 text-sm text-red-600">
-					Failed to start refresh. Try again.
-				</p>
+				<Alert variant="destructive">
+					<TriangleAlertIcon />
+					<AlertDescription>
+						Failed to start refresh. Try again.
+					</AlertDescription>
+				</Alert>
 			)}
 
-			<div className="mt-6 overflow-hidden rounded-xl border">
-				<table className="w-full text-sm">
-					<thead>
-						<tr className="border-b bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
-							<th className="px-4 py-2 font-medium">Source</th>
-							<th className="px-4 py-2 font-medium">Last refreshed</th>
-							<th className="px-4 py-2 font-medium">Duration</th>
-							<th className="px-4 py-2 font-medium">Result</th>
-							<th className="px-4 py-2 font-medium">Error</th>
-						</tr>
-					</thead>
-					<tbody>
-						{(data?.sources ?? []).map((s) => (
-							<tr key={s.id} className="border-b last:border-b-0">
-								<td className="px-4 py-2">
-									<div className="flex items-center gap-2">
-										<span
-											className={`inline-block h-2.5 w-2.5 rounded-full ${dotClass(s)}`}
-										/>
-										<span className="font-medium">{s.name}</span>
-										<span className="text-xs text-gray-400">({s.id})</span>
-									</div>
-								</td>
-								<td className="px-4 py-2 text-gray-600">
-									{relativeTime(s.lastRun?.finishedAt)}
-									<span className="ml-1 text-xs text-gray-400">
-										{statusLabel(s)}
-									</span>
-								</td>
-								<td className="px-4 py-2 text-gray-600">
-									{duration(s.lastRun?.startedAt, s.lastRun?.finishedAt)}
-								</td>
-								<td className="px-4 py-2">{metrics(s)}</td>
-								<td className="max-w-xs truncate px-4 py-2 text-red-600">
-									{s.live?.error ?? s.lastRun?.error ?? ""}
-								</td>
-							</tr>
-						))}
-					</tbody>
-				</table>
-			</div>
+			<Card className="gap-0 overflow-hidden py-0">
+				<Table>
+					<TableHeader>
+						<TableRow className="bg-muted/50 hover:bg-muted/50">
+							<TableHead className="px-4 text-xs uppercase tracking-wide text-muted-foreground">
+								Source
+							</TableHead>
+							<TableHead className="px-4 text-xs uppercase tracking-wide text-muted-foreground">
+								Last refreshed
+							</TableHead>
+							<TableHead className="px-4 text-xs uppercase tracking-wide text-muted-foreground">
+								Duration
+							</TableHead>
+							<TableHead className="px-4 text-xs uppercase tracking-wide text-muted-foreground">
+								Result
+							</TableHead>
+							<TableHead className="px-4 text-xs uppercase tracking-wide text-muted-foreground">
+								Error
+							</TableHead>
+						</TableRow>
+					</TableHeader>
+					<TableBody>
+						{isLoading &&
+							SKELETON_ROWS.map((row) => (
+								<TableRow key={row}>
+									<TableCell className="px-4 py-2">
+										<Skeleton className="h-4 w-32" />
+									</TableCell>
+									<TableCell className="px-4 py-2">
+										<Skeleton className="h-4 w-24" />
+									</TableCell>
+									<TableCell className="px-4 py-2">
+										<Skeleton className="h-4 w-12" />
+									</TableCell>
+									<TableCell className="px-4 py-2">
+										<Skeleton className="h-4 w-28" />
+									</TableCell>
+									<TableCell className="px-4 py-2">
+										<Skeleton className="h-4 w-16" />
+									</TableCell>
+								</TableRow>
+							))}
+						{sources.map((s) => {
+							const error = s.live?.error ?? s.lastRun?.error ?? "";
+							return (
+								<TableRow key={s.id}>
+									<TableCell className="px-4 py-2">
+										<div className="flex items-center gap-2">
+											<span className="font-medium">{s.name}</span>
+											<span className="text-xs text-muted-foreground">
+												({s.id})
+											</span>
+										</div>
+									</TableCell>
+									<TableCell className="px-4 py-2">
+										<div className="flex items-center gap-2">
+											<span className="text-muted-foreground tabular-nums">
+												{relativeTime(s.lastRun?.finishedAt)}
+											</span>
+											<StatusBadge source={s} />
+										</div>
+									</TableCell>
+									<TableCell className="px-4 py-2 text-muted-foreground tabular-nums">
+										{duration(s.lastRun?.startedAt, s.lastRun?.finishedAt)}
+									</TableCell>
+									<TableCell className="px-4 py-2">{metrics(s)}</TableCell>
+									<TableCell
+										className="max-w-xs truncate px-4 py-2 text-destructive-foreground"
+										title={error || undefined}
+									>
+										{error}
+									</TableCell>
+								</TableRow>
+							);
+						})}
+					</TableBody>
+				</Table>
+			</Card>
 
-			<nav className="mt-6 flex gap-4 text-sm text-blue-600 underline">
-				<Link to="/map" search={DEFAULT_LISTING_SEARCH}>
-					Map
-				</Link>
-				<Link to="/listings" search={DEFAULT_LISTING_SEARCH}>
-					Listings
-				</Link>
-				<Link to="/analytics">Analytics</Link>
+			<nav className="flex gap-1 text-sm">
+				<Button variant="link" size="sm" asChild>
+					<Link to="/map" search={DEFAULT_LISTING_SEARCH}>
+						Map
+					</Link>
+				</Button>
+				<Button variant="link" size="sm" asChild>
+					<Link to="/listings" search={DEFAULT_LISTING_SEARCH}>
+						Listings
+					</Link>
+				</Button>
+				<Button variant="link" size="sm" asChild>
+					<Link to="/analytics">Analytics</Link>
+				</Button>
 			</nav>
 		</div>
 	);
