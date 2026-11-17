@@ -22,6 +22,7 @@ export function quantile(
 	values: readonly number[],
 	probability: number,
 ): number | null {
+	if (!Number.isFinite(probability)) return null;
 	const usable = values.filter(Number.isFinite).sort((a, b) => a - b);
 	if (usable.length === 0) return null;
 	const p = clamp(probability, 0, 1);
@@ -61,6 +62,7 @@ export function weightedQuantile(
 	values: ReadonlyArray<{ value: number; weight: number }>,
 	probability: number,
 ): number | null {
+	if (!Number.isFinite(probability)) return null;
 	const usable = values
 		.filter((entry) => entry.weight > 0 && Number.isFinite(entry.value))
 		.sort((a, b) => a.value - b.value);
