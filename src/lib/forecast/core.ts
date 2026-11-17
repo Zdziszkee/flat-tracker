@@ -1,7 +1,15 @@
 /**
  * Small, dependency-free numeric toolkit for the forecasting pipeline.
  * Everything here is pure so the validation script can pin the math.
+ *
+ * The generic statistics (clamp/median/quantile/weightedQuantile) live in
+ * `#/lib/stats`; they are re-exported here so existing callers keep one
+ * import site.
  */
+
+import { clamp } from "#/lib/stats";
+
+export { clamp, median, quantile, weightedQuantile } from "#/lib/stats";
 
 export type ForecastFrequency = "month" | "quarter";
 
@@ -37,10 +45,6 @@ export function periodFromOrdinal(
 		: `${year}-Q${index + 1}`;
 }
 
-export function clamp(value: number, min: number, max: number): number {
-	return Math.min(max, Math.max(min, value));
-}
-
 export function mean(values: readonly number[]): number | null {
 	if (values.length === 0) return null;
 	return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -53,46 +57,6 @@ export function standardDeviation(values: readonly number[]): number | null {
 		values.reduce((sum, value) => sum + (value - avg) ** 2, 0) /
 		(values.length - 1);
 	return Math.sqrt(variance);
-}
-
-export function median(values: readonly number[]): number | null {
-	return quantile(values, 0.5);
-}
-
-/** Linear-interpolated empirical quantile. */
-export function quantile(
-	values: readonly number[],
-	probability: number,
-): number | null {
-	const usable = values.filter(Number.isFinite).sort((a, b) => a - b);
-	if (usable.length === 0) return null;
-	const p = clamp(probability, 0, 1);
-	const position = (usable.length - 1) * p;
-	const lower = Math.floor(position);
-	const upper = Math.ceil(position);
-	const fraction = position - lower;
-	return (
-		(usable[lower] ?? 0) * (1 - fraction) + (usable[upper] ?? 0) * fraction
-	);
-}
-
-/** Linear weighted quantile over (value, weight) pairs. */
-export function weightedQuantile(
-	values: ReadonlyArray<{ value: number; weight: number }>,
-	probability: number,
-): number | null {
-	const usable = values
-		.filter((entry) => entry.weight > 0 && Number.isFinite(entry.value))
-		.sort((a, b) => a.value - b.value);
-	if (usable.length === 0) return null;
-	const total = usable.reduce((sum, entry) => sum + entry.weight, 0);
-	const target = clamp(probability, 0, 1) * total;
-	let cumulative = 0;
-	for (const entry of usable) {
-		cumulative += entry.weight;
-		if (cumulative >= target) return entry.value;
-	}
-	return usable[usable.length - 1]?.value ?? null;
 }
 
 export function pearsonCorrelation(

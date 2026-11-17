@@ -1,6 +1,7 @@
 import { type SQL, sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
+import { upperMedian } from "#/lib/stats";
 
 /**
  * Shared helpers for the market-chart queries.
@@ -56,9 +57,7 @@ export function average(values: readonly number[]): number {
 }
 
 export function median(values: readonly number[]): number {
-	if (values.length === 0) return 0;
-	const sorted = [...values].sort((a, b) => a - b);
-	return sorted[Math.floor(sorted.length / 2)];
+	return upperMedian(values) ?? 0;
 }
 
 /** `czynsz` from the listings.utilities JSON, or 0 when absent/malformed. */

@@ -5,6 +5,8 @@
  * value requires a new `SCORE_VERSION` so stored scores stay auditable.
  */
 
+import { clamp } from "#/lib/stats";
+
 export const SCORE_VERSION = "2027.8";
 
 /** Minimum score components for an offer to enter the alert list. */
@@ -243,10 +245,6 @@ export const PLOT_LISTING_RCN_FACTOR = 0.9;
  * `wide_comp_spread` risk flag.
  */
 export const PLOT_SPREAD_FACTOR_FLOOR = 0.7;
-
-export function clamp(value: number, min = 0, max = 100): number {
-	return Math.min(max, Math.max(min, value));
-}
 
 export function distanceScore(
 	meters: number | null | undefined,

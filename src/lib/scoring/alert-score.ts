@@ -7,13 +7,13 @@
  * never reduce that component.
  */
 
+import { clamp } from "#/lib/stats";
 import type { GeoUniqueness } from "#/lib/valuation/uniqueness-geo";
 import { textUniqueness } from "#/lib/valuation/uniqueness-text";
 import type { ValuationEstimate } from "#/types/listing";
 import {
 	ALERT_GATES,
 	type AlertSegment,
-	clamp,
 	DISTANCE_BANDS,
 	distanceScore,
 	ESTIMATE_CONFIDENCE,
@@ -153,7 +153,7 @@ function valueComponent(
 	// asking-vs-transaction wedge (RCN comps are time-adjusted transactions,
 	// listing comps are asking prices like the offer itself), so adding a
 	// margin would double-count it.
-	const score = clamp(valueCurveScore(rawDiscount));
+	const score = clamp(valueCurveScore(rawDiscount), 0, 100);
 	const reasons: Array<{ label: string; impact: number }> = [];
 	if (rawDiscount >= 0.03) {
 		reasons.push({
@@ -301,7 +301,7 @@ function transitComponent(
 			reasons.push({ label: "railway line within 400 m", impact: -4 });
 		}
 	}
-	return { score: clamp(score), confidence: 0.85, reasons, flags };
+	return { score: clamp(score, 0, 100), confidence: 0.85, reasons, flags };
 }
 
 function greenComponent(geo: GeoUniqueness | null): Component {
@@ -315,7 +315,7 @@ function greenComponent(geo: GeoUniqueness | null): Component {
 	}
 	const park = distanceScore(geo.parkM, DISTANCE_BANDS.park);
 	const forestDistance = distanceScore(geo.forestM, DISTANCE_BANDS.forest);
-	const forestShare = clamp((geo.forestShare500m ?? 0) * 100);
+	const forestShare = clamp((geo.forestShare500m ?? 0) * 100, 0, 100);
 	const forest = forestDistance * 0.65 + forestShare * 0.35;
 	const waterDistance = Math.max(
 		distanceScore(geo.lakeM, DISTANCE_BANDS.water),
@@ -323,6 +323,8 @@ function greenComponent(geo: GeoUniqueness | null): Component {
 	);
 	const water = clamp(
 		waterDistance + Math.min(10, (geo.waterShare1000m ?? 0) * 25),
+		0,
+		100,
 	);
 	const parkBonus = Math.min(8, (geo.parkCount500m ?? 0) * 4);
 	const score = park * 0.3 + forest * 0.35 + water * 0.35 + parkBonus;
@@ -361,7 +363,7 @@ function greenComponent(geo: GeoUniqueness | null): Component {
 			impact: 6,
 		});
 	}
-	return { score: clamp(score), confidence: 0.8, reasons };
+	return { score: clamp(score, 0, 100), confidence: 0.8, reasons };
 }
 
 /**
@@ -534,7 +536,7 @@ function flatProperty(input: ScoreListingInput): Component {
 	score += ownership;
 	if (ownership < 0)
 		reasons.push({ label: "leasehold or share ownership", impact: ownership });
-	return { score: clamp(score), confidence: 0.65, reasons };
+	return { score: clamp(score, 0, 100), confidence: 0.65, reasons };
 }
 
 function houseProperty(input: ScoreListingInput): Component {
@@ -567,7 +569,7 @@ function houseProperty(input: ScoreListingInput): Component {
 	if (input.hasBasement) score += 3;
 	if (plot != null && plot >= 500)
 		reasons.push({ label: "large plot", impact: 6 });
-	return { score: clamp(score), confidence: 0.6, reasons };
+	return { score: clamp(score, 0, 100), confidence: 0.6, reasons };
 }
 
 function plotProperty(input: ScoreListingInput): Component {
@@ -646,7 +648,7 @@ function plotProperty(input: ScoreListingInput): Component {
 			impact: 4,
 		});
 	}
-	return { score: clamp(score), confidence: 0.55, reasons };
+	return { score: clamp(score, 0, 100), confidence: 0.55, reasons };
 }
 
 function propertyComponent(input: ScoreListingInput): Component {
@@ -708,7 +710,7 @@ function riskComponent(
 		score -= 10;
 		flags.push("missing_price_or_area");
 	}
-	return { score: clamp(score), confidence: 0.75, reasons, flags };
+	return { score: clamp(score, 0, 100), confidence: 0.75, reasons, flags };
 }
 
 export function scoreAlert(
@@ -744,7 +746,11 @@ export function scoreAlert(
 		green.confidence * weights.green +
 		property.confidence * weights.property +
 		risk.confidence * weights.risk;
-	const totalScore = clamp(50 + (raw - 50) * (0.65 + 0.35 * confidence));
+	const totalScore = clamp(
+		50 + (raw - 50) * (0.65 + 0.35 * confidence),
+		0,
+		100,
+	);
 
 	const applying: Array<{ label: string; impact: number }> = [];
 	for (const key of [

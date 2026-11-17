@@ -23,6 +23,8 @@
  * the primary valuation output.
  */
 
+import { clamp } from "#/lib/stats";
+
 import type { IndexPoint } from "./price-index";
 
 export interface UpsideHorizon {
@@ -87,10 +89,6 @@ export function quarterOrdinal(period: string): number | null {
 	const match = period.match(/^(\d{4})-Q([1-4])$/u);
 	if (!match?.[1] || !match[2]) return null;
 	return Number(match[1]) * 4 + Number(match[2]) - 1;
-}
-
-function clamp(value: number, min: number, max: number): number {
-	return Math.min(max, Math.max(min, value));
 }
 
 function percent(value: number, digits = 1): string {

@@ -3,6 +3,10 @@
  * the chain-linking and time-adjustment rules can be tested deterministically.
  */
 
+import { weightedQuantile } from "#/lib/stats";
+
+export { median, weightedQuantile } from "#/lib/stats";
+
 export type ValuationSegment =
 	| "flat"
 	| "flat_primary"
@@ -117,35 +121,6 @@ export function grid10Key(lat: number, lng: number): string {
 export function normalizeDistrict(value: string | null): string | null {
 	const normalized = value?.trim().toLowerCase().replace(/\s+/g, " ") ?? "";
 	return normalized || null;
-}
-
-export function median(values: readonly number[]): number | null {
-	if (values.length === 0) return null;
-	const sorted = [...values].sort((a, b) => a - b);
-	const middle = Math.floor(sorted.length / 2);
-	return sorted.length % 2 === 0
-		? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
-		: (sorted[middle] ?? null);
-}
-
-/** Linear weighted quantile over (value, weight) pairs. */
-export function weightedQuantile(
-	values: ReadonlyArray<{ value: number; weight: number }>,
-	quantile: number,
-): number | null {
-	const usable = values
-		.filter((entry) => entry.weight > 0 && Number.isFinite(entry.value))
-		.sort((a, b) => a.value - b.value);
-	if (usable.length === 0) return null;
-	const total = usable.reduce((sum, entry) => sum + entry.weight, 0);
-	if (total <= 0) return null;
-	const target = Math.min(1, Math.max(0, quantile)) * total;
-	let cumulative = 0;
-	for (const entry of usable) {
-		cumulative += entry.weight;
-		if (cumulative >= target) return entry.value;
-	}
-	return usable[usable.length - 1]?.value ?? null;
 }
 
 /**
