@@ -106,7 +106,7 @@ function MapPage() {
 					<h1 className="text-lg font-semibold">
 						Mapa ofert · Małopolska i Śląsk
 					</h1>
-					<p className="text-xs text-gray-500">
+					<p className="text-xs text-muted-foreground">
 						{showingPublicInvestments
 							? `${(publicInvestmentsCount ?? 0).toLocaleString("pl-PL")} inwestycji publicznych`
 							: `${facets.total.toLocaleString("pl-PL")} ofert w aktywnym oknie`}
@@ -121,7 +121,7 @@ function MapPage() {
 					onChange={setFilters}
 				/>
 				<div className="flex flex-wrap items-center gap-3 text-sm">
-					<label className="flex items-center gap-1.5 text-sm text-gray-700">
+					<label className="flex items-center gap-1.5 text-sm text-foreground">
 						<input
 							type="checkbox"
 							checked={showParcels}
@@ -139,7 +139,7 @@ function MapPage() {
 						/>
 						Granice działek
 					</label>
-					<label className="flex items-center gap-1.5 text-sm text-gray-700">
+					<label className="flex items-center gap-1.5 text-sm text-foreground">
 						<input
 							type="checkbox"
 							checked={showRailways}
@@ -157,7 +157,7 @@ function MapPage() {
 						/>
 						Kolej
 					</label>
-					<label className="flex items-center gap-1.5 text-sm text-gray-700">
+					<label className="flex items-center gap-1.5 text-sm text-foreground">
 						<input
 							type="checkbox"
 							checked={showOccupancy}
@@ -211,13 +211,13 @@ function MapPage() {
 
 			<div className="relative flex-1">
 				{!mounted ? (
-					<div className="flex h-full items-center justify-center text-sm text-gray-500">
+					<div className="flex h-full items-center justify-center text-sm text-muted-foreground">
 						Ładowanie mapy...
 					</div>
 				) : (
 					<Suspense
 						fallback={
-							<div className="flex h-full items-center justify-center text-sm text-gray-500">
+							<div className="flex h-full items-center justify-center text-sm text-muted-foreground">
 								Ładowanie mapy...
 							</div>
 						}
