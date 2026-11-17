@@ -78,10 +78,7 @@ const RULES: Array<[keyof TextUniqueness, RegExp]> = [
 		"renovated",
 		/po remoncie|po generalnym remoncie|odświeżon|wysoki standard|nowoczesne wykończenie|nowa instalacja/iu,
 	],
-	[
-		"southFacing",
-		/południow|ekspozycja południowa|nasłonecznion|słoneczn/iu,
-	],
+	["southFacing", /południow|ekspozycja południowa|nasłonecznion|słoneczn/iu],
 	[
 		"utilities",
 		/media|prąd|energia elektryczna|wodociąg|woda z sieci|kanalizacja|gaz ziemny|szambo|studnia/iu,
@@ -90,10 +87,7 @@ const RULES: Array<[keyof TextUniqueness, RegExp]> = [
 		"buildingPermit",
 		/pozwolenie na budowę|pozwolenia na budowę|mpzp|plan zagospodarowania przestrzennego|warunki zabudowy/iu,
 	],
-	[
-		"floodRisk",
-		/zalewow|powódź|powodzi|teren zalewowy|ryzyko powodzi/iu,
-	],
+	["floodRisk", /zalewow|powódź|powodzi|teren zalewowy|ryzyko powodzi/iu],
 	[
 		"busyRoad",
 		/ruchliwa|głośna ulica|przy głównej drodze|przy trasie|hałas|duży ruch samochodów/iu,

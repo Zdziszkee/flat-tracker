@@ -220,8 +220,7 @@ function scoreMarket(
 			0,
 			100,
 		),
-		confidence:
-			quality === "high" ? 0.9 : quality === "medium" ? 0.7 : 0.45,
+		confidence: quality === "high" ? 0.9 : quality === "medium" ? 0.7 : 0.45,
 	};
 }
 
@@ -338,7 +337,15 @@ function conditionDelta(
 	}
 	if (value === "good") return 4;
 	if (value === "to_completion") return -3;
-	if (["to_renovation", "for_renovation", "to_renovate", "poor", "not_good"].includes(value)) {
+	if (
+		[
+			"to_renovation",
+			"for_renovation",
+			"to_renovate",
+			"poor",
+			"not_good",
+		].includes(value)
+	) {
 		evidence.add("do remontu: koszt i ryzyko wykonania", -7);
 		return -7;
 	}
@@ -383,7 +390,8 @@ function materialDelta(
 	}
 	if (value.includes("concrete")) return 3;
 	if (value.includes("tenement")) {
-		const bonus = condition === "excellent" || condition === "very_good" ? 5 : 2;
+		const bonus =
+			condition === "excellent" || condition === "very_good" ? 5 : 2;
 		evidence.add("kamienica", bonus);
 		return bonus;
 	}
@@ -413,7 +421,8 @@ function apartmentProperty(
 	if (floor != null) {
 		known++;
 		if (floor < 0) score -= 25;
-		else if (floor === 0) score += input.hasGarden || input.hasTerrace ? -2 : -8;
+		else if (floor === 0)
+			score += input.hasGarden || input.hasTerrace ? -2 : -8;
 		else if (floor <= 3) score += 6;
 		else if (floor <= 6) score += input.hasElevator ? 3 : -3;
 		else score += input.hasElevator ? 3 : -10;
@@ -427,7 +436,11 @@ function apartmentProperty(
 			evidence.add("ostatnie piętro z windą", 4);
 		}
 	}
-	if (input.floorCount != null && input.floorCount >= 5 && input.hasElevator === false) {
+	if (
+		input.floorCount != null &&
+		input.floorCount >= 5 &&
+		input.hasElevator === false
+	) {
 		score -= 8;
 		evidence.add("wysoki blok bez windy", -8);
 	}
@@ -755,7 +768,10 @@ export function scoreAttractiveness(
 				: plotProperty(input, evidence);
 	const uniqueness = scoreUniqueness(input, evidence);
 	const risk = scoreRisk(input, evidence);
-	const values: Record<ScoreComponentKey, { score: number; confidence: number }> = {
+	const values: Record<
+		ScoreComponentKey,
+		{ score: number; confidence: number }
+	> = {
 		value,
 		market,
 		location,

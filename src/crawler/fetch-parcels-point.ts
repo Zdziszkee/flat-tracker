@@ -57,7 +57,9 @@ async function readPoints(path: string): Promise<PointRow[]> {
 async function main(): Promise<void> {
 	const path = process.argv[2];
 	if (!path) {
-		console.error("usage: fetch-parcels-point.ts <parcel_id,lat,lng.csv> [--limit=N] [--uldk-cap=N]");
+		console.error(
+			"usage: fetch-parcels-point.ts <parcel_id,lat,lng.csv> [--limit=N] [--uldk-cap=N]",
+		);
 		process.exit(2);
 	}
 	const limitArg = process.argv.find((a) => a.startsWith("--limit="));

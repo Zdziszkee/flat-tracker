@@ -903,14 +903,15 @@ export async function estimateSaleValue(
 	const confidence = confidenceFor(comps, spreadPct, nowSeconds);
 	const area = offer.areaM2;
 	const index = indexSummary(comps);
-	const upside = compareToOffer && options.includeUpside !== false
-		? upsidePotential({
-				fairM2,
-				offerM2,
-				series: await momentumSeries(index, offer),
-				compSpreadPct: spreadPct,
-			})
-		: null;
+	const upside =
+		compareToOffer && options.includeUpside !== false
+			? upsidePotential({
+					fairM2,
+					offerM2,
+					series: await momentumSeries(index, offer),
+					compSpreadPct: spreadPct,
+				})
+			: null;
 	const estimate: ValuationEstimate = {
 		segment: offer.kind,
 		fairM2: Math.round(fairM2),

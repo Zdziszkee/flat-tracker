@@ -19,8 +19,8 @@ import { sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { osmRoads } from "#/db/schema";
-import { OSM_REGIONS, type OsmRegion } from "./osm-index.ts";
 import { forEachPbfItem } from "./osm/pbf.ts";
+import { OSM_REGIONS, type OsmRegion } from "./osm-index.ts";
 
 const DATA_DIR = "data/osm";
 const BUILD_STATE_PATH = `${DATA_DIR}/roads-build-state.json`;
@@ -210,16 +210,17 @@ export async function buildOsmRoads(): Promise<number> {
 	await mkdir(DATA_DIR, { recursive: true });
 	await writeFile(
 		BUILD_STATE_PATH,
-		JSON.stringify({ regions: [...OSM_REGIONS], builtAt: new Date().toISOString() }),
+		JSON.stringify({
+			regions: [...OSM_REGIONS],
+			builtAt: new Date().toISOString(),
+		}),
 	);
 	console.log(`osm_roads: ${total} rows inserted`);
 	return total;
 }
 
 export async function osmRoadsReady(): Promise<boolean> {
-	const [row] = await db
-		.select({ n: sql<number>`count(*)` })
-		.from(osmRoads);
+	const [row] = await db.select({ n: sql<number>`count(*)` }).from(osmRoads);
 	if (Number(row?.n ?? 0) === 0) return false;
 	try {
 		const state = JSON.parse(await readFile(BUILD_STATE_PATH, "utf8")) as {

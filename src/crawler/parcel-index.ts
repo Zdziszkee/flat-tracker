@@ -11,7 +11,16 @@
  * crawl. New listings are always processed first.
  */
 
-import { and, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import {
+	and,
+	eq,
+	gte,
+	inArray,
+	isNotNull,
+	isNull,
+	lte,
+	sql,
+} from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { listings, parcels, transactions } from "#/db/schema";
@@ -48,9 +57,10 @@ interface LocalParcel {
 	bboxMaxLng: number;
 }
 
-function centroidOf(
-	ring: Array<{ lat: number; lng: number }>,
-): { lat: number; lng: number } {
+function centroidOf(ring: Array<{ lat: number; lng: number }>): {
+	lat: number;
+	lng: number;
+} {
 	let lat = 0;
 	let lng = 0;
 	for (const p of ring) {

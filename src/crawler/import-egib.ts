@@ -484,9 +484,7 @@ export interface ImportEgibOptions {
  * refresh with a small `maxTiles` budget; the next run continues where this
  * one stopped.
  */
-export async function importEgib(
-	options: ImportEgibOptions = {},
-): Promise<{
+export async function importEgib(options: ImportEgibOptions = {}): Promise<{
 	inserted: number;
 	completed: number;
 	total: number;
@@ -555,8 +553,9 @@ async function countParcels(): Promise<number> {
 }
 
 const isDirectRun =
-	process.argv[1]?.replace(/\\/g, "/").endsWith("/src/crawler/import-egib.ts") ??
-	false;
+	process.argv[1]
+		?.replace(/\\/g, "/")
+		.endsWith("/src/crawler/import-egib.ts") ?? false;
 if (isDirectRun) {
 	importEgib().catch((err) => {
 		console.error(err);

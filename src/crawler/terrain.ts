@@ -100,7 +100,10 @@ export async function elevationAt(
 	const width = image.getWidth();
 	const height = image.getHeight();
 	if (!(minX <= lng && lng <= maxX && minY <= lat && lat <= maxY)) return null;
-	const px = Math.min(width - 1, Math.max(0, Math.floor(((lng - minX) / (maxX - minX)) * width)));
+	const px = Math.min(
+		width - 1,
+		Math.max(0, Math.floor(((lng - minX) / (maxX - minX)) * width)),
+	);
 	const py = Math.min(
 		height - 1,
 		Math.max(0, Math.floor(((maxY - lat) / (maxY - minY)) * height)),
@@ -129,15 +132,11 @@ export async function terrainAt(
 		elevationAt(lat, lng + dLng),
 		elevationAt(lat, lng - dLng),
 	]);
-	if (
-		north === null ||
-		south === null ||
-		east === null ||
-		west === null
-	) {
+	if (north === null || south === null || east === null || west === null) {
 		return { elevationM: center, slopeDeg: null };
 	}
-	const dzdx = (east - west) / (2 * dLng * 111_320 * Math.cos((lat * Math.PI) / 180));
+	const dzdx =
+		(east - west) / (2 * dLng * 111_320 * Math.cos((lat * Math.PI) / 180));
 	const dzdy = (north - south) / (2 * dLat * 110_574);
 	const slope = (Math.atan(Math.hypot(dzdx, dzdy)) * 180) / Math.PI;
 	return { elevationM: center, slopeDeg: slope };

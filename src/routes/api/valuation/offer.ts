@@ -5,8 +5,8 @@ import { sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import type { PropertyKind } from "#/lib/property-kind";
 import { propertyKindOf } from "#/lib/property-kind";
-import { estimateSaleValue } from "#/lib/valuation/offer-model";
 import { buildOfferForecast } from "#/lib/valuation/forecast-service";
+import { estimateSaleValue } from "#/lib/valuation/offer-model";
 import type { ValuationSegment } from "#/types/listing";
 
 /**

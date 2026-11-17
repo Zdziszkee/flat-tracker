@@ -61,7 +61,9 @@ async function main(): Promise<void> {
 		),
 	];
 	const selected = limit != null ? ids.slice(0, limit) : ids;
-	console.log(`fetch-parcels: ${selected.length}/${ids.length} ids from ${path}`);
+	console.log(
+		`fetch-parcels: ${selected.length}/${ids.length} ids from ${path}`,
+	);
 
 	const present = await existingIds(selected);
 	const missing = selected.filter((id) => !present.has(id));
@@ -70,7 +72,9 @@ async function main(): Promise<void> {
 	let fetched = 0;
 	let empty = 0;
 	let uldkFetched = 0;
-	const fetchBatch = async (batch: string[]): Promise<Awaited<ReturnType<typeof fetchParcelsByIds>>> => {
+	const fetchBatch = async (
+		batch: string[],
+	): Promise<Awaited<ReturnType<typeof fetchParcelsByIds>>> => {
 		if (batch.length === 0) return [];
 		if (batch.length === 1) {
 			// A single <Or> child is rejected by the aggregate WFS; use the
@@ -103,7 +107,9 @@ async function main(): Promise<void> {
 				}
 			}
 			if (batch.length <= MIN_SPLIT) {
-				console.warn(`  batch of ${batch.length} failed: ${message.slice(0, 120)}`);
+				console.warn(
+					`  batch of ${batch.length} failed: ${message.slice(0, 120)}`,
+				);
 				return [];
 			}
 			const mid = Math.ceil(batch.length / 2);

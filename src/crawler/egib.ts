@@ -12,8 +12,8 @@
  * those limits never apply here.
  */
 
-import { SaxesParser } from "saxes";
 import proj4 from "proj4";
+import { SaxesParser } from "saxes";
 
 export const EGiB_WFS_URL =
 	"https://mapy.geoportal.gov.pl/wss/service/PZGIK/EGIB/WFS/UslugaZbiorcza";
@@ -86,9 +86,7 @@ export function parseParcelRing(polygon: string): Array<{
 }
 
 /** Shoelace area of a lat/lng ring, projected locally to metres. */
-export function ringAreaM2(
-	ring: Array<{ lat: number; lng: number }>,
-): number {
+export function ringAreaM2(ring: Array<{ lat: number; lng: number }>): number {
 	if (ring.length < 3) return 0;
 	let latSum = 0;
 	for (const p of ring) latSum += p.lat;
@@ -265,7 +263,9 @@ export async function fetchParcelAtPoint(
 		`&SRSNAME=urn:ogc:def:crs:EPSG::4326&BBOX=${encodeURIComponent(bbox)}` +
 		"&COUNT=10";
 	const parcels = parseEgibPage(await getFeature(query));
-	return parcels.find((p) => pointInRing(p.ring, lat, lng)) ?? parcels[0] ?? null;
+	return (
+		parcels.find((p) => pointInRing(p.ring, lat, lng)) ?? parcels[0] ?? null
+	);
 }
 
 /** Fetch one parcel by its registry id (e.g. 126105_9.0145.41/2). */

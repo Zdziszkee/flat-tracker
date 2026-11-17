@@ -91,8 +91,8 @@ function AlertsPage() {
 					<h1 className="text-balance text-xl font-semibold">Alerty dnia</h1>
 					<p className="text-sm text-muted-foreground">
 						Top 5% ofert na sprzedaż w trzech segmentach: mieszkania, działki i
-						domy. Co najmniej 10% taniej od mediany podobnych z okolicy,
-						osobno dla regionu i segmentu. Nowe oferty są oceniane po każdym
+						domy. Co najmniej 10% taniej od mediany podobnych z okolicy, osobno
+						dla regionu i segmentu. Nowe oferty są oceniane po każdym
 						odświeżeniu danych. Data: {data?.date ?? "…"}
 					</p>
 				</div>
