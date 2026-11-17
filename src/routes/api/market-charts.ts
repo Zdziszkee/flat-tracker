@@ -22,7 +22,7 @@ import {
 	getTxVolume,
 	getYoyByPowiat,
 } from "#/db/queries/market-charts/transactions";
-import { withCache } from "#/lib/server-cache";
+import { withJsonObjectCache } from "#/lib/server-cache";
 
 /**
  * Market-charts feed for the /analytics dashboard.
@@ -100,7 +100,13 @@ export const Route = createFileRoute("/api/market-charts")({
 	server: {
 		handlers: {
 			GET: async () =>
-				json(await withCache("market-charts", 5 * 60_000, computeMarketCharts)),
+				json(
+					await withJsonObjectCache(
+						"market-charts",
+						5 * 60_000,
+						computeMarketCharts,
+					),
+				),
 		},
 	},
 });

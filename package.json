@@ -55,6 +55,7 @@
     "build:forecasts": "tsx scripts/build-forecast-models.ts",
     "validate:forecast": "tsx scripts/validate-forecast.ts",
     "validate:tailwind-scan": "bun scripts/validate-tailwind-scan.ts",
+    "validate:server-cache": "bun scripts/validate-server-cache.ts",
     "validate:scoring": "node --import tsx scripts/validate-scoring.ts"
   },
   "dependencies": {
