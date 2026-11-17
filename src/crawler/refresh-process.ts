@@ -85,7 +85,17 @@ export function spawnRefreshProcess(
 		cwd: process.cwd(),
 		stdio: "inherit",
 		detached: true,
-		env: process.env,
+		env: {
+			...process.env,
+			// The RCN GML parse keeps every feature map plus the parcel rings
+			// in memory (2 GB file); the default ~2.2 GB V8 heap OOM-killed
+			// the child mid-parse. A larger cap for this dedicated child is
+			// safe: it is the only heavy process besides the server, and a
+			// caller-provided NODE_OPTIONS heap flag still wins (appended
+			// flags override earlier ones).
+			NODE_OPTIONS:
+				`--max-old-space-size=4096 ${process.env.NODE_OPTIONS ?? ""}`.trim(),
+		},
 	});
 
 	const startedAt = new Date().toISOString();
