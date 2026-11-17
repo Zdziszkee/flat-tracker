@@ -1,12 +1,14 @@
 /**
- * Daily alert scoring run.
+ * Alert scoring run.
  *
  * Reads active sale listings, computes a transparent score, stores the
- * component breakdown, ranks within region and segment, and creates one
- * in-app alert per listing per day.
+ * component breakdown, ranks within region and segment, and appends new
+ * top-5% offers to today's in-app alert list. Runs incrementally after every
+ * refresh (only listings without a current-version score are scored) and as
+ * a daily task; a listing is alerted at most once.
  */
 
-import { and, desc, eq, gte, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull, or, sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { regionOf, type TrackedRegion } from "#/db/region";
@@ -33,6 +35,12 @@ import { geoUniqueness } from "#/lib/valuation/uniqueness-geo";
 export interface ScoreRunOptions {
 	/** Score every active sale listing, not only recently seen ones. */
 	all?: boolean;
+	/**
+	 * Skip listings that already carry a current-version score. This is the
+	 * incremental mode the refresh pipeline uses: every new offer is scored
+	 * exactly once per score version, existing scores are left untouched.
+	 */
+	incremental?: boolean;
 	/** Lookback for "new" listings, in days. Default 7. */
 	days?: number;
 	/** Hard cap for a manual/backfill run. */
@@ -100,7 +108,10 @@ export async function runAlertScoring(
 		eq(listings.offerType, "sale"),
 		eq(listings.isActive, true),
 		eq(listings.isVisible, true),
-		isNotNull(listings.propertyKind),
+		// The derived kind when the listing-derived pass has run, the raw
+		// portal type otherwise: scoring must not silently skip a fresh DB
+		// whose derived columns have not been recomputed yet.
+		or(isNotNull(listings.propertyKind), isNotNull(listings.propertyType)),
 		isNotNull(listings.price),
 		isNotNull(listings.areaM2),
 		isNotNull(listings.pricePerM2),
@@ -109,9 +120,16 @@ export async function runAlertScoring(
 		sql`${listings.pricePerM2} > 0`,
 		sql`coalesce(${listings.portalStatus}, '') not in ('sold', 'reserved', 'expired')`,
 	];
-	if (!options.all) {
+	if (!options.all && !options.incremental) {
 		filters.push(
 			sql`coalesce(${listings.firstSeenAt}, ${listings.listedAt}, ${listings.scrapedAt}) >= ${Math.floor(cutoff.getTime() / 1000)}`,
+		);
+	}
+	if (options.incremental) {
+		// Only offers without a current-version score. The subquery rides the
+		// (listing_id, score_version) unique index.
+		filters.push(
+			sql`not exists (select 1 from ${listingScores} where ${listingScores.listingId} = ${listings.id} and ${listingScores.scoreVersion} = ${SCORE_VERSION})`,
 		);
 	}
 
@@ -151,6 +169,7 @@ export async function runAlertScoring(
 			buildingId: listings.buildingId,
 			district: listings.district,
 			propertyKind: listings.propertyKind,
+			propertyType: listings.propertyType,
 			firstSeenAt: listings.firstSeenAt,
 			parcelId: listings.parcelId,
 			parcelAreaM2: parcelFeatures.areaM2,
@@ -180,7 +199,13 @@ export async function runAlertScoring(
 
 	for (const row of rows) {
 		try {
-			const segment = SEGMENT_BY_KIND[row.propertyKind ?? ""];
+			const kind = propertyKindOf({
+				source: row.source,
+				title: row.title,
+				propertyType: row.propertyKind ?? row.propertyType,
+			});
+			if (!kind) continue;
+			const segment = SEGMENT_BY_KIND[kind];
 			if (!segment) continue;
 			const region =
 				normalizeRegion(row.voivodeship) ??
@@ -188,13 +213,6 @@ export async function runAlertScoring(
 					? regionOf(row.lat, row.lng)
 					: null);
 			if (!region) continue;
-
-			const kind = propertyKindOf({
-				source: row.source,
-				title: row.title,
-				propertyType: row.propertyKind,
-			});
-			if (!kind) continue;
 
 			const geo =
 				row.lat != null && row.lng != null
@@ -288,7 +306,7 @@ export async function runAlertScoring(
 
 	let alerts = 0;
 	if (!options.dryRun) {
-		alerts = await createAlerts(now, days);
+		alerts = await createAlerts(now);
 	}
 
 	return {
@@ -357,13 +375,15 @@ async function storeScore(listingId: number, score: AlertScore): Promise<void> {
 }
 
 /**
- * Rank eligible scores per region and segment and insert today's top 5%.
- * Only listings first seen within the lookback window are alerted. Duplicate
- * inserts are harmless thanks to the unique alert index.
+ * Rank eligible scores per region and segment and append today's top 5% to
+ * the alert list. The pool is every scored, active offer (not only today's
+ * arrivals), so a new offer competes against the full market; listings
+ * already alerted on any earlier day are skipped, which makes the list grow
+ * incrementally as new offers come in. Re-running is idempotent: the unique
+ * alert index rejects duplicates.
  */
-async function createAlerts(now: Date, days: number): Promise<number> {
+async function createAlerts(now: Date): Promise<number> {
 	const day = dateOnly(now);
-	const cutoff = new Date(now.getTime() - days * 86_400_000);
 	const rows = await db
 		.select({
 			scoreId: listingScores.id,
@@ -374,9 +394,6 @@ async function createAlerts(now: Date, days: number): Promise<number> {
 			discountPct: listingScores.discountPct,
 			confidence: listingScores.confidence,
 			valueScore: listingScores.valueScore,
-			firstSeenAt: listings.firstSeenAt,
-			listedAt: listings.listedAt,
-			scrapedAt: listings.scrapedAt,
 		})
 		.from(listingScores)
 		.innerJoin(listings, eq(listingScores.listingId, listings.id))
@@ -392,6 +409,11 @@ async function createAlerts(now: Date, days: number): Promise<number> {
 		)
 		.orderBy(desc(listingScores.totalScore));
 
+	// Group the FULL eligible pool (including already-alerted listings) so
+	// the 5% cut is stable across runs: a re-run without new offers inserts
+	// nothing, and a new offer only enters when it out-ranks the current
+	// top 5%. Skipping alerted rows before the cut would append another 5%
+	// of the remainder on every run.
 	const groups = new Map<string, typeof rows>();
 	const alerted = new Set(
 		(
@@ -401,9 +423,6 @@ async function createAlerts(now: Date, days: number): Promise<number> {
 		).map((row) => row.listingId),
 	);
 	for (const row of rows) {
-		if (alerted.has(row.listingId)) continue;
-		const seen = row.firstSeenAt ?? row.listedAt ?? row.scrapedAt;
-		if (seen != null && seen < cutoff) continue;
 		const key = `${row.region}:${row.segment}`;
 		const group = groups.get(key) ?? [];
 		group.push(row);
@@ -415,7 +434,7 @@ async function createAlerts(now: Date, days: number): Promise<number> {
 		const topN = Math.max(1, Math.ceil(group.length * 0.05));
 		for (let index = 0; index < Math.min(topN, group.length); index++) {
 			const row = group[index];
-			if (!row) continue;
+			if (!row || alerted.has(row.listingId)) continue;
 			const result = await db
 				.insert(listingAlerts)
 				.values({

@@ -5,7 +5,7 @@
  * value requires a new `SCORE_VERSION` so stored scores stay auditable.
  */
 
-export const SCORE_VERSION = "2027.4";
+export const SCORE_VERSION = "2027.5";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {

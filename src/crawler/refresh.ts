@@ -158,6 +158,7 @@ export async function refreshAll(
 		"parcel-enrich",
 		"public-investments",
 		"finwire",
+		"scoring",
 	]);
 	// Fresh clone: browser binaries are a separate download, so the
 	// browser-rendered portals would fail with a stack trace each.
@@ -703,6 +704,64 @@ export async function refreshAll(
 			);
 		} catch (err) {
 			console.error("[refresh] listing-derived recompute failed:", err);
+		}
+
+		// Score every offer that has no current-version score yet and append
+		// the new top-5% per region and segment to today's alert list. Runs
+		// here (the refresh child process), never in the HTTP server: the
+		// valuation comparables and the geo RBush probes are synchronous
+		// SQLite/CPU work. The daily 06:30 task re-scores recent offers on top.
+		setPhase("scoring");
+		const scoreT0 = Date.now();
+		setSourceProgress("scoring", {
+			state: "running",
+			startedAt: new Date(scoreT0).toISOString(),
+		});
+		try {
+			const { runAlertScoring } = await import("../lib/scoring/run.ts");
+			const score = await runAlertScoring({ incremental: true });
+			console.log(
+				`[refresh] scoring: ${score.scored} new offers scored, ` +
+					`${score.eligible} eligible, ${score.alerts} alerts, ` +
+					`${score.errors} errors (${Math.round(score.durationMs / 1000)}s)`,
+			);
+			await recordCrawlRun({
+				source: "scoring",
+				startedAt: new Date(scoreT0),
+				finishedAt: new Date(),
+				pages: 0,
+				newCount: score.alerts,
+				updatedCount: score.scored,
+				...(score.errors > 0
+					? { error: `${score.errors} offers failed: ${score.firstErrors[0]}` }
+					: {}),
+			});
+			setSourceProgress("scoring", {
+				state: score.errors > 0 && score.scored === 0 ? "failed" : "ok",
+				finishedAt: new Date().toISOString(),
+				newCount: score.alerts,
+				updatedCount: score.scored,
+				...(score.errors > 0
+					? { error: `${score.errors} offers failed: ${score.firstErrors[0]}` }
+					: {}),
+			});
+		} catch (err) {
+			const error = causeLine(err);
+			console.error(`[refresh] scoring failed: ${error}`);
+			await recordCrawlRun({
+				source: "scoring",
+				startedAt: new Date(scoreT0),
+				finishedAt: new Date(),
+				pages: 0,
+				newCount: 0,
+				updatedCount: 0,
+				error,
+			});
+			setSourceProgress("scoring", {
+				state: "failed",
+				finishedAt: new Date().toISOString(),
+				error,
+			});
 		}
 
 		return {

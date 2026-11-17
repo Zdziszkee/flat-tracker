@@ -442,6 +442,7 @@ const alertStats = alerts[0];
 check(
 	"stored alerts respect the gates",
 	alertStats == null ||
+		alertStats.count === 0 ||
 		(alertStats.minDiscount >= ALERT_GATES.minDiscountPct &&
 			alertStats.minConfidence >= ALERT_GATES.minConfidence &&
 			alertStats.minValue >= ALERT_GATES.minValueScore),

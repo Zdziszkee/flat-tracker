@@ -159,7 +159,12 @@ function valueComponent(
 	const spread = estimate?.confidence.spreadPct ?? 100;
 	const spreadFactor =
 		spread <= 10 ? 1 : spread >= 40 ? 0.45 : 1 - (spread - 10) / 60;
-	const rcnFactor = rcnCount >= 3 ? 1 : 0.55;
+	// Listing-only comparables are asking prices like the offer itself, so
+	// they support the discount comparison at reduced trust. The old 0.55
+	// factor capped the value confidence at 0.45 * 0.55 < 0.25, which made
+	// the 0.5 alert gate unreachable for every offer before the RCN import
+	// lands (fresh clone, new region).
+	const rcnFactor = rcnCount >= 3 ? 1 : 0.85;
 	const confidence = clamp(
 		baseConfidence * countFactor * spreadFactor * rcnFactor,
 		0.05,

@@ -29,7 +29,8 @@ interface SourceStatus {
 		| "geocode"
 		| "airbnb-calendar"
 		| "public-investments"
-		| "price-index";
+		| "price-index"
+		| "scoring";
 	lastRun: LastRun | null;
 	live: LiveState | null;
 }
@@ -142,6 +143,8 @@ function metrics(s: SourceStatus): string {
 			return `${n} new · ${u} updated projects`;
 		case "price-index":
 			return `${n} index rows`;
+		case "scoring":
+			return `${u} scored · ${n} alerts`;
 		default:
 			return `${p} pages · ${n} new · ${u} updated`;
 	}

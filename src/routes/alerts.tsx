@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { useAlerts } from "#/hooks/use-alerts";
 import { formatNumber } from "#/lib/format";
+import type { AlertSegment } from "#/lib/scoring/config";
 import type { AlertDto } from "#/types/alerts";
 
 export const Route = createFileRoute("/alerts")({
@@ -14,33 +15,24 @@ const REGION_LABELS: Record<string, string> = {
 	slaskie: "Śląsk",
 };
 
-const SEGMENT_LABELS: Record<string, string> = {
-	flat: "Mieszkania",
-	house: "Domy z działką",
-	plot: "Działki",
-};
-
-const CATEGORY_TABS = [
-	{ id: "flat", label: "Mieszkania" },
-	{ id: "house", label: "Domy z działką" },
-	{ id: "plot", label: "Działki" },
-	{ id: "all", label: "Wszystkie" },
-] as const;
+/** The three sections are always rendered, in this order, even when empty. */
+const SECTIONS: ReadonlyArray<{ segment: AlertSegment; label: string }> = [
+	{ segment: "flat", label: "Mieszkania" },
+	{ segment: "house", label: "Domy z działką" },
+	{ segment: "plot", label: "Działki" },
+];
 
 function AlertsPage() {
 	const [region, setRegion] = useState("all");
-	const [segment, setSegment] = useState("flat");
 	const { data, isLoading } = useAlerts({
 		region: region === "all" ? undefined : region,
-		segment: segment === "all" ? undefined : segment,
 	});
 
-	const groups = new Map<string, AlertDto[]>();
+	const bySegment = new Map<string, AlertDto[]>();
 	for (const alert of data?.alerts ?? []) {
-		const key = `${alert.region}:${alert.segment}`;
-		const group = groups.get(key) ?? [];
+		const group = bySegment.get(alert.segment) ?? [];
 		group.push(alert);
-		groups.set(key, group);
+		bySegment.set(alert.segment, group);
 	}
 
 	return (
@@ -49,9 +41,10 @@ function AlertsPage() {
 				<div>
 					<h1 className="text-xl font-semibold">Alerty dnia</h1>
 					<p className="text-sm text-gray-600">
-						Top 5% nowych ofert na sprzedaż, co najmniej 10% tańszych od mediany
-						podobnych z okolicy. Osobno dla regionu i segmentu. Data:{" "}
-						{data?.date ?? "..."}
+						Top 5% ofert na sprzedaż w trzech segmentach: mieszkania, domy i
+						działki. Co najmniej 10% taniej od mediany podobnych z okolicy,
+						osobno dla regionu i segmentu. Nowe oferty są oceniane po każdym
+						odświeżeniu danych. Data: {data?.date ?? "..."}
 					</p>
 				</div>
 				<div className="flex flex-wrap items-end gap-3">
@@ -76,44 +69,33 @@ function AlertsPage() {
 				</div>
 			</div>
 
-			<div className="mb-4 flex flex-wrap gap-2">
-				{CATEGORY_TABS.map((tab) => (
-					<button
-						key={tab.id}
-						type="button"
-						onClick={() => setSegment(tab.id)}
-						className={`rounded-full border px-4 py-1.5 text-sm font-medium ${
-							segment === tab.id
-								? "border-blue-600 bg-blue-600 text-white"
-								: "border-gray-300 bg-white text-gray-700 hover:border-blue-400"
-						}`}
-					>
-						{tab.label}
-					</button>
-				))}
-			</div>
-
 			{isLoading && <p className="text-gray-500">Ładowanie alertów...</p>}
-			{!isLoading && (data?.alerts.length ?? 0) === 0 && (
-				<p className="rounded border border-dashed p-6 text-gray-500">
-					Brak alertów na ten dzień. Uruchom scoring po nowym crawlu.
-				</p>
-			)}
 
 			<div className="space-y-8">
-				{[...groups.entries()].map(([key, alerts]) => {
-					const [regionId, segmentId] = key.split(":");
+				{SECTIONS.map(({ segment, label }) => {
+					const alerts = bySegment.get(segment) ?? [];
 					return (
-						<section key={key}>
+						<section key={segment}>
 							<h2 className="mb-2 text-lg font-semibold">
-								{REGION_LABELS[regionId ?? ""] ?? regionId} ·{" "}
-								{SEGMENT_LABELS[segmentId ?? ""] ?? segmentId}
+								{label}{" "}
+								<span className="text-sm font-normal text-gray-500">
+									· top 5% · {alerts.length}{" "}
+									{alerts.length === 1 ? "oferta" : "ofert"}
+								</span>
 							</h2>
-							<div className="grid gap-3 xl:grid-cols-2">
-								{alerts.map((alert) => (
-									<AlertCard key={alert.id} alert={alert} />
-								))}
-							</div>
+							{alerts.length === 0 ? (
+								<p className="rounded border border-dashed p-6 text-sm text-gray-500">
+									{isLoading
+										? "Ładowanie..."
+										: "Brak ofert spełniających progi w tym segmencie. Lista uzupełnia się automatycznie po każdym odświeżeniu danych."}
+								</p>
+							) : (
+								<div className="grid gap-3 xl:grid-cols-2">
+									{alerts.map((alert) => (
+										<AlertCard key={alert.id} alert={alert} />
+									))}
+								</div>
+							)}
 						</section>
 					);
 				})}
@@ -129,8 +111,7 @@ function AlertCard({ alert }: { alert: AlertDto }) {
 			<div className="flex items-start justify-between gap-3">
 				<div>
 					<div className="text-xs text-gray-500">
-						#{alert.rank} · {REGION_LABELS[alert.region] ?? alert.region} ·{" "}
-						{SEGMENT_LABELS[alert.segment] ?? alert.segment}
+						#{alert.rank} · {REGION_LABELS[alert.region] ?? alert.region}
 					</div>
 					<a
 						href={alert.listing.url}

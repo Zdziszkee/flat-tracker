@@ -1,8 +1,11 @@
-# Alert scoring 2027.1
+# Alert scoring 2027.5
 
-Transparent daily scoring for sale offers in Małopolskie and Śląskie. No ML
-model participates in the score. The daily job stores every component, reason
-and risk flag so an alert can be audited later.
+Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
+model participates in the score. The job stores every component, reason
+and risk flag so an alert can be audited later. Scoring is incremental: the
+end of every `refreshAll()` scores each offer that has no current-version
+score yet (`incremental: true`) and appends the new top-5% offers to today's
+alert list; the daily 06:30 task additionally re-scores recent offers.
 
 ## Research basis
 
@@ -26,20 +29,26 @@ Segment weights:
 
 | Segment | Value | Transit | Green | Property | Risk |
 |---|---:|---:|---:|---:|---:|
-| flat | 0.50 | 0.20 | 0.15 | 0.10 | 0.05 |
-| house | 0.45 | 0.10 | 0.25 | 0.15 | 0.05 |
-| plot | 0.40 | 0.10 | 0.30 | 0.15 | 0.05 |
+| flat | 0.50 | 0.20 | 0.10 | 0.15 | 0.05 |
+| house | 0.45 | 0.10 | 0.15 | 0.25 | 0.05 |
+| plot | 0.40 | 0.05 | 0.15 | 0.35 | 0.05 |
 
 ### Value
 
-The fair value comes from time-adjusted RCN comparables in `offer-model.ts`.
-The asking price is reduced by a 15% negotiation margin when at least three
-RCN comps support the estimate. A listing-only fallback uses 5% instead, so
-the asking-price wedge is not counted twice.
+The fair value comes from time-adjusted RCN comparables in `offer-model.ts`,
+with active asking offers as the fallback when fewer than three RCN comps
+survive. The headline discount uses the RAW asking price against the local
+comparable median — no negotiation margin, because the comparables already
+carry the asking-vs-transaction wedge.
 
-`discount = 1 - asking * (1 - margin) / fair`
+`discount = 1 - asking / fair`
 
-`value_score = 50 + 50 * tanh(discount / 0.15)`
+`value_score` is the piecewise-linear `VALUE_CURVE` on that discount:
+0% → 50, 10% → 80, 20% → 95, 30%+ → 100 (saturating cap).
+
+Listing-only comparable sets are trusted at a 0.85 value-confidence factor
+(RCN-backed sets use 1.0), so a fresh database without the RCN import can
+still produce alerts, at visibly lower confidence.
 
 ### Transit
 
@@ -75,9 +84,13 @@ An offer enters the alert list only when:
 
 - `value_score >= 55`
 - `confidence >= 0.5`
-- `discount >= 20%`
+- `discount >= 10%`
 
-Top 5% is computed per region and segment. A listing is alerted at most once.
+Top 5% is computed per region and segment over the whole scored, active
+pool. Each run appends the offers that newly rank in the top 5%; a listing
+is alerted at most once, so the list grows incrementally as new offers come
+in. The alerts page always shows the three segments (Mieszkania, Domy
+z działką, Działki) as separate sections, even when a section is empty.
 
 ## Data and tables
 
@@ -87,8 +100,10 @@ Top 5% is computed per region and segment. A listing is alerted at most once.
   index that makes the job idempotent.
 - `src/lib/scoring/config.ts`: versioned policy constants.
 - `src/lib/scoring/alert-score.ts`: pure scoring engine.
-- `src/lib/scoring/run.ts`: batch run, ranking and alert creation.
-- `server/tasks/score-listings.ts`: daily task at 06:30.
+- `src/lib/scoring/run.ts`: batch run, ranking and alert creation
+  (`incremental` scores only offers without a current-version score).
+- `server/tasks/score-listings.ts`: daily task at 06:30; the refresh pipeline
+  runs the same engine incrementally in its `scoring` phase.
 - `src/routes/api/alerts.ts`: shared alert feed.
 - `src/routes/alerts.tsx`: shared in-app list.
 

@@ -20,7 +20,8 @@ type SourceKind =
 	| "geocode"
 	| "airbnb-calendar"
 	| "public-investments"
-	| "price-index";
+	| "price-index"
+	| "scoring";
 
 export interface SourceDescriptor {
 	id: string;
@@ -159,6 +160,11 @@ const PIPELINE_SOURCES: SourceDescriptor[] = [
 		id: "finwire",
 		name: "City flat-price index (finwire, RCN-derived) — Kraków + Katowice",
 		kind: "price-index",
+	},
+	{
+		id: "scoring",
+		name: "Alert scoring — top 5% offers (flats, houses, plots)",
+		kind: "scoring",
 	},
 ];
 
