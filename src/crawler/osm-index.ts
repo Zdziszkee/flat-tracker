@@ -10,6 +10,7 @@ import { db } from "#/db/index";
 import { TRACKED_REGIONS, type TrackedRegion } from "#/db/region";
 import { osmBuildings } from "#/db/schema";
 import { invalidateAddressIndex } from "./address-index.ts";
+import { forEachOsmBuildingPage } from "./geo/osm-pages.ts";
 import { forEachPbfItem } from "./osm/pbf.ts";
 
 /**
@@ -416,59 +417,57 @@ export async function loadOsmIndex(): Promise<RBush<IndexedBuilding>> {
 		.from(osmBuildings);
 	rings = new Float64Array(Number(size?.points ?? 0) * 2);
 
-	const PAGE = 50_000;
-	let cursor = 0;
 	let used = 0;
 	let count = 0;
-	for (;;) {
-		const rows = await db
-			.select({
-				id: osmBuildings.id,
-				osmId: osmBuildings.osmId,
-				bboxMinLat: osmBuildings.bboxMinLat,
-				bboxMinLng: osmBuildings.bboxMinLng,
-				bboxMaxLat: osmBuildings.bboxMaxLat,
-				bboxMaxLng: osmBuildings.bboxMaxLng,
-				centroidLat: osmBuildings.centroidLat,
-				centroidLng: osmBuildings.centroidLng,
-				polygon: osmBuildings.polygon,
-				address: osmBuildings.address,
-			})
-			.from(osmBuildings)
-			.where(gt(osmBuildings.id, cursor))
-			.orderBy(osmBuildings.id)
-			.limit(PAGE);
-		if (rows.length === 0) break;
-
-		for (const r of rows) {
-			const points = JSON.parse(r.polygon) as Array<{
-				lat: number;
-				lng: number;
-			}>;
-			const offset = used;
-			for (let i = 0; i < points.length; i++) {
-				rings[used++] = points[i].lat;
-				rings[used++] = points[i].lng;
+	await forEachOsmBuildingPage(
+		(cursor, limit) =>
+			db
+				.select({
+					id: osmBuildings.id,
+					osmId: osmBuildings.osmId,
+					bboxMinLat: osmBuildings.bboxMinLat,
+					bboxMinLng: osmBuildings.bboxMinLng,
+					bboxMaxLat: osmBuildings.bboxMaxLat,
+					bboxMaxLng: osmBuildings.bboxMaxLng,
+					centroidLat: osmBuildings.centroidLat,
+					centroidLng: osmBuildings.centroidLng,
+					polygon: osmBuildings.polygon,
+					address: osmBuildings.address,
+				})
+				.from(osmBuildings)
+				.where(gt(osmBuildings.id, cursor))
+				.orderBy(osmBuildings.id)
+				.limit(limit),
+		(rows) => {
+			for (const r of rows) {
+				const points = JSON.parse(r.polygon) as Array<{
+					lat: number;
+					lng: number;
+				}>;
+				const offset = used;
+				for (let i = 0; i < points.length; i++) {
+					rings[used++] = points[i].lat;
+					rings[used++] = points[i].lng;
+				}
+				// RBush wants minX/minY/maxX/maxY (x = lng, y = lat); the same
+				// numbers are the footprint bbox.
+				tree.insert({
+					id: r.id,
+					osmId: r.osmId,
+					centroidLat: r.centroidLat,
+					centroidLng: r.centroidLng,
+					ringOffset: offset,
+					ringPoints: points.length,
+					address: r.address,
+					minX: r.bboxMinLng,
+					minY: r.bboxMinLat,
+					maxX: r.bboxMaxLng,
+					maxY: r.bboxMaxLat,
+				});
+				count++;
 			}
-			// RBush wants minX/minY/maxX/maxY (x = lng, y = lat); the same
-			// numbers are the footprint bbox.
-			tree.insert({
-				id: r.id,
-				osmId: r.osmId,
-				centroidLat: r.centroidLat,
-				centroidLng: r.centroidLng,
-				ringOffset: offset,
-				ringPoints: points.length,
-				address: r.address,
-				minX: r.bboxMinLng,
-				minY: r.bboxMinLat,
-				maxX: r.bboxMaxLng,
-				maxY: r.bboxMaxLat,
-			});
-			count++;
-		}
-		cursor = rows[rows.length - 1].id;
-	}
+		},
+	);
 	cached = tree;
 	console.log(
 		`osm index loaded: ${count} buildings, ${used / 2} ring points (heap ${heapMb()} MB)`,

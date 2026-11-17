@@ -13,10 +13,22 @@
  */
 
 import proj4 from "proj4";
-import { SaxesParser } from "saxes";
+import {
+	buildEgibWfsQuery,
+	cleanEgibValue,
+	type EgibParcel,
+	fetchEgibWfs,
+	parseEgibPage,
+	ringAreaM2,
+} from "./geo/egib-wfs.ts";
 
-export const EGiB_WFS_URL =
-	"https://mapy.geoportal.gov.pl/wss/service/PZGIK/EGIB/WFS/UslugaZbiorcza";
+export {
+	cleanEgibValue,
+	EGiB_WFS_URL,
+	type EgibParcel,
+	parseEgibPage,
+	ringAreaM2,
+} from "./geo/egib-wfs.ts";
 
 const UA =
 	"flat-tracker/1.0 (cadastral parcel lookup; contact: zdziszkee@gmail.com)";
@@ -25,26 +37,6 @@ const ULDK_URL = "https://uldk.gugik.gov.pl/";
 /** EPSG:2180, the Polish CS92 projection ULDK returns by default. */
 const EPSG2180 =
 	"+proj=tmerc +lat_0=0 +lon_0=19 +k=0.9993 +x_0=500000 +y_0=-5300000 +ellps=GRS80 +units=m +no_defs";
-
-export interface EgibParcel {
-	parcelId: string;
-	ring: Array<{ lat: number; lng: number }>;
-	obreb: string | null;
-	gmina: string | null;
-	landUseClass: string | null;
-	registerGroup: string | null;
-	egibDataDate: string | null;
-	areaHa: number | null;
-}
-
-/** EGiB sometimes returns a placeholder when a powiat has no attributes. */
-export function cleanEgibValue(value: string | null): string | null {
-	if (!value) return null;
-	const v = value.trim();
-	if (!v) return null;
-	if (v.toLowerCase().startsWith("brak_uprawnie")) return null;
-	return v;
-}
 
 /**
  * Parse a stored parcel polygon. RCN rows are GeoJSON
@@ -85,24 +77,6 @@ export function parseParcelRing(polygon: string): Array<{
 	return [];
 }
 
-/** Shoelace area of a lat/lng ring, projected locally to metres. */
-export function ringAreaM2(ring: Array<{ lat: number; lng: number }>): number {
-	if (ring.length < 3) return 0;
-	let latSum = 0;
-	for (const p of ring) latSum += p.lat;
-	const lat0 = latSum / ring.length;
-	const mPerDegLat = 110_574;
-	const mPerDegLng = 111_320 * Math.cos((lat0 * Math.PI) / 180);
-	let area = 0;
-	for (let i = 0; i < ring.length; i++) {
-		const a = ring[i];
-		const b = ring[(i + 1) % ring.length];
-		area += a.lng * mPerDegLng * (b.lat * mPerDegLat);
-		area -= b.lng * mPerDegLng * (a.lat * mPerDegLat);
-	}
-	return Math.abs(area) / 2;
-}
-
 /** Even-odd point-in-polygon on a lat/lng ring. */
 export function pointInRing(
 	ring: Array<{ lat: number; lng: number }>,
@@ -122,135 +96,6 @@ export function pointInRing(
 	return inside;
 }
 
-interface Pending {
-	parcelId: string | null;
-	obreb: string | null;
-	gmina: string | null;
-	landUseClass: string | null;
-	registerGroup: string | null;
-	egibDataDate: string | null;
-	posList: string;
-}
-
-type Capture =
-	| "id"
-	| "obreb"
-	| "gmina"
-	| "landUseClass"
-	| "registerGroup"
-	| "egibDataDate"
-	| null;
-
-/** Parse one WFS GetFeature GML page into parcels. */
-export function parseEgibPage(xml: string): EgibParcel[] {
-	const parser = new SaxesParser({ xmlns: false });
-	const out: EgibParcel[] = [];
-	let member: Pending | null = null;
-	let capture: Capture = null;
-	let inPosList = false;
-
-	parser.on("opentag", (node) => {
-		const name = node.name;
-		if (name === "ms:dzialki") {
-			member = {
-				parcelId: null,
-				obreb: null,
-				gmina: null,
-				landUseClass: null,
-				registerGroup: null,
-				egibDataDate: null,
-				posList: "",
-			};
-		} else if (member) {
-			if (name === "gml:posList") inPosList = true;
-			else if (name === "ms:ID_DZIALKI") capture = "id";
-			else if (name === "ms:NAZWA_OBREBU") capture = "obreb";
-			else if (name === "ms:NAZWA_GMINY") capture = "gmina";
-			else if (name === "ms:KLASOUZYTKI_EGIB") capture = "landUseClass";
-			else if (name === "ms:GRUPA_REJESTROWA") capture = "registerGroup";
-			else if (name === "ms:DATA") capture = "egibDataDate";
-		}
-	});
-	parser.on("text", (t) => {
-		if (!member) return;
-		if (inPosList) member.posList += t;
-		else if (capture === "id") member.parcelId = (member.parcelId ?? "") + t;
-		else if (capture === "obreb") member.obreb = (member.obreb ?? "") + t;
-		else if (capture === "gmina") member.gmina = (member.gmina ?? "") + t;
-		else if (capture === "landUseClass")
-			member.landUseClass = (member.landUseClass ?? "") + t;
-		else if (capture === "registerGroup")
-			member.registerGroup = (member.registerGroup ?? "") + t;
-		else if (capture === "egibDataDate")
-			member.egibDataDate = (member.egibDataDate ?? "") + t;
-	});
-	parser.on("closetag", (node) => {
-		const name = node.name;
-		if (name === "gml:posList") inPosList = false;
-		else if (
-			name === "ms:ID_DZIALKI" ||
-			name === "ms:NAZWA_OBREBU" ||
-			name === "ms:NAZWA_GMINY" ||
-			name === "ms:KLASOUZYTKI_EGIB" ||
-			name === "ms:GRUPA_REJESTROWA" ||
-			name === "ms:DATA"
-		) {
-			capture = null;
-		} else if (name === "ms:dzialki" && member) {
-			const m = member;
-			member = null;
-			if (!m.parcelId || !m.posList) return;
-			const ring = parsePosList(m.posList);
-			if (!ring || ring.length < 3) return;
-			out.push({
-				parcelId: m.parcelId,
-				ring,
-				obreb: m.obreb || null,
-				gmina: m.gmina || null,
-				landUseClass: cleanEgibValue(m.landUseClass),
-				registerGroup: cleanEgibValue(m.registerGroup),
-				egibDataDate: m.egibDataDate || null,
-				areaHa: ringAreaM2(ring) / 10_000,
-			});
-		}
-	});
-	parser.write(xml).close();
-	return out;
-}
-
-/** Parse "lat lon lat lon ..." (URN EPSG::4326 axis order) into {lat,lng}. */
-function parsePosList(
-	text: string,
-): Array<{ lat: number; lng: number }> | null {
-	const nums = text.trim().split(/\s+/).map(Number);
-	if (nums.length < 6 || nums.length % 2 !== 0) return null;
-	const ring: Array<{ lat: number; lng: number }> = [];
-	for (let i = 0; i < nums.length; i += 2) {
-		const lat = nums[i];
-		const lng = nums[i + 1];
-		if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-		if (lat < 48.5 || lat > 51 || lng < 18.5 || lng > 22) return null;
-		const prev = ring[ring.length - 1];
-		if (prev && prev.lat === lat && prev.lng === lng) continue;
-		ring.push({ lat, lng });
-	}
-	if (ring.length > 1) {
-		const first = ring[0];
-		const last = ring[ring.length - 1];
-		if (first.lat === last.lat && first.lng === last.lng) ring.pop();
-	}
-	return ring;
-}
-
-async function getFeature(query: string): Promise<string> {
-	const res = await fetch(`${EGiB_WFS_URL}?${query}`, {
-		headers: { "User-Agent": UA },
-		signal: AbortSignal.timeout(25_000),
-	});
-	if (!res.ok) throw new Error(`EGiB WFS HTTP ${res.status}`);
-	return res.text();
-}
-
 /** Fetch the parcel that contains a point. Returns null outside EGiB coverage. */
 export async function fetchParcelAtPoint(
 	lat: number,
@@ -258,11 +103,8 @@ export async function fetchParcelAtPoint(
 ): Promise<EgibParcel | null> {
 	const d = 0.00025; // ~25 m, enough for one urban parcel
 	const bbox = `${lat - d},${lng - d},${lat + d},${lng + d},urn:ogc:def:crs:EPSG::4326`;
-	const query =
-		"SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=ms:dzialki" +
-		`&SRSNAME=urn:ogc:def:crs:EPSG::4326&BBOX=${encodeURIComponent(bbox)}` +
-		"&COUNT=10";
-	const parcels = parseEgibPage(await getFeature(query));
+	const query = buildEgibWfsQuery({ count: 10, bbox });
+	const parcels = parseEgibPage(await fetchEgibWfs(query));
 	return (
 		parcels.find((p) => pointInRing(p.ring, lat, lng)) ?? parcels[0] ?? null
 	);
@@ -275,10 +117,8 @@ export async function fetchParcelById(
 	const filter =
 		`<Filter><PropertyIsEqualTo><PropertyName>ID_DZIALKI</PropertyName>` +
 		`<Literal>${parcelId}</Literal></PropertyIsEqualTo></Filter>`;
-	const query =
-		"SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=ms:dzialki" +
-		`&SRSNAME=urn:ogc:def:crs:EPSG::4326&COUNT=1&FILTER=${encodeURIComponent(filter)}`;
-	const parcels = parseEgibPage(await getFeature(query));
+	const query = buildEgibWfsQuery({ count: 1, filter });
+	const parcels = parseEgibPage(await fetchEgibWfs(query));
 	return parcels[0] ?? null;
 }
 
@@ -299,11 +139,8 @@ export async function fetchParcelsByIds(
 		)
 		.join("");
 	const filter = `<Filter><Or>${or}</Or></Filter>`;
-	const query =
-		"SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=ms:dzialki" +
-		`&SRSNAME=urn:ogc:def:crs:EPSG::4326&COUNT=${parcelIds.length}` +
-		`&FILTER=${encodeURIComponent(filter)}`;
-	return parseEgibPage(await getFeature(query));
+	const query = buildEgibWfsQuery({ count: parcelIds.length, filter });
+	return parseEgibPage(await fetchEgibWfs(query));
 }
 
 /** Parse the first ring of a ULDK WKT POLYGON/MULTIPOLYGON. */

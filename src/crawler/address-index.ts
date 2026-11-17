@@ -2,6 +2,7 @@ import { and, gt, isNotNull, sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { osmBuildings } from "#/db/schema";
+import { forEachOsmBuildingPage } from "./geo/osm-pages.ts";
 
 /**
  * Address-based building matching against the local osm_buildings index.
@@ -68,12 +69,9 @@ export interface StreetIndex {
 let streetIndexCache: StreetIndex | null = null;
 let cityCentroidsCache: Map<string, { lat: number; lng: number }> | null = null;
 
-/** Rows per page: one page parses in a short, non-blocking slice. */
-const ADDRESS_PAGE = 50_000;
-
-/** Let queued HTTP work run between pages of a background build. */
-const yieldToEventLoop = () =>
-	new Promise<void>((resolve) => setImmediate(resolve));
+const OSM_CITY_SQL = sql<
+	string | null
+>`coalesce(json_extract(${osmBuildings.tags}, '$.addr:city'), json_extract(${osmBuildings.tags}, '$.addr:place'))`;
 
 /** Drop memoized address data after the OSM footprint index is rebuilt. */
 export function invalidateAddressIndex(): void {
@@ -87,60 +85,58 @@ export async function buildStreetIndex(): Promise<StreetIndex> {
 
 	const byStreet = new Map<string, StreetBuilding[]>();
 	const byWord = new Map<string, string[]>();
-	let cursor = 0;
-	for (;;) {
+	await forEachOsmBuildingPage(
 		// Paged, with a yield between pages: a single `select()` over the
 		// million-plus addressed footprints materialises every row object at
 		// once and blocks the server event loop (and the refresh that calls
 		// this runs inside the web process), which made dev startup hang for
 		// minutes. The city comes from SQLite's JSON1 so the per-row
 		// `JSON.parse(tags)` disappears too.
-		const rows = await db
-			.select({
-				id: osmBuildings.id,
-				osmId: osmBuildings.osmId,
-				address: osmBuildings.address,
-				centroidLat: osmBuildings.centroidLat,
-				centroidLng: osmBuildings.centroidLng,
-				city: sql<
-					string | null
-				>`coalesce(json_extract(${osmBuildings.tags}, '$.addr:city'), json_extract(${osmBuildings.tags}, '$.addr:place'))`,
-			})
-			.from(osmBuildings)
-			.where(and(isNotNull(osmBuildings.address), gt(osmBuildings.id, cursor)))
-			.orderBy(osmBuildings.id)
-			.limit(ADDRESS_PAGE);
-		if (rows.length === 0) break;
-		cursor = rows[rows.length - 1].id;
+		(cursor, limit) =>
+			db
+				.select({
+					id: osmBuildings.id,
+					osmId: osmBuildings.osmId,
+					address: osmBuildings.address,
+					centroidLat: osmBuildings.centroidLat,
+					centroidLng: osmBuildings.centroidLng,
+					city: OSM_CITY_SQL,
+				})
+				.from(osmBuildings)
+				.where(
+					and(isNotNull(osmBuildings.address), gt(osmBuildings.id, cursor)),
+				)
+				.orderBy(osmBuildings.id)
+				.limit(limit),
+		(rows) => {
+			for (const r of rows) {
+				if (!r.address) continue;
+				const { street, number } = parseAddress(r.address);
+				const key = normStreet(stripStreetPrefix(street));
+				if (!key) continue;
+				const list = byStreet.get(key) ?? [];
+				list.push({
+					osmId: r.osmId,
+					number,
+					lat: r.centroidLat,
+					lng: r.centroidLng,
+					city: r.city ?? undefined,
+				});
+				byStreet.set(key, list);
 
-		for (const r of rows) {
-			if (!r.address) continue;
-			const { street, number } = parseAddress(r.address);
-			const key = normStreet(stripStreetPrefix(street));
-			if (!key) continue;
-			const list = byStreet.get(key) ?? [];
-			list.push({
-				osmId: r.osmId,
-				number,
-				lat: r.centroidLat,
-				lng: r.centroidLng,
-				city: r.city ?? undefined,
-			});
-			byStreet.set(key, list);
-
-			// Register every significant word so a portal's single-word form
-			// ("Meiera", "Kurozwęckiego", or even the first name "Dobiesława")
-			// resolves to the full OSM name ("Księdza Józefa Meiera",
-			// "Dobiesława Kurozwęckiego").
-			for (const word of key.split(" ")) {
-				if (word.length < 4) continue;
-				const aliases = byWord.get(word) ?? [];
-				if (!aliases.includes(key)) aliases.push(key);
-				byWord.set(word, aliases);
+				// Register every significant word so a portal's single-word form
+				// ("Meiera", "Kurozwęckiego", or even the first name "Dobiesława")
+				// resolves to the full OSM name ("Księdza Józefa Meiera",
+				// "Dobiesława Kurozwęckiego").
+				for (const word of key.split(" ")) {
+					if (word.length < 4) continue;
+					const aliases = byWord.get(word) ?? [];
+					if (!aliases.includes(key)) aliases.push(key);
+					byWord.set(word, aliases);
+				}
 			}
-		}
-		await yieldToEventLoop();
-	}
+		},
+	);
 	streetIndexCache = { byStreet, byWord };
 	return streetIndexCache;
 }
@@ -370,38 +366,34 @@ export async function buildCityCentroids(): Promise<
 	Map<string, { lat: number; lng: number }>
 > {
 	if (cityCentroidsCache) return cityCentroidsCache;
-	const cityExpr = sql<
-		string | null
-	>`coalesce(json_extract(${osmBuildings.tags}, '$.addr:city'), json_extract(${osmBuildings.tags}, '$.addr:place'))`;
 	const points = new Map<string, Array<{ lat: number; lng: number }>>();
-	let cursor = 0;
-	for (;;) {
+	await forEachOsmBuildingPage(
 		// Same paging contract as buildStreetIndex: never materialise all
 		// 3.2M footprint rows in one blocking `select()`. Only rows that
 		// actually name a town come back, so the JS side parses nothing.
-		const rows = await db
-			.select({
-				id: osmBuildings.id,
-				city: cityExpr,
-				centroidLat: osmBuildings.centroidLat,
-				centroidLng: osmBuildings.centroidLng,
-			})
-			.from(osmBuildings)
-			.where(and(gt(osmBuildings.id, cursor), isNotNull(cityExpr)))
-			.orderBy(osmBuildings.id)
-			.limit(ADDRESS_PAGE);
-		if (rows.length === 0) break;
-		cursor = rows[rows.length - 1].id;
-		for (const r of rows) {
-			if (!r.city) continue;
-			const key = normStreet(r.city);
-			if (!key) continue;
-			const list = points.get(key) ?? [];
-			list.push({ lat: r.centroidLat, lng: r.centroidLng });
-			points.set(key, list);
-		}
-		await yieldToEventLoop();
-	}
+		(cursor, limit) =>
+			db
+				.select({
+					id: osmBuildings.id,
+					city: OSM_CITY_SQL,
+					centroidLat: osmBuildings.centroidLat,
+					centroidLng: osmBuildings.centroidLng,
+				})
+				.from(osmBuildings)
+				.where(and(gt(osmBuildings.id, cursor), isNotNull(OSM_CITY_SQL)))
+				.orderBy(osmBuildings.id)
+				.limit(limit),
+		(rows) => {
+			for (const r of rows) {
+				if (!r.city) continue;
+				const key = normStreet(r.city);
+				if (!key) continue;
+				const list = points.get(key) ?? [];
+				list.push({ lat: r.centroidLat, lng: r.centroidLng });
+				points.set(key, list);
+			}
+		},
+	);
 
 	const out = new Map<string, { lat: number; lng: number }>();
 	for (const [key, list] of points) {

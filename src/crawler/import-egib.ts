@@ -29,11 +29,16 @@ import "dotenv/config";
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
-import { SaxesParser } from "saxes";
 import { db } from "#/db/index";
 import { TRACKED_REGIONS, type TrackedRegion } from "#/db/region";
 import { parcels as parcelsTable } from "#/db/schema";
-import { cleanEgibValue } from "./egib.ts";
+import {
+	buildEgibWfsQuery,
+	type EgibParcel,
+	EgibWfsError,
+	fetchEgibWfs,
+	parseEgibPage,
+} from "./geo/egib-wfs.ts";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -42,14 +47,10 @@ import { cleanEgibValue } from "./egib.ts";
 const TILE_LNG = 0.1;
 const TILE_LAT = 0.08;
 
-const WFS_URL =
-	"https://mapy.geoportal.gov.pl/wss/service/PZGIK/EGIB/WFS/UslugaZbiorcza";
 const PAGE_SIZE = 1000; // server-enforced cap
 const MAX_PAGES_PER_TILE = 400; // runaway guard (~400k parcels/tile)
 const REQUEST_DELAY_MS = 300;
 const MAX_RETRIES = 5;
-const UA =
-	"flat-tracker/1.0 (cadastral parcel index; contact: zdziszkee@gmail.com)";
 
 const DB_PATH = process.env.DATABASE_URL?.replace(/^file:/, "") ?? "dev.db";
 const STATE_PATH = "data/crawler/egib-state.json";
@@ -134,36 +135,7 @@ function saveState(): void {
 // ---------------------------------------------------------------------------
 // DB (drizzle over better-sqlite3; runs under Node via tsx, never Bun)
 
-interface ParcelInsert {
-	parcelId: string;
-	ring: Array<{ lat: number; lng: number }>;
-	obreb: string | null;
-	gmina: string | null;
-	landUseClass: string | null;
-	registerGroup: string | null;
-	egibDataDate: string | null;
-	areaHa: number | null;
-}
-
-/** Shoelace area of a lat/lng ring, projected locally to metres. */
-function ringAreaM2(ring: Array<{ lat: number; lng: number }>): number {
-	if (ring.length < 3) return 0;
-	let latSum = 0;
-	for (const p of ring) latSum += p.lat;
-	const lat0 = latSum / ring.length;
-	const mPerDegLat = 110_574;
-	const mPerDegLng = 111_320 * Math.cos((lat0 * Math.PI) / 180);
-	let area = 0;
-	for (let i = 0; i < ring.length; i++) {
-		const a = ring[i];
-		const b = ring[(i + 1) % ring.length];
-		area += a.lng * mPerDegLng * (b.lat * mPerDegLat);
-		area -= b.lng * mPerDegLng * (a.lat * mPerDegLat);
-	}
-	return Math.abs(area) / 2;
-}
-
-function insertBatch(batch: ParcelInsert[]): number {
+function insertBatch(batch: EgibParcel[]): number {
 	const rows = batch.map((p) => {
 		let minLat = 90;
 		let minLng = 180;
@@ -214,26 +186,21 @@ async function fetchPage(tile: Tile, startIndex: number): Promise<string> {
 	// SORTBY is essential: without a stable order the server's paging is
 	// nondeterministic (observed 965 vs 979 features for identical
 	// requests), which silently skips parcels across pages.
-	const url =
-		`${WFS_URL}?SERVICE=WFS&REQUEST=GetFeature&VERSION=2.0.0&TYPENAMES=ms:dzialki` +
-		`&SRSNAME=urn:ogc:def:crs:EPSG::4326&BBOX=${encodeURIComponent(bbox)}` +
-		`&COUNT=${PAGE_SIZE}&STARTINDEX=${startIndex}&SORTBY=ms:ID_DZIALKI`;
+	const query = buildEgibWfsQuery({
+		count: PAGE_SIZE,
+		bbox,
+		startIndex,
+		sortBy: true,
+	});
 
 	for (let attempt = 0; ; attempt++) {
 		try {
-			const res = await fetch(url, {
-				headers: { "User-Agent": UA },
-				signal: AbortSignal.timeout(60_000),
-			});
-			if (!res.ok) {
-				// 429/5xx are transient; anything else is a hard failure for
-				// this page — throw a fatal marker that skips retries.
-				const fatal = res.status !== 429 && res.status < 500;
-				throw new Error(`HTTP ${res.status}${fatal ? " (fatal)" : ""}`);
-			}
-			return await res.text();
+			return await fetchEgibWfs(query, 60_000);
 		} catch (err) {
-			const fatal = err instanceof Error && err.message.includes("(fatal)");
+			// 429/5xx are transient; anything else is a hard failure for
+			// this page, so skip the retries.
+			const fatal =
+				err instanceof EgibWfsError && err.status !== 429 && err.status < 500;
 			if (fatal || attempt >= MAX_RETRIES) throw err;
 			const backoff = Math.min(1000 * 2 ** attempt, 30_000);
 			console.warn(
@@ -242,133 +209,6 @@ async function fetchPage(tile: Tile, startIndex: number): Promise<string> {
 			await new Promise((r) => setTimeout(r, backoff));
 		}
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Streaming GML parse of one page (saxes) -> parcel inserts
-
-interface PendingParcel {
-	parcelId: string | null;
-	obreb: string | null;
-	gmina: string | null;
-	landUseClass: string | null;
-	registerGroup: string | null;
-	egibDataDate: string | null;
-	posList: string;
-}
-
-function parsePage(xml: string): ParcelInsert[] {
-	// Full-document mode: the WFS response starts with an XML declaration,
-	// which fragment mode rejects.
-	const parser = new SaxesParser({ xmlns: false });
-	const out: ParcelInsert[] = [];
-	let member: PendingParcel | null = null;
-	let capture:
-		| "idDzialki"
-		| "obreb"
-		| "gmina"
-		| "landUseClass"
-		| "registerGroup"
-		| "egibDataDate"
-		| null = null;
-	let inPosList = false;
-
-	parser.on("opentag", (node) => {
-		const name = node.name;
-		if (name === "ms:dzialki") {
-			member = {
-				parcelId: null,
-				obreb: null,
-				gmina: null,
-				landUseClass: null,
-				registerGroup: null,
-				egibDataDate: null,
-				posList: "",
-			};
-		} else if (member) {
-			if (name === "gml:posList") inPosList = true;
-			else if (name === "ms:ID_DZIALKI") capture = "idDzialki";
-			else if (name === "ms:NAZWA_OBREBU") capture = "obreb";
-			else if (name === "ms:NAZWA_GMINY") capture = "gmina";
-			else if (name === "ms:KLASOUZYTKI_EGIB") capture = "landUseClass";
-			else if (name === "ms:GRUPA_REJESTROWA") capture = "registerGroup";
-			else if (name === "ms:DATA") capture = "egibDataDate";
-		}
-	});
-	parser.on("text", (t) => {
-		if (!member) return;
-		if (inPosList) member.posList += t;
-		else if (capture === "idDzialki")
-			member.parcelId = (member.parcelId ?? "") + t;
-		else if (capture === "obreb") member.obreb = (member.obreb ?? "") + t;
-		else if (capture === "gmina") member.gmina = (member.gmina ?? "") + t;
-		else if (capture === "landUseClass")
-			member.landUseClass = (member.landUseClass ?? "") + t;
-		else if (capture === "registerGroup")
-			member.registerGroup = (member.registerGroup ?? "") + t;
-		else if (capture === "egibDataDate")
-			member.egibDataDate = (member.egibDataDate ?? "") + t;
-	});
-	parser.on("closetag", (node) => {
-		const name = node.name;
-		if (name === "gml:posList") inPosList = false;
-		else if (
-			name === "ms:ID_DZIALKI" ||
-			name === "ms:NAZWA_OBREBU" ||
-			name === "ms:NAZWA_GMINY" ||
-			name === "ms:KLASOUZYTKI_EGIB" ||
-			name === "ms:GRUPA_REJESTROWA" ||
-			name === "ms:DATA"
-		) {
-			capture = null;
-		} else if (name === "ms:dzialki" && member) {
-			const m = member;
-			member = null;
-			if (m.parcelId && m.posList) {
-				const ring = parsePosList(m.posList);
-				if (ring && ring.length >= 3) {
-					out.push({
-						parcelId: m.parcelId,
-						ring,
-						obreb: m.obreb || null,
-						gmina: m.gmina || null,
-						landUseClass: cleanEgibValue(m.landUseClass),
-						registerGroup: cleanEgibValue(m.registerGroup),
-						egibDataDate: m.egibDataDate || null,
-						areaHa: ringAreaM2(ring) / 10_000,
-					});
-				}
-			}
-		}
-	});
-	parser.write(xml).close();
-	return out;
-}
-
-/** Parse "lat lon lat lon …" (URN EPSG::4326 axis order) into {lat,lng} ring. */
-function parsePosList(
-	text: string,
-): Array<{ lat: number; lng: number }> | null {
-	const nums = text.trim().split(/\s+/).map(Number);
-	if (nums.length < 6 || nums.length % 2 !== 0) return null;
-	const ring: Array<{ lat: number; lng: number }> = [];
-	for (let i = 0; i < nums.length; i += 2) {
-		const lat = nums[i];
-		const lng = nums[i + 1];
-		if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-		// tracked-region sanity bounds (wider than either box on purpose)
-		if (lat < 48.5 || lat > 51 || lng < 18.5 || lng > 22) return null;
-		const prev = ring[ring.length - 1];
-		// drop consecutive duplicates
-		if (prev && prev.lat === lat && prev.lng === lng) continue;
-		ring.push({ lat, lng });
-	}
-	if (ring.length > 1) {
-		const first = ring[0];
-		const last = ring[ring.length - 1];
-		if (first.lat === last.lat && first.lng === last.lng) ring.pop();
-	}
-	return ring;
 }
 
 // ---------------------------------------------------------------------------
@@ -459,7 +299,7 @@ async function pageThrough(tile: Tile): Promise<void> {
 	let startIndex = 0;
 	while (startIndex < PAGE_SIZE * MAX_PAGES_PER_TILE) {
 		const xml = await fetchPage(tile, startIndex);
-		const batch = parsePage(xml);
+		const batch = parseEgibPage(xml);
 		if (batch.length > 0) insertBatch(batch);
 		// The server's real page cap varies (947-999 observed) and can be
 		// below COUNT, so "short page" does NOT mean "last page". Continue

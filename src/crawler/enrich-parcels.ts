@@ -177,6 +177,68 @@ function roadMetrics(
 	return { distanceM: best, roadClass: bestClass, frontageM: frontage };
 }
 
+interface ParcelBbox {
+	bboxMinLat: number;
+	bboxMinLng: number;
+	bboxMaxLat: number;
+	bboxMaxLng: number;
+}
+
+/**
+ * Public roads whose bbox touches the parcel's bbox (60 m pad). Both the
+ * full enrichment and the `roadsOnly` refresh mode need exactly this query
+ * and parse step.
+ */
+async function roadsNearParcel(
+	parcel: ParcelBbox,
+): Promise<Array<{ roadClass: string; points: Ring[] }>> {
+	const pad = 0.0006; // ~60 m
+	const rows = await db
+		.select({ roadClass: osmRoads.roadClass, points: osmRoads.points })
+		.from(osmRoads)
+		.where(
+			and(
+				lte(osmRoads.bboxMinLat, parcel.bboxMaxLat + pad),
+				gte(osmRoads.bboxMaxLat, parcel.bboxMinLat - pad),
+				lte(osmRoads.bboxMinLng, parcel.bboxMaxLng + pad),
+				gte(osmRoads.bboxMaxLng, parcel.bboxMinLng - pad),
+			),
+		);
+	return rows.flatMap((r) => {
+		try {
+			return [
+				{ roadClass: r.roadClass, points: JSON.parse(r.points) as Ring[] },
+			];
+		} catch {
+			return [];
+		}
+	});
+}
+
+type EgibBuildingStats = Awaited<ReturnType<typeof egibBuildingStats>>;
+
+/**
+ * EGiB footprint stats for a parcel, or null when the optional building
+ * layer is unavailable. Shared by the full pass and `egibBuildingsOnly`.
+ */
+async function egibStatsNearParcel(
+	parcel: ParcelBbox,
+	ring: Ring[],
+	areaM2: number,
+): Promise<EgibBuildingStats | null> {
+	try {
+		const buildings = await fetchEgibBuildingsByBbox(
+			parcel.bboxMinLat,
+			parcel.bboxMinLng,
+			parcel.bboxMaxLat,
+			parcel.bboxMaxLng,
+		);
+		return egibBuildingStats(ring, buildings, areaM2);
+	} catch {
+		return null;
+	}
+}
+
 interface BuildingStats {
 	count: number;
 	areaM2: number;
@@ -396,31 +458,7 @@ export async function enrichParcels(
 				: null;
 
 		if (options.roadsOnly) {
-			const pad = 0.0006; // ~60 m
-			const roadRows = await db
-				.select({ roadClass: osmRoads.roadClass, points: osmRoads.points })
-				.from(osmRoads)
-				.where(
-					and(
-						lte(osmRoads.bboxMinLat, parcel.bboxMaxLat + pad),
-						gte(osmRoads.bboxMaxLat, parcel.bboxMinLat - pad),
-						lte(osmRoads.bboxMinLng, parcel.bboxMaxLng + pad),
-						gte(osmRoads.bboxMaxLng, parcel.bboxMinLng - pad),
-					),
-				);
-			const roads = roadRows
-				.map((r) => {
-					try {
-						return {
-							roadClass: r.roadClass,
-							points: JSON.parse(r.points) as Ring[],
-						};
-					} catch {
-						return null;
-					}
-				})
-				.filter((r): r is { roadClass: string; points: Ring[] } => r !== null);
-			const rStats = roadMetrics(ring, roads);
+			const rStats = roadMetrics(ring, await roadsNearParcel(parcel));
 			await db
 				.update(parcelFeatures)
 				.set({
@@ -438,18 +476,7 @@ export async function enrichParcels(
 		}
 
 		if (options.egibBuildingsOnly) {
-			let stats: Awaited<ReturnType<typeof egibBuildingStats>> | null = null;
-			try {
-				const buildings = await fetchEgibBuildingsByBbox(
-					parcel.bboxMinLat,
-					parcel.bboxMinLng,
-					parcel.bboxMaxLat,
-					parcel.bboxMaxLng,
-				);
-				stats = egibBuildingStats(ring, buildings, areaM2);
-			} catch {
-				stats = null;
-			}
+			const stats = await egibStatsNearParcel(parcel, ring, areaM2);
 			await db
 				.update(parcelFeatures)
 				.set({
@@ -478,46 +505,12 @@ export async function enrichParcels(
 				),
 			);
 		const bStats = buildingStats(ring, buildingRows);
-		let egibStats: Awaited<ReturnType<typeof egibBuildingStats>> | null = null;
+		let egibStats: EgibBuildingStats | null = null;
 		if (options.includeEgibBuildings === true) {
-			try {
-				const egibBuildings = await fetchEgibBuildingsByBbox(
-					parcel.bboxMinLat,
-					parcel.bboxMinLng,
-					parcel.bboxMaxLat,
-					parcel.bboxMaxLng,
-				);
-				egibStats = egibBuildingStats(ring, egibBuildings, areaM2);
-			} catch {
-				egibStats = null;
-			}
+			egibStats = await egibStatsNearParcel(parcel, ring, areaM2);
 		}
 
-		const pad = 0.0006; // ~60 m
-		const roadRows = await db
-			.select({ roadClass: osmRoads.roadClass, points: osmRoads.points })
-			.from(osmRoads)
-			.where(
-				and(
-					lte(osmRoads.bboxMinLat, parcel.bboxMaxLat + pad),
-					gte(osmRoads.bboxMaxLat, parcel.bboxMinLat - pad),
-					lte(osmRoads.bboxMinLng, parcel.bboxMaxLng + pad),
-					gte(osmRoads.bboxMaxLng, parcel.bboxMinLng - pad),
-				),
-			);
-		const roads = roadRows
-			.map((r) => {
-				try {
-					return {
-						roadClass: r.roadClass,
-						points: JSON.parse(r.points) as Ring[],
-					};
-				} catch {
-					return null;
-				}
-			})
-			.filter((r): r is { roadClass: string; points: Ring[] } => r !== null);
-		const rStats = roadMetrics(ring, roads);
+		const rStats = roadMetrics(ring, await roadsNearParcel(parcel));
 
 		let latSum = 0;
 		let lngSum = 0;
@@ -578,83 +571,47 @@ export async function enrichParcels(
 			zoning = zoningOf(meta?.zoning ?? null);
 		}
 
+		const featureValues = {
+			areaM2,
+			perimeterM,
+			compactness,
+			frontageM: rStats.frontageM,
+			roadDistanceM: Number.isFinite(rStats.distanceM)
+				? rStats.distanceM
+				: null,
+			roadClass: rStats.roadClass || null,
+			buildingCount: bStats.count,
+			buildingAreaM2: bStats.areaM2,
+			buildingSubtype: bStats.subtype,
+			buildingResidentialRatio: bStats.residentialRatio,
+			buildingGarageRatio: bStats.garageRatio,
+			buildingCommercialRatio: bStats.commercialRatio,
+			buildingCoverage: areaM2 > 0 ? Math.min(1, bStats.areaM2 / areaM2) : null,
+			maxFloors: bStats.maxFloors,
+			egibBuildingCount: egibStats?.count ?? null,
+			egibBuildingAreaM2: egibStats?.areaM2 ?? null,
+			egibBuildingFloorAreaM2: egibStats?.floorAreaM2 ?? null,
+			egibBuildingFloors: egibStats?.floors ?? null,
+			egibBuildingResidentialRatio: egibStats?.residentialRatio ?? null,
+			egibBuildingCoverage: egibStats?.coverage ?? null,
+			landUseClass: parcel.landUseClass,
+			registerGroup: parcel.registerGroup,
+			zoningWz: zoning.wz,
+			zoningNoPlan: zoning.noPlan,
+			zoningPlanCount: zoning.count,
+			zoningFlags: JSON.stringify(zoningDetail ?? zoning.flags),
+			floodRisk,
+			slopeDeg: terrain.slopeDeg,
+			elevationM: terrain.elevationM,
+			sourceDataDate,
+			updatedAt: new Date(),
+		};
 		await db
 			.insert(parcelFeatures)
-			.values({
-				parcelId,
-				areaM2,
-				perimeterM,
-				compactness,
-				frontageM: rStats.frontageM,
-				roadDistanceM: Number.isFinite(rStats.distanceM)
-					? rStats.distanceM
-					: null,
-				roadClass: rStats.roadClass || null,
-				buildingCount: bStats.count,
-				buildingAreaM2: bStats.areaM2,
-				buildingSubtype: bStats.subtype,
-				buildingResidentialRatio: bStats.residentialRatio,
-				buildingGarageRatio: bStats.garageRatio,
-				buildingCommercialRatio: bStats.commercialRatio,
-				buildingCoverage:
-					areaM2 > 0 ? Math.min(1, bStats.areaM2 / areaM2) : null,
-				maxFloors: bStats.maxFloors,
-				egibBuildingCount: egibStats?.count ?? null,
-				egibBuildingAreaM2: egibStats?.areaM2 ?? null,
-				egibBuildingFloorAreaM2: egibStats?.floorAreaM2 ?? null,
-				egibBuildingFloors: egibStats?.floors ?? null,
-				egibBuildingResidentialRatio: egibStats?.residentialRatio ?? null,
-				egibBuildingCoverage: egibStats?.coverage ?? null,
-				landUseClass: parcel.landUseClass,
-				registerGroup: parcel.registerGroup,
-				zoningWz: zoning.wz,
-				zoningNoPlan: zoning.noPlan,
-				zoningPlanCount: zoning.count,
-				zoningFlags: JSON.stringify(zoningDetail ?? zoning.flags),
-				floodRisk,
-				slopeDeg: terrain.slopeDeg,
-				elevationM: terrain.elevationM,
-				sourceDataDate,
-				updatedAt: new Date(),
-			})
+			.values({ parcelId, ...featureValues })
 			.onConflictDoUpdate({
 				target: parcelFeatures.parcelId,
-				set: {
-					areaM2,
-					perimeterM,
-					compactness,
-					frontageM: rStats.frontageM,
-					roadDistanceM: Number.isFinite(rStats.distanceM)
-						? rStats.distanceM
-						: null,
-					roadClass: rStats.roadClass || null,
-					buildingCount: bStats.count,
-					buildingAreaM2: bStats.areaM2,
-					buildingSubtype: bStats.subtype,
-					buildingResidentialRatio: bStats.residentialRatio,
-					buildingGarageRatio: bStats.garageRatio,
-					buildingCommercialRatio: bStats.commercialRatio,
-					buildingCoverage:
-						areaM2 > 0 ? Math.min(1, bStats.areaM2 / areaM2) : null,
-					maxFloors: bStats.maxFloors,
-					egibBuildingCount: egibStats?.count ?? null,
-					egibBuildingAreaM2: egibStats?.areaM2 ?? null,
-					egibBuildingFloorAreaM2: egibStats?.floorAreaM2 ?? null,
-					egibBuildingFloors: egibStats?.floors ?? null,
-					egibBuildingResidentialRatio: egibStats?.residentialRatio ?? null,
-					egibBuildingCoverage: egibStats?.coverage ?? null,
-					landUseClass: parcel.landUseClass,
-					registerGroup: parcel.registerGroup,
-					zoningWz: zoning.wz,
-					zoningNoPlan: zoning.noPlan,
-					zoningPlanCount: zoning.count,
-					zoningFlags: JSON.stringify(zoningDetail ?? zoning.flags),
-					floodRisk,
-					slopeDeg: terrain.slopeDeg,
-					elevationM: terrain.elevationM,
-					sourceDataDate,
-					updatedAt: new Date(),
-				},
+				set: featureValues,
 			});
 
 		report.processed++;
