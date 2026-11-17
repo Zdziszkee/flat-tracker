@@ -18,7 +18,10 @@ export interface SourceProgress {
 	pages?: number;
 	newCount?: number;
 	updatedCount?: number;
+	/** Short, single-line summary shown in the status badge. */
 	error?: string;
+	/** Full error or crawl log, when one is available. */
+	log?: string;
 }
 
 export type RefreshPhase =

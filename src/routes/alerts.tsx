@@ -55,8 +55,8 @@ const SECTIONS: ReadonlyArray<{
 	mapKind: NonNullable<ListingSearch["kind"]>;
 }> = [
 	{ segment: "flat", label: "Mieszkania", mapKind: "apartment" },
-	{ segment: "house", label: "Domy z działką", mapKind: "house" },
 	{ segment: "plot", label: "Działki", mapKind: "plot" },
+	{ segment: "house", label: "Domy z działką", mapKind: "house" },
 ];
 
 function offerCount(count: number): string {
@@ -90,8 +90,8 @@ function AlertsPage() {
 				<div>
 					<h1 className="text-balance text-xl font-semibold">Alerty dnia</h1>
 					<p className="text-sm text-muted-foreground">
-						Top 5% ofert na sprzedaż w trzech segmentach: mieszkania, domy i
-						działki. Co najmniej 10% taniej od mediany podobnych z okolicy,
+						Top 5% ofert na sprzedaż w trzech segmentach: mieszkania, działki i
+						domy. Co najmniej 10% taniej od mediany podobnych z okolicy,
 						osobno dla regionu i segmentu. Nowe oferty są oceniane po każdym
 						odświeżeniu danych. Data: {data?.date ?? "…"}
 					</p>
@@ -121,11 +121,15 @@ function AlertsPage() {
 
 			{isLoading && <output className="sr-only">Ładowanie alertów…</output>}
 
-			<div className="grid gap-6 lg:grid-cols-3 lg:items-start">
+			<div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 xl:grid-cols-3">
 				{SECTIONS.map(({ segment, label, mapKind }) => {
 					const alerts = bySegment.get(segment) ?? [];
 					return (
-						<section key={segment} aria-labelledby={`section-${segment}`}>
+						<section
+							key={segment}
+							aria-labelledby={`section-${segment}`}
+							className="min-w-0"
+						>
 							<h2
 								id={`section-${segment}`}
 								className="mb-2 text-lg font-semibold"
@@ -136,8 +140,7 @@ function AlertsPage() {
 								</span>
 							</h2>
 							{isLoading ? (
-								<div className="grid gap-3">
-									<Skeleton className="h-64 rounded-xl" />
+								<div className="flex flex-col gap-3">
 									<Skeleton className="h-64 rounded-xl" />
 								</div>
 							) : alerts.length === 0 ? (
@@ -203,7 +206,7 @@ function RegionGroups({
 								</span>
 							</h3>
 						)}
-						<div className="grid gap-3">
+						<div className="flex flex-col gap-3">
 							{regionAlerts.map((alert) => (
 								<AlertCard key={alert.id} alert={alert} mapKind={mapKind} />
 							))}

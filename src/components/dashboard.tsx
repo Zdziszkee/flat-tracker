@@ -3,7 +3,7 @@ import { Chart } from "@tanstack/charts/react";
 import { scaleBand } from "@tanstack/charts/scales/band";
 import { scaleLinear } from "@tanstack/charts/scales/linear";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCwIcon } from "lucide-react";
+import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { buildChartCards } from "#/components/analytics/chart-cards";
 import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert";
@@ -17,6 +17,11 @@ import {
 	CardHeader,
 	CardTitle,
 } from "#/components/ui/card";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "#/components/ui/collapsible";
 import { Input } from "#/components/ui/input";
 import { Progress } from "#/components/ui/progress";
 import {
@@ -56,6 +61,7 @@ interface LiveState {
 	newCount?: number;
 	updatedCount?: number;
 	error?: string;
+	log?: string;
 }
 
 interface SourceStatus {
@@ -276,6 +282,109 @@ function linY(label: string) {
 		grid: true,
 		axis: { label },
 	};
+}
+
+function hasFiniteValue(row: unknown, keys: readonly string[]): boolean {
+	if (!row || typeof row !== "object") return false;
+	const record = row as Record<string, unknown>;
+	return keys.some((key) => {
+		const value = record[key];
+		return typeof value === "number" && Number.isFinite(value);
+	});
+}
+
+function hasChartValues(
+	rows: readonly unknown[] | undefined | null,
+	yKeys: string | readonly string[],
+	options: { requirePositive?: boolean } = {},
+): boolean {
+	if (!Array.isArray(rows)) return false;
+	const keys = typeof yKeys === "string" ? [yKeys] : yKeys;
+	return rows.some((row) =>
+		keys.some((key) => {
+			const value = (row as Record<string, unknown> | null)?.[key];
+			if (typeof value !== "number" || !Number.isFinite(value)) return false;
+			return options.requirePositive ? value > 0 : true;
+		}),
+	);
+}
+
+function hasNonZeroChartValues(
+	rows: readonly unknown[] | undefined | null,
+	yKeys: string | readonly string[],
+): boolean {
+	return hasChartValues(rows, yKeys, { requirePositive: true });
+}
+
+function isChartEmpty(key: string, data: MarketCharts): boolean {
+	switch (key) {
+		case "rentHistogram":
+			return !hasNonZeroChartValues(data.rentHistogram, "n");
+		case "oplatyHistogram":
+			return !hasNonZeroChartValues(data.oplatyHistogram, "n");
+		case "totalHistogram":
+			return !hasNonZeroChartValues(data.totalHistogram, "n");
+		case "priceTrend":
+			return !hasChartValues(data.priceTrend, "avgM2");
+		case "txVolume":
+			return !hasNonZeroChartValues(data.txVolume, "tx");
+		case "newSupply":
+			return !["sprzedaż", "najem", "STR"].some((segment) =>
+				hasNonZeroChartValues(
+					data.newSupply?.filter((r) => r.segment === segment),
+					"n",
+				),
+			);
+		case "yoyByPowiat":
+			return !hasChartValues(data.yoyByPowiat, "growthPct");
+		case "grossYield":
+			return !hasChartValues(data.grossYieldByCity, "yieldPct");
+		case "offerVsTxGap":
+			return !hasChartValues(data.offerVsTxGap, ["askM2", "txM2"]);
+		case "primaryVsSecondary":
+			return !hasChartValues(data.primaryVsSecondary, ["wtorny", "pierwotny"]);
+		case "txByRooms":
+			return !hasChartValues(data.txByRooms, "avgM2");
+		case "areaSegments":
+			return !hasChartValues(data.areaSegments, "avgM2");
+		case "strPriceByMonth":
+			return !["airbnb", "booking"].some((source) =>
+				hasChartValues(
+					data.strPriceByMonth?.filter((r) => r.source === source),
+					"avgPrice",
+				),
+			);
+		case "occupancyByMonth":
+			return !hasChartValues(data.occupancyByMonth, "occupancy");
+		case "weekdayPremium":
+			return !hasChartValues(data.weekdayPremium, "avgPrice");
+		case "strOccupancy":
+			return !hasChartValues(data.strOccupancyByCity, "occupancy");
+		case "occupancyVsYield": {
+			const citiesWithOccupancy = new Set(
+				(data.strOccupancyByCity ?? [])
+					.filter((r) => hasFiniteValue(r, ["occupancy"]))
+					.map((r) => r.city),
+			);
+			return !hasChartValues(
+				(data.grossYieldByCity ?? []).filter((r) =>
+					citiesWithOccupancy.has(r.city),
+				),
+				"yieldPct",
+			);
+		}
+		case "nightlyByCity":
+			return !["airbnb", "booking"].some((source) =>
+				hasChartValues(
+					data.nightlyByCity?.filter((r) => r.source === source),
+					"avgNightly",
+				),
+			);
+		case "priceDrops":
+			return !hasNonZeroChartValues(data.priceDropsByCity, "dropPct");
+		default:
+			return false;
+	}
 }
 
 /** The main page owns both live data views; /analytics and /sources reuse it. */
@@ -678,24 +787,39 @@ function AnalyticsPanel() {
 					const def = charts[cd.key];
 					if (!def) return null;
 					const height = cd.height ?? 280;
+					const empty = isChartEmpty(cd.key, data);
 					return (
 						<Card key={cd.key} className="gap-4 py-4">
 							<CardHeader className="px-4">
 								<CardTitle className="text-sm">{cd.title}</CardTitle>
-								{cd.subtitle && (
+								{(cd.subtitle || empty) && (
 									<CardDescription className="text-xs">
 										{cd.subtitle}
+										{empty && (
+											<span className="text-muted-foreground">
+												{cd.subtitle ? " · " : ""}brak danych
+											</span>
+										)}
 									</CardDescription>
 								)}
 							</CardHeader>
 							<CardContent className="px-4">
-								<div style={{ height }}>
-									<Chart
-										definition={def as never}
-										height={height - 14}
-										ariaLabel={cd.title}
-									/>
-								</div>
+								{empty ? (
+									<div
+										className="flex items-center justify-center text-sm text-muted-foreground"
+										style={{ height }}
+									>
+										Brak danych dla tego wykresu.
+									</div>
+								) : (
+									<div style={{ height }}>
+										<Chart
+											definition={def as never}
+											height={height - 14}
+											ariaLabel={cd.title}
+										/>
+									</div>
+								)}
 							</CardContent>
 						</Card>
 					);
@@ -978,7 +1102,8 @@ function SourcesPanel() {
 								</TableRow>
 							))}
 						{sources.map((s) => {
-							const error = s.live?.error ?? s.lastRun?.error ?? "";
+							const error =
+								s.live?.error || s.live?.log || s.lastRun?.error || "";
 							return (
 								<TableRow key={s.id}>
 									<TableCell className="max-w-0 px-4 py-2">
@@ -1001,11 +1126,25 @@ function SourcesPanel() {
 										{duration(s.lastRun?.startedAt, s.lastRun?.finishedAt)}
 									</TableCell>
 									<TableCell className="px-4 py-2">{metrics(s)}</TableCell>
-									<TableCell
-										className="max-w-xs truncate px-4 py-2 text-destructive-foreground"
-										title={error || undefined}
-									>
-										{error}
+									<TableCell className="max-w-xs px-4 py-2 text-destructive-foreground">
+										{error ? (
+											<Collapsible className="group">
+												<CollapsibleTrigger className="flex w-full cursor-pointer items-start gap-1.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+													<ChevronRightIcon
+														aria-hidden="true"
+														className="mt-0.5 size-3.5 shrink-0 transition-transform group-open:rotate-90"
+													/>
+													<span className="line-clamp-2 break-words">
+														{error}
+													</span>
+												</CollapsibleTrigger>
+												<CollapsibleContent>
+													<pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-2 font-mono text-xs leading-relaxed">
+														{error}
+													</pre>
+												</CollapsibleContent>
+											</Collapsible>
+										) : null}
 									</TableCell>
 								</TableRow>
 							);

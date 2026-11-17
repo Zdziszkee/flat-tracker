@@ -1,7 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
 import { and, eq, sql } from "drizzle-orm";
-import { getProgress, isRunning } from "#/crawler/progress";
+import {
+	getProgress,
+	isRunning,
+	type SourceProgress,
+} from "#/crawler/progress";
 import { remoteRefreshRunning } from "#/crawler/refresh-lock";
 import { sourceDescriptors } from "#/crawler/source-status";
 import { db } from "#/db/index";
@@ -22,6 +26,27 @@ interface LastRun {
 	newCount: number | null;
 	updatedCount: number | null;
 	error: string | null;
+}
+
+/**
+ * Live source state. `error` stays the compact badge text; `log` is the
+ * optional full log the /sources panel can expand.
+ */
+function toLiveState(
+	source: SourceProgress | undefined,
+): SourceProgress | null {
+	if (!source) return null;
+	return {
+		source: source.source,
+		state: source.state,
+		startedAt: source.startedAt,
+		finishedAt: source.finishedAt,
+		pages: source.pages,
+		newCount: source.newCount,
+		updatedCount: source.updatedCount,
+		error: source.error,
+		log: source.log,
+	};
 }
 
 export const Route = createFileRoute("/api/crawl-status")({
@@ -92,7 +117,7 @@ export const Route = createFileRoute("/api/crawl-status")({
 						name: d.name,
 						kind: d.kind,
 						lastRun: lastBySource.get(d.id) ?? null,
-						live: progress?.sources.find((s) => s.source === d.id) ?? null,
+						live: toLiveState(progress?.sources.find((s) => s.source === d.id)),
 					})),
 				});
 			},

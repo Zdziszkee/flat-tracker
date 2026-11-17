@@ -10,20 +10,6 @@ export const Route = createFileRoute("/")({ component: Home });
 function Home() {
 	return (
 		<main className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6">
-			<header className="display-title flex flex-col gap-3">
-				<p className="font-sans text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">
-					Rynek nieruchomości · Małopolska i Śląsk
-				</p>
-				<h1 className="text-4xl font-bold text-foreground sm:text-5xl">
-					Flat Tracker
-				</h1>
-				<p className="max-w-2xl font-sans text-base text-muted-foreground">
-					Oferty sprzedaży i najmu połączone z historycznymi cenami
-					transakcyjnymi. Analizuj rynek i sprawdzaj, skąd pochodzą dane, bez
-					opuszczania strony głównej.
-				</p>
-			</header>
-
 			<nav className="flex flex-wrap gap-3" aria-label="Nawigacja główna">
 				<Button asChild>
 					<Link to="/map" search={DEFAULT_LISTING_SEARCH} preload="intent">

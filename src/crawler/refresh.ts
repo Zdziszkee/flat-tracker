@@ -106,6 +106,12 @@ function causeLine(err: unknown): string {
 	return message.split("\n").find((line) => line.trim()) ?? message;
 }
 
+function fullErrorLog(err: unknown, compact: string): string {
+	const raw = err instanceof Error ? (err.stack ?? err.message) : String(err);
+	const log = raw.trim();
+	return log && log !== compact ? log : compact;
+}
+
 type CrawlState = Record<string, string>;
 
 async function readState(): Promise<CrawlState> {
@@ -285,6 +291,7 @@ export async function refreshAll(
 				};
 			} catch (err) {
 				const error = causeLine(err);
+				const log = fullErrorLog(err, error);
 				console.error(`[refresh] crawl of "${adapter.id}" failed: ${error}`);
 				// A thrown hard block (custom-launch adapters, WAF pages) also
 				// pauses the source instead of being retried by later runs.
@@ -307,6 +314,7 @@ export async function refreshAll(
 					state: "failed",
 					finishedAt: new Date().toISOString(),
 					error,
+					log,
 				});
 				return {
 					site: adapter.id,
@@ -333,6 +341,7 @@ export async function refreshAll(
 					sites[i] = await tasks[i]();
 				} catch (err) {
 					const error = causeLine(err);
+					const log = fullErrorLog(err, error);
 					sites[i] = {
 						site: siteAdapters[i]?.id ?? "unknown",
 						ok: false,
@@ -346,6 +355,7 @@ export async function refreshAll(
 						state: "failed",
 						finishedAt: new Date().toISOString(),
 						error,
+						log,
 					});
 				}
 			}
@@ -404,6 +414,7 @@ export async function refreshAll(
 			});
 		} catch (err) {
 			const error = causeLine(err);
+			const log = fullErrorLog(err, error);
 			console.error(`[refresh] public investments failed: ${error}`);
 			await recordCrawlRun({
 				source: "public-investments",
@@ -418,6 +429,7 @@ export async function refreshAll(
 				state: "failed",
 				finishedAt: new Date().toISOString(),
 				error,
+				log,
 			});
 		}
 
@@ -449,6 +461,7 @@ export async function refreshAll(
 			});
 		} catch (err) {
 			const error = causeLine(err);
+			const log = fullErrorLog(err, error);
 			console.error(`[refresh] finwire import failed: ${error}`);
 			await recordCrawlRun({
 				source: "finwire",
@@ -463,6 +476,7 @@ export async function refreshAll(
 				state: "failed",
 				finishedAt: new Date().toISOString(),
 				error,
+				log,
 			});
 		}
 
