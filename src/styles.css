@@ -173,6 +173,10 @@ html {
    * definite height, which left short routes (the home page) with the html
    * canvas showing below the body gradient as a dark band. */
   height: 100%;
+  /* Dark by default (html carries .dark): native scrollbars, form controls
+   * and the pre-hydration canvas all render dark, no white flash. */
+  color-scheme: dark;
+  background-color: var(--bg-base);
 }
 
 body,
@@ -189,7 +193,7 @@ body {
     radial-gradient(1100px 620px at -8% -10%, var(--hero-a), transparent 58%),
     radial-gradient(1050px 620px at 112% -12%, var(--hero-b), transparent 62%),
     radial-gradient(720px 380px at 50% 115%, rgba(79, 184, 178, 0.1), transparent 68%),
-    linear-gradient(180deg, color-mix(in oklab, var(--sand) 68%, white) 0%, var(--foam) 44%, var(--bg-base) 100%);
+    linear-gradient(180deg, color-mix(in oklab, var(--sand) 68%, var(--bg-base)) 0%, var(--foam) 44%, var(--bg-base) 100%);
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -203,7 +207,7 @@ body::before {
   z-index: -1;
   opacity: 0.28;
   background:
-    radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.8), transparent 34%),
+    radial-gradient(circle at 20% 15%, var(--inset-glint), transparent 34%),
     radial-gradient(circle at 78% 26%, rgba(79, 184, 178, 0.2), transparent 42%),
     radial-gradient(circle at 42% 82%, rgba(47, 106, 74, 0.14), transparent 36%);
 }
@@ -230,13 +234,13 @@ a {
 }
 
 a:hover {
-  color: #246f76;
+  color: var(--lagoon);
 }
 
 code {
   font-size: 0.9em;
   border: 1px solid var(--line);
-  background: color-mix(in oklab, var(--surface-strong) 82%, white 18%);
+  background: color-mix(in oklab, var(--surface-strong) 82%, var(--bg-base) 18%);
   border-radius: 7px;
   padding: 2px 7px;
 }
@@ -277,7 +281,7 @@ pre code {
 }
 
 .feature-card {
-  background: linear-gradient(165deg, color-mix(in oklab, var(--surface-strong) 93%, white 7%), var(--surface));
+  background: linear-gradient(165deg, color-mix(in oklab, var(--surface-strong) 93%, var(--bg-base) 7%), var(--surface));
   box-shadow:
     0 1px 0 var(--inset-glint) inset,
     0 18px 34px rgba(30, 90, 72, 0.1),

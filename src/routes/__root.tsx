@@ -36,7 +36,10 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en">
+		// Dark by default: the class ships in the SSR markup so there is no
+		// light flash before hydration. The palette lives in styles.css
+		// (.dark custom variant + the bespoke sea/lagoon variables).
+		<html lang="pl" className="dark">
 			<head>
 				<HeadContent />
 			</head>
