@@ -1,11 +1,21 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useState } from "react";
 
 import { ListingFilters } from "#/components/listing-filters";
 import { BudujesieThreadPanel } from "#/components/listings/budujesie-thread-panel";
 import { PublicInvestmentsTable } from "#/components/listings/public-investments-table";
 import { ValuationPanel } from "#/components/listings/valuation-panel";
+import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "#/components/ui/table";
 import { useListingFilters } from "#/hooks/use-listing-filters";
 import { LISTINGS_PAGE_SIZE, useListingTable } from "#/hooks/use-listing-table";
 import { usePublicInvestments } from "#/hooks/use-public-investments";
@@ -19,6 +29,7 @@ import {
 } from "#/lib/listing-features";
 import type { PropertyKind } from "#/lib/property-kind";
 import { sourceLabel } from "#/lib/sources";
+import { cn } from "#/lib/utils";
 
 export const Route = createFileRoute("/listings")({
 	validateSearch: (search) => listingSearchSchema.parse(search),
@@ -54,12 +65,12 @@ function ListingsPage() {
 	const currentPage = Math.min(page, totalPages - 1);
 
 	return (
-		<div className="p-6">
-			<div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+		<div className="flex flex-col gap-4 p-6">
+			<div className="flex flex-wrap items-end justify-between gap-3">
 				<h1 className="text-xl font-semibold">
 					Ogłoszenia · Małopolska i Śląsk
 				</h1>
-				<div className="flex items-end gap-3">
+				<div className="flex flex-wrap items-end gap-3">
 					<ListingFilters
 						value={filters}
 						sources={sourceOptions}
@@ -71,20 +82,21 @@ function ListingsPage() {
 						}
 						onChange={setFilters}
 					/>
-					<Link
-						to="/map"
-						search={searchFromFilters(filters)}
-						preload="intent"
-						className="text-blue-600 underline"
-					>
-						Mapa
-					</Link>
-					<Link to="/sources" className="text-blue-600 underline">
-						Data sources
-					</Link>
-					<Link to="/alerts" className="text-blue-600 underline">
-						Alerty
-					</Link>
+					<Button variant="ghost" size="sm" asChild>
+						<Link
+							to="/map"
+							search={searchFromFilters(filters)}
+							preload="intent"
+						>
+							Mapa
+						</Link>
+					</Button>
+					<Button variant="ghost" size="sm" asChild>
+						<Link to="/sources">Data sources</Link>
+					</Button>
+					<Button variant="ghost" size="sm" asChild>
+						<Link to="/alerts">Alerty</Link>
+					</Button>
 				</div>
 			</div>
 
@@ -95,31 +107,41 @@ function ListingsPage() {
 				/>
 			) : (
 				<>
-					<div className="overflow-x-auto rounded border">
-						<table className="w-full text-sm">
-							<thead className="bg-gray-50 text-left">
-								<tr>
-									<th className="px-3 py-2">Źródło</th>
-									<th className="px-3 py-2">Tytuł</th>
-									<th className="px-3 py-2 text-right">Cena</th>
-									<th className="px-3 py-2 text-right">zł/m²</th>
-									<th className="px-3 py-2 text-right">m²</th>
-									<th className="px-3 py-2 text-right">Pokoje</th>
-									<th className="px-3 py-2">Dzielnica</th>
-									<th className="px-3 py-2">Data dodania</th>
-									<th className="px-2 py-2" aria-label="wycena" />
-								</tr>
-							</thead>
-							<tbody>
+					<div className="rounded-lg border">
+						<Table>
+							<TableHeader>
+								<TableRow className="hover:bg-transparent">
+									<TableHead className="px-3">Źródło</TableHead>
+									<TableHead className="px-3">Tytuł</TableHead>
+									<TableHead className="px-3 text-right">Cena</TableHead>
+									<TableHead className="px-3 text-right">zł/m²</TableHead>
+									<TableHead className="px-3 text-right">m²</TableHead>
+									<TableHead className="px-3 text-right">Pokoje</TableHead>
+									<TableHead className="px-3">Dzielnica</TableHead>
+									<TableHead className="px-3">Data dodania</TableHead>
+									<TableHead className="px-2" aria-label="wycena" />
+								</TableRow>
+							</TableHeader>
+							<TableBody>
 								{isLoading && (
-									<tr>
-										<td
+									<TableRow className="hover:bg-transparent">
+										<TableCell
 											colSpan={9}
-											className="px-3 py-6 text-center text-gray-500"
+											className="px-3 py-6 text-center text-muted-foreground"
 										>
 											Ładowanie...
-										</td>
-									</tr>
+										</TableCell>
+									</TableRow>
+								)}
+								{!isLoading && rows.length === 0 && (
+									<TableRow className="hover:bg-transparent">
+										<TableCell
+											colSpan={9}
+											className="px-3 py-6 text-center text-muted-foreground"
+										>
+											Brak ofert dla wybranych filtrów.
+										</TableCell>
+									</TableRow>
 								)}
 								{!isLoading &&
 									rows.map((row) => {
@@ -127,89 +149,114 @@ function ListingsPage() {
 											row.offerType === "sale" ||
 											row.offerType === "long_term_rental" ||
 											row.source === "budujesie";
+										const isExpanded = expanded === row.id;
+										const toggle = () =>
+											setExpanded(isExpanded ? null : row.id);
 										return (
 											<Fragment key={`${row.source}-${row.id}`}>
-												<tr
-													className={`border-t ${expandable ? "cursor-pointer hover:bg-gray-50" : ""}`}
+												<TableRow
+													className={cn(expandable && "cursor-pointer")}
+													aria-expanded={expandable ? isExpanded : undefined}
 													onClick={() => {
 														if (!expandable) return;
-														setExpanded(expanded === row.id ? null : row.id);
+														toggle();
 													}}
 												>
-													<td className="px-3 py-1.5">
-														<span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700">
+													<TableCell className="px-3 py-1.5">
+														<Badge variant="secondary">
 															{sourceLabel(row.source)}
-														</span>
-													</td>
-													<td className="max-w-96 px-3 py-1.5">
+														</Badge>
+													</TableCell>
+													<TableCell className="max-w-96 px-3 py-1.5">
 														<div className="truncate">
 															<a
 																href={row.url}
 																target="_blank"
 																rel="noreferrer"
-																className="hover:text-blue-600 hover:underline"
+																className="hover:underline"
+																onClick={(event) => event.stopPropagation()}
 															>
 																{row.title}
 															</a>
 														</div>
 														{row.constructionEndLabel && (
-															<div className="truncate text-xs text-amber-700">
+															<div className="truncate text-xs text-amber-400">
 																{realizationCaption(
 																	row.constructionEndLabel,
 																	row.constructionEndDate,
 																)}
 															</div>
 														)}
-													</td>
-													<td className="px-3 py-1.5 text-right font-medium">
+													</TableCell>
+													<TableCell className="px-3 py-1.5 text-right font-medium">
 														{formatNumber(row.price)}
-													</td>
-													<td className="px-3 py-1.5 text-right">
+													</TableCell>
+													<TableCell className="px-3 py-1.5 text-right">
 														{formatNumber(row.pricePerM2)}
-													</td>
-													<td className="px-3 py-1.5 text-right">
+													</TableCell>
+													<TableCell className="px-3 py-1.5 text-right">
 														{formatNumber(row.areaM2)}
-													</td>
-													<td className="px-3 py-1.5 text-right">
+													</TableCell>
+													<TableCell className="px-3 py-1.5 text-right">
 														{row.rooms ?? ""}
-													</td>
-													<td className="px-3 py-1.5">{row.district ?? ""}</td>
-													<td className="px-3 py-1.5 text-gray-500">
+													</TableCell>
+													<TableCell className="px-3 py-1.5">
+														{row.district ?? ""}
+													</TableCell>
+													<TableCell className="px-3 py-1.5 text-muted-foreground">
 														{formatDate(row.listedAt ?? row.firstSeenAt)}
-													</td>
-													<td className="px-2 py-1.5 text-center text-gray-400">
-														{expandable
-															? expanded === row.id
-																? "▾"
-																: "▸"
-															: ""}
-													</td>
-												</tr>
-												{expanded === row.id && (
-													<tr>
-														<td colSpan={9} className="border-t bg-gray-50 p-0">
+													</TableCell>
+													<TableCell className="px-2 py-1.5 text-center text-muted-foreground">
+														{expandable && (
+															<Button
+																variant="ghost"
+																size="icon-xs"
+																aria-label={
+																	isExpanded ? "Zwiń wycenę" : "Pokaż wycenę"
+																}
+																onClick={(event) => {
+																	event.stopPropagation();
+																	toggle();
+																}}
+															>
+																{isExpanded ? (
+																	<ChevronDown />
+																) : (
+																	<ChevronRight />
+																)}
+															</Button>
+														)}
+													</TableCell>
+												</TableRow>
+												{isExpanded && (
+													<TableRow className="hover:bg-transparent">
+														<TableCell
+															colSpan={9}
+															className="bg-muted/30 p-0 whitespace-normal"
+														>
 															{row.source === "budujesie" ? (
 																<BudujesieThreadPanel row={row} />
 															) : (
 																<ValuationPanel id={row.id} />
 															)}
-														</td>
-													</tr>
+														</TableCell>
+													</TableRow>
 												)}
 											</Fragment>
 										);
 									})}
-							</tbody>
-						</table>
+							</TableBody>
+						</Table>
 					</div>
 
-					<div className="mt-3 flex items-center justify-between text-sm">
-						<span className="text-gray-500">
+					<div className="flex items-center justify-between text-sm">
+						<span className="text-muted-foreground">
 							Strona {currentPage + 1} z {totalPages} · {data?.total ?? 0} ofert
 						</span>
 						<div className="flex gap-2">
 							<Button
 								variant="outline"
+								size="sm"
 								disabled={currentPage === 0}
 								onClick={() => setPage(currentPage - 1)}
 							>
@@ -217,6 +264,7 @@ function ListingsPage() {
 							</Button>
 							<Button
 								variant="outline"
+								size="sm"
 								disabled={currentPage + 1 >= totalPages}
 								onClick={() => setPage(currentPage + 1)}
 							>

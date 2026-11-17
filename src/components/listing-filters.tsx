@@ -2,6 +2,7 @@ import { Label } from "#/components/ui/label";
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
@@ -39,7 +40,7 @@ export function ListingFilters({
 	return (
 		<div className="flex flex-wrap items-end gap-3 text-sm">
 			<div className="flex flex-col gap-1">
-				<Label className="text-xs text-gray-500">Źródło</Label>
+				<Label className="text-xs text-muted-foreground">Źródło</Label>
 				<Select
 					value={value.source}
 					onValueChange={(source) => onChange({ ...value, source })}
@@ -48,26 +49,28 @@ export function ListingFilters({
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="all">Wszystkie ({facets.total})</SelectItem>
-						{sources.map((source) => (
-							<SelectItem key={source} value={source}>
-								<span
-									className="mr-2 inline-block size-2.5 shrink-0 rounded-full ring-1 ring-black/10"
-									style={{
-										backgroundColor:
-											SOURCE_COLORS[source as keyof typeof SOURCE_COLORS] ??
-											"#94a3b8",
-									}}
-								/>
-								{sourceLabel(source)} ({facets.bySource.get(source) ?? 0})
-							</SelectItem>
-						))}
+						<SelectGroup>
+							<SelectItem value="all">Wszystkie ({facets.total})</SelectItem>
+							{sources.map((source) => (
+								<SelectItem key={source} value={source}>
+									<span
+										className="mr-2 inline-block size-2.5 shrink-0 rounded-full ring-1 ring-border"
+										style={{
+											backgroundColor:
+												SOURCE_COLORS[source as keyof typeof SOURCE_COLORS] ??
+												"#94a3b8",
+										}}
+									/>
+									{sourceLabel(source)} ({facets.bySource.get(source) ?? 0})
+								</SelectItem>
+							))}
+						</SelectGroup>
 					</SelectContent>
 				</Select>
 			</div>
 
 			<div className="flex flex-col gap-1">
-				<Label className="text-xs text-gray-500">Rodzaj</Label>
+				<Label className="text-xs text-muted-foreground">Rodzaj</Label>
 				<Select
 					value={value.kind}
 					onValueChange={(kind) =>
@@ -81,26 +84,31 @@ export function ListingFilters({
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
-						<SelectItem value="all">Wszystkie ({facets.total})</SelectItem>
-						{(Object.keys(PROPERTY_KIND_LABELS) as Array<PropertyKind | "all">)
-							.filter((kind): kind is PropertyKind => kind !== "all")
-							.map((kind) => (
-								<SelectItem key={kind} value={kind}>
-									{PROPERTY_KIND_LABELS[kind]} ({facets.byKind.get(kind) ?? 0})
-								</SelectItem>
-							))}
-						<SelectItem value={PUBLIC_INVESTMENTS_KIND}>
-							Inwestycje publiczne
-							{publicInvestmentsCount != null
-								? ` (${publicInvestmentsCount})`
-								: ""}
-						</SelectItem>
+						<SelectGroup>
+							<SelectItem value="all">Wszystkie ({facets.total})</SelectItem>
+							{(
+								Object.keys(PROPERTY_KIND_LABELS) as Array<PropertyKind | "all">
+							)
+								.filter((kind): kind is PropertyKind => kind !== "all")
+								.map((kind) => (
+									<SelectItem key={kind} value={kind}>
+										{PROPERTY_KIND_LABELS[kind]} ({facets.byKind.get(kind) ?? 0}
+										)
+									</SelectItem>
+								))}
+							<SelectItem value={PUBLIC_INVESTMENTS_KIND}>
+								Inwestycje publiczne
+								{publicInvestmentsCount != null
+									? ` (${publicInvestmentsCount})`
+									: ""}
+							</SelectItem>
+						</SelectGroup>
 					</SelectContent>
 				</Select>
 			</div>
 
 			<div className="flex flex-col gap-1">
-				<Label className="text-xs text-gray-500">Data dodania</Label>
+				<Label className="text-xs text-muted-foreground">Data dodania</Label>
 				<Select
 					value={String(value.days)}
 					onValueChange={(days) =>
@@ -111,18 +119,20 @@ export function ListingFilters({
 						<SelectValue />
 					</SelectTrigger>
 					<SelectContent>
-						{DAY_OPTIONS.map((option) => (
-							<SelectItem key={option.value} value={String(option.value)}>
-								{option.label}
-							</SelectItem>
-						))}
+						<SelectGroup>
+							{DAY_OPTIONS.map((option) => (
+								<SelectItem key={option.value} value={String(option.value)}>
+									{option.label}
+								</SelectItem>
+							))}
+						</SelectGroup>
 					</SelectContent>
 				</Select>
 			</div>
 
 			{showOfferType && (
 				<div className="flex flex-col gap-1">
-					<Label className="text-xs text-gray-500">Typ</Label>
+					<Label className="text-xs text-muted-foreground">Typ</Label>
 					<Select
 						value={value.offerType}
 						onValueChange={(offerType) =>
@@ -136,9 +146,11 @@ export function ListingFilters({
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							<SelectItem value="all">Wszystkie typy</SelectItem>
-							<SelectItem value="sale">Sprzedaż</SelectItem>
-							<SelectItem value="rental">Najem</SelectItem>
+							<SelectGroup>
+								<SelectItem value="all">Wszystkie typy</SelectItem>
+								<SelectItem value="sale">Sprzedaż</SelectItem>
+								<SelectItem value="rental">Najem</SelectItem>
+							</SelectGroup>
 						</SelectContent>
 					</Select>
 				</div>
