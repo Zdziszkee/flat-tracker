@@ -5,7 +5,7 @@
  * value requires a new `SCORE_VERSION` so stored scores stay auditable.
  */
 
-export const SCORE_VERSION = "2027.7";
+export const SCORE_VERSION = "2027.8";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -82,15 +82,55 @@ export const HEATING_DELTAS = {
 /** Distance bands in metres. First band that contains the distance wins. */
 export type DistanceBands = ReadonlyArray<readonly [number, number]>;
 
+/**
+ * Tram is a flat-only signal and only in the two cities with tram networks in
+ * the tracked regions. `city` comes from the listing's structured city field,
+ * normalized at the scoring boundary; `geo.city` is only the nearest external
+ * price-index centre and labels the whole region, so it must not be used here.
+ * The 300 m target is the full-credit band: a stop within 300 m is close enough
+ * that a few dozen metres make no practical difference.
+ */
+export const TRAM_CITIES = ["krakow", "katowice"] as const;
+export const TRAM_TARGET_M = 300;
+export const TRAM_BANDS: DistanceBands = [
+	[TRAM_TARGET_M, 100],
+	[600, 80],
+	[1000, 60],
+	[1500, 40],
+	[3000, 15],
+];
+export const TRAM_FALLBACK = 20;
+
+/**
+ * A station 300-800 m away is the sweet spot: close enough to walk, far
+ * enough to avoid the noise and grime of a station at the doorstep. The
+ * preference continues to 2 km, then decays. Houses and plots give this
+ * distance most of the transit component because they are not tram markets.
+ */
+export const TRAIN_PREFERRED_M = 2000;
+export const TRAIN_STATION_BANDS: DistanceBands = [
+	[150, 40],
+	[300, 70],
+	[800, 100],
+	[TRAIN_PREFERRED_M, 85],
+	[3000, 55],
+	[5000, 30],
+];
+export const TRAIN_FALLBACK = 15;
+
+/**
+ * How the transit component is composed. A signal that does not apply to a
+ * listing gets zero weight, and that weight is moved to the signals that do,
+ * so an inapplicable tram stop can never raise a house score and a missing
+ * tram network cannot silently drain the flat score outside tram cities.
+ */
+export const TRANSIT_MIX = {
+	flatTram: { tram: 0.55, train: 0.2, bus: 0.1, center: 0.15 },
+	flatNoTram: { tram: 0, train: 0.55, bus: 0.15, center: 0.3 },
+	housePlot: { tram: 0, train: 0.7, bus: 0.15, center: 0.15 },
+} as const;
+
 export const DISTANCE_BANDS = {
-	tram: [
-		[150, 100],
-		[300, 90],
-		[600, 75],
-		[1000, 60],
-		[1500, 40],
-		[3000, 15],
-	],
 	bus: [
 		[200, 90],
 		[400, 80],

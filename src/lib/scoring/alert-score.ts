@@ -24,6 +24,14 @@ import {
 	PLOT_SPREAD_FACTOR_FLOOR,
 	SCORE_VERSION,
 	SEGMENT_WEIGHTS,
+	TRAIN_FALLBACK,
+	TRAIN_PREFERRED_M,
+	TRAIN_STATION_BANDS,
+	TRAM_BANDS,
+	TRAM_CITIES,
+	TRAM_FALLBACK,
+	TRAM_TARGET_M,
+	TRANSIT_MIX,
 	valueCurveScore,
 } from "./config";
 
@@ -47,6 +55,7 @@ export interface ScoreListingInput {
 	source: string;
 	segment: AlertSegment;
 	region: string;
+	city?: string | null;
 	title: string;
 	description?: string | null;
 	price: number | null;
@@ -202,18 +211,27 @@ function valueComponent(
 	};
 }
 
-function trainStationScore(meters: number | null | undefined): number {
-	if (meters == null || !Number.isFinite(meters) || meters < 0) return 30;
-	if (meters < 150) return 40; // station noise, not a doorstep benefit
-	if (meters < 300) return 65;
-	if (meters < 800) return 100;
-	if (meters < 1500) return 92;
-	if (meters < 2500) return 72;
-	if (meters < 5000) return 42;
-	return 20;
+/** Listing city values are native Polish names with a few case/ASCII variants. */
+function normalizedCity(city: string | null | undefined): string {
+	return (city ?? "")
+		.normalize("NFD")
+		.replace(/\p{Diacritic}/gu, "")
+		.toLowerCase()
+		.trim();
 }
 
-function transitComponent(geo: GeoUniqueness | null): Component {
+function inTramCity(city: string | null | undefined): boolean {
+	const normalized = normalizedCity(city);
+	return (
+		TRAM_CITIES.some((tramCity) => tramCity === normalized) ||
+		normalized.startsWith("katowice ")
+	);
+}
+
+function transitComponent(
+	input: ScoreListingInput,
+	geo: GeoUniqueness | null,
+): Component {
 	if (!geo) {
 		return {
 			score: 45,
@@ -222,27 +240,45 @@ function transitComponent(geo: GeoUniqueness | null): Component {
 			flags: ["missing_coordinates"],
 		};
 	}
-	const tram = distanceScore(geo.tramM, DISTANCE_BANDS.tram);
-	const train = trainStationScore(geo.trainStationM);
+	const tramFlat = input.segment === "flat" && inTramCity(input.city);
+	const mix = tramFlat
+		? TRANSIT_MIX.flatTram
+		: input.segment === "flat"
+			? TRANSIT_MIX.flatNoTram
+			: TRANSIT_MIX.housePlot;
+	const tram = tramFlat
+		? distanceScore(geo.tramM, TRAM_BANDS, TRAM_FALLBACK)
+		: 0;
+	const train = distanceScore(
+		geo.trainStationM,
+		TRAIN_STATION_BANDS,
+		TRAIN_FALLBACK,
+	);
 	const bus = distanceScore(geo.busM, DISTANCE_BANDS.bus);
 	const center = distanceScore(geo.centerM, DISTANCE_BANDS.center);
-	let score = tram * 0.45 + train * 0.3 + bus * 0.1 + center * 0.15;
+	let score =
+		tram * mix.tram + train * mix.train + bus * mix.bus + center * mix.center;
 	const reasons: Array<{ label: string; impact: number }> = [];
 	const flags: string[] = [];
-	if (geo.tramM != null && geo.tramM <= 600) {
+	if (tramFlat && geo.tramM != null && geo.tramM <= TRAM_TARGET_M) {
+		reasons.push({
+			label: `${Math.round(geo.tramM)} m to the nearest tram stop (300 m target)`,
+			impact: 8,
+		});
+	} else if (tramFlat && geo.tramM != null && geo.tramM <= 600) {
 		reasons.push({
 			label: `${Math.round(geo.tramM)} m to the nearest tram stop`,
-			impact: 8,
+			impact: 4,
 		});
 	}
 	if (
 		geo.trainStationM != null &&
 		geo.trainStationM >= 300 &&
-		geo.trainStationM <= 2000
+		geo.trainStationM < TRAIN_PREFERRED_M
 	) {
 		reasons.push({
 			label: `${(geo.trainStationM / 1000).toFixed(1)} km to a railway station`,
-			impact: 7,
+			impact: 8,
 		});
 	}
 	if (geo.centerM != null && geo.centerM <= 2500) {
@@ -682,7 +718,7 @@ export function scoreAlert(
 ): AlertScore {
 	const weights = SEGMENT_WEIGHTS[input.segment];
 	const value = valueComponent(input, estimate);
-	const transit = transitComponent(geo);
+	const transit = transitComponent(input, geo);
 	const green = greenComponent(geo);
 	const property = propertyComponent(input);
 	const risk = riskComponent(input, geo, estimate);

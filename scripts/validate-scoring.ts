@@ -21,6 +21,9 @@ import {
 	HEATING_DELTAS,
 	SCORE_VERSION,
 	SEGMENT_WEIGHTS,
+	TRAIN_PREFERRED_M,
+	TRAM_CITIES,
+	TRAM_TARGET_M,
 	valueCurveScore,
 } from "#/lib/scoring/config";
 import type { GeoUniqueness } from "#/lib/valuation/uniqueness-geo";
@@ -94,6 +97,7 @@ const flat: ScoreListingInput = {
 	source: "otodom",
 	segment: "flat",
 	region: "malopolskie",
+	city: "Kraków",
 	title: "Mieszkanie 60 m2",
 	description: "Trzy pokoje, winda, balkon.",
 	price: 600000,
@@ -131,6 +135,19 @@ const plot: ScoreListingInput = {
 	},
 };
 
+const house: ScoreListingInput = {
+	...flat,
+	id: 3,
+	segment: "house",
+	title: "Dom 120 m2 z ogrodem",
+	areaM2: 120,
+	plotAreaM2: 800,
+	rooms: 4,
+	buildingType: "detached",
+	hasGarden: true,
+	hasGarage: true,
+};
+
 function total(
 	input: ScoreListingInput,
 	value: ValuationEstimate | null,
@@ -149,27 +166,102 @@ check(
 	{ fair700, fair750, fair800 },
 );
 
-// --- Transit monotonicity ----------------------------------------------
+// --- Transit policy ----------------------------------------------------
 const tram100 = scoreAlert(flat, estimate(800000), geo({ tramM: 100 }));
-const tram300 = scoreAlert(flat, estimate(800000), geo({ tramM: 300 }));
-const tram900 = scoreAlert(flat, estimate(800000), geo({ tramM: 900 }));
+const tram1000 = scoreAlert(flat, estimate(800000), geo({ tramM: 1000 }));
 check(
-	"closer tram increases transit score",
-	tram100.transitScore > tram300.transitScore &&
-		tram300.transitScore > tram900.transitScore,
+	"tram policy pins the 300 m target and the two tram cities",
+	TRAM_TARGET_M === 300 &&
+		TRAM_CITIES.length === 2 &&
+		TRAM_CITIES.includes("krakow") &&
+		TRAM_CITIES.includes("katowice") &&
+		SCORE_VERSION === "2027.8",
+	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
+);
+check(
+	"a tram stop within the 300 m target earns full credit",
+	tram100.transitScore > tram1000.transitScore &&
+		scoreAlert(flat, estimate(800000), geo({ tramM: 300 })).transitScore ===
+			tram100.transitScore &&
+		tram100.totalScore > tram1000.totalScore,
 	{
 		tram100: tram100.transitScore,
-		tram300: tram300.transitScore,
-		tram900: tram900.transitScore,
+		tram1000: tram1000.transitScore,
+		total100: tram100.totalScore,
+		total1000: tram1000.totalScore,
 	},
 );
-
-const tram100Total = tram100.totalScore;
-const tram900Total = tram900.totalScore;
+const katowiceFlat = scoreAlert(
+	{ ...flat, city: "Katowice" },
+	estimate(800000),
+	geo({ tramM: 100 }),
+);
 check(
-	"closer tram increases total score",
-	tram100Total > tram900Total,
-	{ tram100Total, tram900Total },
+	"Kraków and Katowice flats get the same tram treatment",
+	katowiceFlat.transitScore === tram100.transitScore &&
+		katowiceFlat.totalScore === tram100.totalScore,
+	{
+		krakow: tram100.transitScore,
+		katowice: katowiceFlat.transitScore,
+	},
+);
+const tarnowFlat = scoreAlert(
+	{ ...flat, city: "Tarnów" },
+	estimate(800000),
+	geo({ tramM: 100 }),
+);
+const nullCityFlat = scoreAlert(
+	{ ...flat, city: null },
+	estimate(800000),
+	geo({ tramM: 100 }),
+);
+check(
+	"tram is ignored for flats outside Kraków and Katowice",
+	tarnowFlat.transitScore === nullCityFlat.transitScore &&
+		scoreAlert(
+			{ ...flat, city: "Tarnów" },
+			estimate(800000),
+			geo({ tramM: 3000 }),
+		).transitScore === tarnowFlat.transitScore &&
+		!tarnowFlat.reasons.some((reason) => /tram/i.test(reason.label)),
+	{
+		tarnow: tarnowFlat.transitScore,
+		nullCity: nullCityFlat.transitScore,
+		reasons: tarnowFlat.reasons,
+	},
+);
+const houseNearTram = scoreAlert(
+	house,
+	estimate(800000),
+	geo({ tramM: 100, trainStationM: 3000 }),
+);
+const plotNearTram = scoreAlert(
+	plot,
+	estimate(300000),
+	geo({ tramM: 100, trainStationM: 3000 }),
+);
+const houseFarTram = scoreAlert(
+	house,
+	estimate(800000),
+	geo({ tramM: 3000, trainStationM: 3000 }),
+);
+const plotFarTram = scoreAlert(
+	plot,
+	estimate(300000),
+	geo({ tramM: 3000, trainStationM: 3000 }),
+);
+check(
+	"tram is ignored for houses and plots even in tram cities",
+	houseNearTram.transitScore === houseFarTram.transitScore &&
+		plotNearTram.transitScore === plotFarTram.transitScore &&
+		!houseNearTram.reasons.some((reason) => /tram/i.test(reason.label)) &&
+		!plotNearTram.reasons.some((reason) => /tram/i.test(reason.label)),
+	{
+		houseNear: houseNearTram.transitScore,
+		houseFar: houseFarTram.transitScore,
+		plotNear: plotNearTram.transitScore,
+		plotFar: plotFarTram.transitScore,
+	},
 );
 
 // --- Rail noise ---------------------------------------------------------
@@ -186,15 +278,78 @@ check(
 	nearRail.flags,
 );
 
-// --- Station sweet spot -------------------------------------------------
-const stationFar = scoreAlert(flat, estimate(800000), geo({ trainStationM: 900 }));
-const stationDoor = scoreAlert(flat, estimate(800000), geo({ trainStationM: 100 }));
+// --- Train sweet spot ---------------------------------------------------
+const houseStation900 = scoreAlert(
+	house,
+	estimate(800000),
+	geo({ trainStationM: 900, tramM: 3000 }),
+);
+const houseStation1900 = scoreAlert(
+	house,
+	estimate(800000),
+	geo({ trainStationM: 1900, tramM: 3000 }),
+);
+const houseStation2100 = scoreAlert(
+	house,
+	estimate(800000),
+	geo({ trainStationM: 2100, tramM: 3000 }),
+);
+const houseStation100 = scoreAlert(
+	house,
+	estimate(800000),
+	geo({ trainStationM: 100, tramM: 3000 }),
+);
+const plotStation900 = scoreAlert(
+	plot,
+	estimate(300000),
+	geo({ trainStationM: 900, tramM: 3000 }),
+);
+const plotStation2100 = scoreAlert(
+	plot,
+	estimate(300000),
+	geo({ trainStationM: 2100, tramM: 3000 }),
+);
 check(
-	"station at the doorstep is penalized against 900 m",
-	stationDoor.transitScore < stationFar.transitScore,
+	"houses and plots prefer a train station below 2 km",
+	TRAIN_PREFERRED_M === 2000 &&
+		houseStation900.transitScore > houseStation2100.transitScore &&
+		houseStation1900.transitScore > houseStation2100.transitScore &&
+		plotStation900.transitScore > plotStation2100.transitScore,
 	{
-		stationDoor: stationDoor.transitScore,
-		stationFar: stationFar.transitScore,
+		house900: houseStation900.transitScore,
+		house1900: houseStation1900.transitScore,
+		house2100: houseStation2100.transitScore,
+		plot900: plotStation900.transitScore,
+		plot2100: plotStation2100.transitScore,
+	},
+);
+check(
+	"a station at the doorstep is still penalized",
+	houseStation100.transitScore < houseStation900.transitScore,
+	{
+		station100: houseStation100.transitScore,
+		station900: houseStation900.transitScore,
+	},
+);
+const tramFlatWins = scoreAlert(
+	flat,
+	estimate(800000),
+	geo({ tramM: 100, trainStationM: 3000 }),
+);
+const trainHouseWins = scoreAlert(
+	house,
+	estimate(800000),
+	geo({ tramM: 3000, trainStationM: 500 }),
+);
+check(
+	"the tram and train preferences flip between flats and houses",
+	tramFlatWins.transitScore > tram1000.transitScore &&
+		trainHouseWins.transitScore > houseStation2100.transitScore,
+	{
+		tramFlat: tramFlatWins.transitScore,
+		flatNoTram: tram1000.transitScore,
+		trainHouse: trainHouseWins.transitScore,
+		houseNoTrain: houseStation2100.transitScore,
 	},
 );
 
@@ -635,9 +790,9 @@ const mismatchedAlerts = await db
 	.innerJoin(listingScores, eq(listingAlerts.scoreId, listingScores.id))
 	.where(
 		sql`${listingAlerts.listingId} != ${listingScores.listingId}
-			or ${listingAlerts.segment} != ${listingScores.segment}
-			or ${listingAlerts.region} != ${listingScores.region}
-			or abs(${listingAlerts.score} - ${listingScores.totalScore}) > 0.001`,
+				or ${listingAlerts.segment} != ${listingScores.segment}
+				or ${listingAlerts.region} != ${listingScores.region}
+				or abs(${listingAlerts.score} - ${listingScores.totalScore}) > 0.001`,
 	);
 check(
 	"every alert mirrors its score row (listing, segment, region, score)",

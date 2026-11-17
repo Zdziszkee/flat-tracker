@@ -1,4 +1,4 @@
-# Alert scoring 2027.7
+# Alert scoring 2027.8
 
 Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
 model participates in the score. The job stores every component, reason
@@ -70,8 +70,22 @@ spread floor). The constants live in `config.ts` with the full rationale.
 
 ### Transit
 
-Tram, railway station, bus and city centre use distance bands. A railway line
-within 200 m lowers the transit score and adds `rail_noise`.
+Tram and train are deliberately different signals. Tram counts only for flats
+in Kraków and Katowice, gated by the listing's structured `city` rather than
+`geo.city` (the latter is just the nearest external price-index centre and
+would label Zakopane as Kraków). The city string is normalized for case and
+diacritics, so `Kraków`, `KRAKÓW` and `Krakow` all qualify. A stop within 300 m
+is the full-credit target; the score then decays through 600, 1000, 1500 and
+3000 m. Outside those cities, tram gets zero weight and that weight moves to
+train, bus and the city centre.
+
+Train station distance has its own bands and applies to every segment. It
+peaks at 300-800 m, stays preferred below 2000 m, and is penalized under 150 m
+because a station at the doorstep is noise rather than convenience. Houses and
+plots give the station 70% of their transit component because they are not tram
+markets; flats keep a train contribution but rely mainly on tram where one
+exists. A heavy-rail line within 200 m still lowers the transit score and adds
+`rail_noise`; tram tracks are stored separately and never create that flag.
 
 ### Green
 
@@ -143,11 +157,15 @@ z działką, Działki) as separate sections, even when a section is empty.
 
 ## Validation
 
-`bun run validate:scoring` checks 30 properties (plus stored-data invariants):
+`bun run validate:scoring` checks the pure scoring rules (plus stored-data invariants):
 
-- discount, tram, park, forest and water are monotonic
+- discount, park, forest and water are monotonic; tram improves inside its
+  300 m target band
+- tram earns full credit within the 300 m target in Kraków and Katowice, and is
+  ignored for flats elsewhere and for houses/plots even in tram cities
 - rail noise lowers transit and is flagged
-- station at the doorstep is penalized against 900 m
+- houses and plots prefer a station below 2000 m; a station at the doorstep is
+  still penalized
 - media, WZ and MPZP increase plot score
 - flood risk lowers plot score and is flagged
 - building style: block/wielka płyta lowers flat property score, kamienica

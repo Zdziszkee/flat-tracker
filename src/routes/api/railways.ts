@@ -26,7 +26,7 @@ export const Route = createFileRoute("/api/railways")({
 								type: "LineString";
 								coordinates: Array<[number, number]>;
 							};
-							properties: { kind: "line" };
+							properties: { kind: "line"; mode: "rail" | "tram" };
 					  }
 					| {
 							type: "Feature";
@@ -38,7 +38,14 @@ export const Route = createFileRoute("/api/railways")({
 					features.push({
 						type: "Feature",
 						geometry: { type: "LineString", coordinates: line },
-						properties: { kind: "line" },
+						properties: { kind: "line", mode: "rail" },
+					});
+				}
+				for (const line of mod.TRAM_LINES) {
+					features.push({
+						type: "Feature",
+						geometry: { type: "LineString", coordinates: line },
+						properties: { kind: "line", mode: "tram" },
 					});
 				}
 				for (const s of mod.RAIL_STATIONS) {
