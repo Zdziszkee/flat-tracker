@@ -1,4 +1,4 @@
-# Alert scoring 2027.6
+# Alert scoring 2027.7
 
 Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
 model participates in the score. The job stores every component, reason
@@ -81,8 +81,24 @@ sampled on a 5x5 grid from OSM polygons.
 
 ### Property
 
-Flats: floor, elevator, build year, condition, material, heating, ownership,
-balcony, terrace, garden, parking, garage, basement, rooms.
+Flats: floor, elevator, build year, condition, building style, material,
+heating, ownership, balcony, terrace, garden, parking, garage, basement,
+rooms.
+
+Large-panel blocks (`blok`, `wielka płyta`, `concrete_plate`, `block`) lose
+12 property points, tenements (`kamienica`, `tenement`) gain 10, and
+purpose-built apartment buildings (`apartamentowiec`, `apartment`) gain 8.
+The detector reads the structured `building_type` and `building_material`
+first and only falls back to title/description text when neither carries a
+recognizable style, so a mention of a nearby block in an offer title cannot
+override a portal's building type. A structured style is applied once, not
+stacked with its material.
+
+District heating (`miejskie`, `c.o. miejskie`, `sieć`, `district`, `urban`)
+gains 8 points in flat and house scores. Gas (`gazowe`, `gas`) loses 7 and
+electric resistive heating (`elektryczne`, `electric`) loses 12, reflecting
+the user-facing cost ordering. Heat pumps keep the existing +8 as the
+efficient exception.
 
 Houses: plot size, building type, condition, material, heating, ownership,
 garage, garden, parking.
@@ -127,13 +143,16 @@ z działką, Działki) as separate sections, even when a section is empty.
 
 ## Validation
 
-`bun run validate:scoring` checks 26 properties:
+`bun run validate:scoring` checks 30 properties (plus stored-data invariants):
 
 - discount, tram, park, forest and water are monotonic
 - rail noise lowers transit and is flagged
 - station at the doorstep is penalized against 900 m
 - media, WZ and MPZP increase plot score
 - flood risk lowers plot score and is flagged
+- building style: block/wielka płyta lowers flat property score, kamienica
+  and apartamentowiec raise it, structured values beat title text
+- heating cost order: district > gas > electric
 - gates reject missing comps, thin comps and near-fair offers
 - stored scores are bounded, alerts respect gates, no duplicate alerts
 

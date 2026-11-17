@@ -5,7 +5,7 @@
  * value requires a new `SCORE_VERSION` so stored scores stay auditable.
  */
 
-export const SCORE_VERSION = "2027.6";
+export const SCORE_VERSION = "2027.7";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -46,6 +46,38 @@ export const SEGMENT_WEIGHTS: Record<AlertSegment, SegmentWeights> = {
 	house: { value: 0.45, transit: 0.1, green: 0.15, property: 0.25, risk: 0.05 },
 	plot: { value: 0.4, transit: 0.05, green: 0.15, property: 0.35, risk: 0.05 },
 };
+
+/**
+ * Flat building-style preferences, applied once from `building_type`,
+ * `building_material` or the offer text. Large-panel blocks lose points;
+ * tenements and purpose-built apartment buildings gain them. A structured
+ * value always wins over free text, so a title mentioning a nearby block
+ * cannot override the portal's building type.
+ */
+export const FLAT_BUILDING_DELTAS = {
+	largePanel: -12,
+	tenement: 10,
+	apartmentBuilding: 8,
+	brick: 4,
+	concrete: 3,
+	wood: 2,
+} as const;
+
+/**
+ * Heating costs used by the flat and house property components. District
+ * heating is rewarded; gas is penalized as the more expensive fuel and
+ * electric resistive heating as the most expensive one. The Polish portal
+ * values (`miejskie`, `gazowe`, `elektryczne`) and their English equivalents
+ * are both recognised at the scoring boundary.
+ */
+export const HEATING_DELTAS = {
+	heatPump: 8,
+	district: 8,
+	gas: -7,
+	electric: -12,
+	coalWood: -10,
+	oil: -7,
+} as const;
 
 /** Distance bands in metres. First band that contains the distance wins. */
 export type DistanceBands = ReadonlyArray<readonly [number, number]>;

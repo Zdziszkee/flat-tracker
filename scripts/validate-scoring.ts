@@ -17,6 +17,8 @@ import {
 } from "#/lib/scoring/alert-score";
 import {
 	ALERT_GATES,
+	FLAT_BUILDING_DELTAS,
+	HEATING_DELTAS,
 	SCORE_VERSION,
 	SEGMENT_WEIGHTS,
 	valueCurveScore,
@@ -286,6 +288,120 @@ check(
 	{ flood: plotFlood.totalScore, dry: plotWithMedia.totalScore },
 );
 check("flood risk is flagged", plotFlood.flags.includes("flood_risk"), plotFlood.flags);
+
+// --- Flat building style -------------------------------------------------
+const baselineFlat = {
+	...flat,
+	heatingType: "gazowe",
+};
+const baselineProperty = scoreAlert(
+	baselineFlat,
+	estimate(800000),
+	geo(),
+).propertyScore;
+const blockFlat = scoreAlert(
+	{ ...baselineFlat, buildingType: "block", buildingMaterial: null },
+	estimate(800000),
+	geo(),
+);
+const panelFlat = scoreAlert(
+	{
+		...baselineFlat,
+		buildingType: "apartment",
+		buildingMaterial: "wielka płyta",
+	},
+	estimate(800000),
+	geo(),
+);
+const tenementFlat = scoreAlert(
+	{ ...baselineFlat, buildingType: "tenement", buildingMaterial: null },
+	estimate(800000),
+	geo(),
+);
+const apartmentFlat = scoreAlert(
+	{ ...baselineFlat, buildingType: "apartment", buildingMaterial: null },
+	estimate(800000),
+	geo(),
+);
+check(
+	"large-panel block lowers flat property score",
+	blockFlat.propertyScore < baselineProperty &&
+		panelFlat.propertyScore < baselineProperty &&
+		blockFlat.propertyScore === panelFlat.propertyScore,
+	{
+		baseline: baselineProperty,
+		block: blockFlat.propertyScore,
+		panel: panelFlat.propertyScore,
+		delta: FLAT_BUILDING_DELTAS.largePanel,
+	},
+);
+check(
+	"tenement and apartment building raise flat property score",
+	tenementFlat.propertyScore > baselineProperty &&
+		apartmentFlat.propertyScore > baselineProperty &&
+		tenementFlat.propertyScore > apartmentFlat.propertyScore,
+	{
+		baseline: baselineProperty,
+		tenement: tenementFlat.propertyScore,
+		apartment: apartmentFlat.propertyScore,
+		tenementDelta: FLAT_BUILDING_DELTAS.tenement,
+		apartmentDelta: FLAT_BUILDING_DELTAS.apartmentBuilding,
+	},
+);
+const blockInTitle = scoreAlert(
+	{ ...baselineFlat, title: "Mieszkanie w bloku 60 m2" },
+	estimate(800000),
+	geo(),
+);
+const tenementWithBlockInTitle = scoreAlert(
+	{
+		...baselineFlat,
+		title: "Kamienica blisko bloku 60 m2",
+		buildingType: "tenement",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"building type text fallback works and structured type wins",
+	blockInTitle.propertyScore < baselineProperty &&
+		tenementWithBlockInTitle.propertyScore === tenementFlat.propertyScore,
+	{
+		baseline: baselineProperty,
+		blockTitle: blockInTitle.propertyScore,
+		tenementStructured: tenementWithBlockInTitle.propertyScore,
+	},
+);
+
+// --- Heating cost ordering ------------------------------------------------
+const districtFlat = scoreAlert(
+	{ ...flat, heatingType: "c.o. miejskie" },
+	estimate(800000),
+	geo(),
+);
+const gasFlat = scoreAlert(
+	{ ...flat, heatingType: "gazowe" },
+	estimate(800000),
+	geo(),
+);
+const electricFlat = scoreAlert(
+	{ ...flat, heatingType: "elektryczne" },
+	estimate(800000),
+	geo(),
+);
+check(
+	"district heating is rewarded more than gas and electricity",
+	districtFlat.propertyScore > gasFlat.propertyScore &&
+		gasFlat.propertyScore > electricFlat.propertyScore &&
+		HEATING_DELTAS.district > 0 &&
+		HEATING_DELTAS.gas < 0 &&
+		HEATING_DELTAS.electric < HEATING_DELTAS.gas,
+	{
+		district: districtFlat.propertyScore,
+		gas: gasFlat.propertyScore,
+		electric: electricFlat.propertyScore,
+	},
+);
 
 // --- Gates and confidence ---------------------------------------------
 const noEstimate = scoreAlert(flat, null, geo());

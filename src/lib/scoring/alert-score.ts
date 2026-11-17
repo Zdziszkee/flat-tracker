@@ -17,6 +17,8 @@ import {
 	DISTANCE_BANDS,
 	distanceScore,
 	ESTIMATE_CONFIDENCE,
+	FLAT_BUILDING_DELTAS,
+	HEATING_DELTAS,
 	PLOT_LISTING_BASE_CONFIDENCE,
 	PLOT_LISTING_RCN_FACTOR,
 	PLOT_SPREAD_FACTOR_FLOOR,
@@ -326,6 +328,57 @@ function greenComponent(geo: GeoUniqueness | null): Component {
 	return { score: clamp(score), confidence: 0.8, reasons };
 }
 
+/**
+ * Structured values are normalized by the crawler (`block`, `apartment`,
+ * `tenement`, `concrete_plate`, `brick`, ...), but older rows and a few feeds
+ * still carry raw Polish strings. Accept both spellings at the scoring
+ * boundary so the rule works on the whole stored pool.
+ */
+type FlatBuildingStyle = keyof typeof FLAT_BUILDING_DELTAS;
+
+function flatBuildingStyle(input: ScoreListingInput): {
+	style: FlatBuildingStyle;
+	label: string;
+} | null {
+	const type = (input.buildingType ?? "").toLowerCase();
+	const material = (input.buildingMaterial ?? "").toLowerCase();
+	const structured = `${type} ${material}`;
+	if (
+		/wielka[ _-]?p[ył]yta|wielkopłyta|concrete[ _-]?plate|large[ _-]?panel|blok(?:u|i|ów)?\b|\bblock\b/u.test(
+			structured,
+		)
+	) {
+		return { style: "largePanel", label: "blok / wielka płyta" };
+	}
+	if (/kamienic|tenement/u.test(structured)) {
+		return { style: "tenement", label: "kamienica" };
+	}
+	if (/apartamentowiec|apartment/u.test(structured)) {
+		return { style: "apartmentBuilding", label: "apartamentowiec" };
+	}
+	if (/cegł|brick/u.test(material)) {
+		return { style: "brick", label: "cegła" };
+	}
+	if (/beton|concrete/u.test(material)) {
+		return { style: "concrete", label: "beton" };
+	}
+	if (/drewno|wood/u.test(material)) {
+		return { style: "wood", label: "drewno" };
+	}
+	// No structured signal: the title is the only honest evidence left.
+	const text = `${input.title} ${input.description ?? ""}`.toLowerCase();
+	if (/wielka[ _-]?p[ył]yta|wielkopłyta|blok(?:u|i|ów)?\b/u.test(text)) {
+		return { style: "largePanel", label: "blok / wielka płyta (z opisu)" };
+	}
+	if (/kamienic/u.test(text)) {
+		return { style: "tenement", label: "kamienica (z opisu)" };
+	}
+	if (/apartamentowiec/u.test(text)) {
+		return { style: "apartmentBuilding", label: "apartamentowiec (z opisu)" };
+	}
+	return null;
+}
+
 function conditionDelta(condition: string | null | undefined): number {
 	const value = condition?.toLowerCase() ?? "";
 	if (["excellent", "new", "very_good"].includes(value)) return 8;
@@ -345,23 +398,28 @@ function conditionDelta(condition: string | null | undefined): number {
 
 function materialDelta(material: string | null | undefined): number {
 	const value = material?.toLowerCase() ?? "";
-	if (value.includes("concrete_plate") || value.includes("wielka_plyta"))
-		return -7;
-	if (value.includes("brick")) return 4;
-	if (value.includes("concrete")) return 3;
-	if (value.includes("tenement")) return 2;
-	if (value.includes("wood")) return 2;
+	if (
+		/wielka[ _-]?p[ył]yta|wielkopłyta|concrete[ _-]?plate|large[ _-]?panel/u.test(
+			value,
+		)
+	)
+		return -12;
+	if (/cegł|brick/u.test(value)) return 4;
+	if (/beton|concrete/u.test(value)) return 3;
+	if (/kamienic|tenement/u.test(value)) return 2;
+	if (/drewno|wood/u.test(value)) return 2;
 	return 0;
 }
 
 function heatingDelta(heating: string | null | undefined): number {
 	const value = heating?.toLowerCase() ?? "";
-	if (value.includes("heat_pump")) return 8;
-	if (value.includes("district") || value.includes("urban")) return 5;
-	if (value.includes("gas")) return 2;
-	if (value.includes("electric")) return -5;
-	if (value.includes("coal") || value.includes("wood")) return -10;
-	if (value.includes("oil")) return -5;
+	if (/pompa|heat[ _-]?pump/u.test(value)) return HEATING_DELTAS.heatPump;
+	if (/(?:c\.?o\.?\s+)?miejsk|sie[ćc]|urban|district|c.o./u.test(value))
+		return HEATING_DELTAS.district;
+	if (/elektr/u.test(value)) return HEATING_DELTAS.electric;
+	if (/gaz|gas/u.test(value)) return HEATING_DELTAS.gas;
+	if (/w[ęe]g|coal|drewno|wood/u.test(value)) return HEATING_DELTAS.coalWood;
+	if (/olej|oil/u.test(value)) return HEATING_DELTAS.oil;
 	return 0;
 }
 
@@ -396,13 +454,28 @@ function flatProperty(input: ScoreListingInput): Component {
 	const year = yearDelta(input.buildYear);
 	score += year;
 	if (year >= 5) reasons.push({ label: "newer building", impact: year });
+	const building = flatBuildingStyle(input);
+	if (building) {
+		const delta =
+			building.style === "largePanel"
+				? FLAT_BUILDING_DELTAS.largePanel
+				: FLAT_BUILDING_DELTAS[building.style];
+		score += delta;
+		reasons.push({
+			label:
+				delta < 0
+					? `${building.label}: lower property score`
+					: `${building.label}: preferred building`,
+			impact: delta,
+		});
+	}
 	const condition = conditionDelta(input.condition);
 	score += condition;
 	if (condition >= 4)
 		reasons.push({ label: "good or very good condition", impact: condition });
 	const material = materialDelta(input.buildingMaterial);
-	score += material;
-	if (material >= 3)
+	if (!building) score += material;
+	if (!building && material >= 3)
 		reasons.push({ label: "brick or concrete construction", impact: material });
 	if (input.hasBalcony) score += 2;
 	if (input.hasTerrace) score += 3;
@@ -416,10 +489,11 @@ function flatProperty(input: ScoreListingInput): Component {
 	}
 	const heating = heatingDelta(input.heatingType);
 	score += heating;
-	if (heating >= 5)
-		reasons.push({ label: "efficient heating", impact: heating });
-	if (heating <= -5)
-		reasons.push({ label: "expensive or smoky heating", impact: heating });
+	if (heating >= HEATING_DELTAS.district) {
+		reasons.push({ label: "district or efficient heating", impact: heating });
+	} else if (heating <= HEATING_DELTAS.gas) {
+		reasons.push({ label: "expensive heating", impact: heating });
+	}
 	const ownership = ownershipDelta(input.ownership);
 	score += ownership;
 	if (ownership < 0)
@@ -446,7 +520,8 @@ function houseProperty(input: ScoreListingInput): Component {
 	score += condition;
 	if (condition >= 4)
 		reasons.push({ label: "good or very good condition", impact: condition });
-	score += materialDelta(input.buildingMaterial);
+	const material = materialDelta(input.buildingMaterial);
+	if (!materialDelta(input.buildingType)) score += material;
 	score += heatingDelta(input.heatingType);
 	score += ownershipDelta(input.ownership);
 	if (input.hasGarage) score += 6;
