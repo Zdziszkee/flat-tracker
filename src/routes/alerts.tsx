@@ -121,7 +121,7 @@ function AlertsPage() {
 
 			{isLoading && <output className="sr-only">Ładowanie alertów…</output>}
 
-			<div className="flex flex-col gap-8">
+			<div className="grid gap-6 lg:grid-cols-3 lg:items-start">
 				{SECTIONS.map(({ segment, label, mapKind }) => {
 					const alerts = bySegment.get(segment) ?? [];
 					return (
@@ -136,7 +136,7 @@ function AlertsPage() {
 								</span>
 							</h2>
 							{isLoading ? (
-								<div className="grid gap-3 xl:grid-cols-2">
+								<div className="grid gap-3">
 									<Skeleton className="h-64 rounded-xl" />
 									<Skeleton className="h-64 rounded-xl" />
 								</div>
@@ -203,7 +203,7 @@ function RegionGroups({
 								</span>
 							</h3>
 						)}
-						<div className="grid gap-3 xl:grid-cols-2">
+						<div className="grid gap-3">
 							{regionAlerts.map((alert) => (
 								<AlertCard key={alert.id} alert={alert} mapKind={mapKind} />
 							))}
