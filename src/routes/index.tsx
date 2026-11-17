@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { Dashboard } from "#/components/dashboard";
 import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Separator } from "#/components/ui/separator";
@@ -8,17 +9,22 @@ export const Route = createFileRoute("/")({ component: Home });
 
 function Home() {
 	return (
-		<div className="flex max-w-3xl flex-col gap-8 p-8">
-			<header className="flex flex-col gap-4">
-				<h1 className="text-4xl font-bold text-foreground">Flat Tracker</h1>
-				<p className="text-lg text-muted-foreground">
-					Mieszkania na sprzedaż w Małopolsce i na Śląsku: oferty z Otodom i OLX
-					połączone z historycznymi cenami transakcyjnymi (Rejestr Cen
-					Nieruchomości).
+		<main className="mx-auto flex max-w-6xl flex-col gap-8 px-4 py-8 sm:px-6">
+			<header className="display-title flex flex-col gap-3">
+				<p className="font-sans text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase">
+					Rynek nieruchomości · Małopolska i Śląsk
+				</p>
+				<h1 className="text-4xl font-bold text-foreground sm:text-5xl">
+					Flat Tracker
+				</h1>
+				<p className="max-w-2xl font-sans text-base text-muted-foreground">
+					Oferty sprzedaży i najmu połączone z historycznymi cenami
+					transakcyjnymi. Analizuj rynek i sprawdzaj, skąd pochodzą dane, bez
+					opuszczania strony głównej.
 				</p>
 			</header>
 
-			<nav className="flex flex-wrap gap-3">
+			<nav className="flex flex-wrap gap-3" aria-label="Nawigacja główna">
 				<Button asChild>
 					<Link to="/map" search={DEFAULT_LISTING_SEARCH} preload="intent">
 						Mapa ofert
@@ -30,12 +36,24 @@ function Home() {
 					</Link>
 				</Button>
 				<Button asChild variant="outline">
-					<Link to="/sources">Data sources</Link>
-				</Button>
-				<Button asChild>
 					<Link to="/alerts">Alerty dnia</Link>
 				</Button>
 			</nav>
+
+			<section
+				aria-labelledby="dashboard-heading"
+				className="flex flex-col gap-4"
+			>
+				<div>
+					<h2 id="dashboard-heading" className="text-2xl font-semibold">
+						Pulpit danych
+					</h2>
+					<p className="text-sm text-muted-foreground">
+						Live z wykresów i stanu pozyskiwania danych.
+					</p>
+				</div>
+				<Dashboard />
+			</section>
 
 			<Separator />
 
@@ -48,25 +66,8 @@ function Home() {
 				<CardContent>
 					<ol className="flex list-decimal flex-col gap-2 pl-5 text-sm leading-relaxed text-muted-foreground">
 						<li>
-							Crawler (Crawlee + Cheerio) pobiera ogłoszenia z{" "}
-							<a
-								className="text-primary underline"
-								href="https://www.otodom.pl"
-								target="_blank"
-								rel="noreferrer"
-							>
-								otodom.pl
-							</a>{" "}
-							i{" "}
-							<a
-								className="text-primary underline"
-								href="https://www.olx.pl"
-								target="_blank"
-								rel="noreferrer"
-							>
-								olx.pl
-							</a>{" "}
-							dla Małopolski i Śląska. Dane są zapisywane w SQLite (Drizzle).
+							Crawler (Crawlee + Cheerio) pobiera ogłoszenia z portali dla
+							Małopolski i Śląska. Dane są zapisywane w SQLite (Drizzle).
 						</li>
 						<li>
 							Każda oferta z współrzędnymi jest przypisywana do budynku z
@@ -87,6 +88,6 @@ function Home() {
 					</ol>
 				</CardContent>
 			</Card>
-		</div>
+		</main>
 	);
 }
