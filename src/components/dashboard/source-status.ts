@@ -25,23 +25,42 @@ export interface LiveState {
 	log?: string;
 }
 
+/** Section of the /sources table; mirrors `src/crawler/source-status.ts`. */
+export type SourceGroup = "portal" | "data" | "processing";
+
+/** Registry kind; `layer` and `enrich` cover the added pipeline descriptors. */
+export type SourceKind =
+	| "portal"
+	| "rcn"
+	| "geocode"
+	| "airbnb-calendar"
+	| "public-investments"
+	| "price-index"
+	| "scoring"
+	| "layer"
+	| "enrich";
+
 export interface SourceStatus {
 	id: string;
 	name: string;
-	kind:
-		| "portal"
-		| "rcn"
-		| "geocode"
-		| "airbnb-calendar"
-		| "public-investments"
-		| "price-index"
-		| "scoring";
+	kind: SourceKind;
+	/** Which section of the table the source belongs to. */
+	group: SourceGroup;
+	/**
+	 * Reference layer shipped with the app: never crawled, so it has no run
+	 * history and can never be stale.
+	 */
+	static: boolean;
 	lastRun: LastRun | null;
+	/** Most recent run that recorded no error. */
+	lastSuccessAt: string | null;
 	live: LiveState | null;
 }
 
 export interface CrawlStatusResponse {
 	running: boolean;
+	/** Newest successful run across every non-static source. */
+	lastRefreshedAt: string | null;
 	progress: {
 		runId: string;
 		status: string;
@@ -55,6 +74,21 @@ export interface CrawlStatusResponse {
 /** Older than this and a source's last successful run counts as stale. */
 const STALE_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * The one 24 h freshness rule: used by the per-row badges and by the panel's
+ * "dane aktualne" / "starsze niż 24 h" note, so both always agree.
+ */
+export function isStale(iso: string | null | undefined): boolean {
+	if (!iso) return false;
+	return Date.now() - new Date(iso).getTime() > STALE_MS;
+}
+
+/** State note for the overall "last refreshed" indicator. */
+export function freshnessLabel(iso: string | null | undefined): string {
+	if (!iso) return "brak danych";
+	return isStale(iso) ? "starsze niż 24 h" : "dane aktualne";
+}
+
 export function relativeTime(iso: string | null | undefined): string {
 	if (!iso) return "never";
 	const diff = Date.now() - new Date(iso).getTime();
@@ -66,6 +100,15 @@ export function relativeTime(iso: string | null | undefined): string {
 	const h = Math.floor(m / 60);
 	if (h < 24) return `${h}h ago`;
 	return `${Math.floor(h / 24)}d ago`;
+}
+
+/** Absolute date/time for tooltips and accessible descriptions. */
+export function absoluteTime(iso: string | null | undefined): string {
+	if (!iso) return "brak danych";
+	return new Date(iso).toLocaleString("pl-PL", {
+		dateStyle: "medium",
+		timeStyle: "short",
+	});
 }
 
 export function duration(
@@ -95,13 +138,12 @@ export function statusTone(s: SourceStatus): StatusTone {
 				return "idle";
 		}
 	}
+	// Static reference layers carry no run history and never age.
+	if (s.static) return "idle";
 	const last = s.lastRun;
 	if (!last) return "idle";
 	if (last.error) return "error";
-	if (
-		last.finishedAt &&
-		Date.now() - new Date(last.finishedAt).getTime() > STALE_MS
-	) {
+	if (isStale(last.finishedAt)) {
 		return "error";
 	}
 	return "ok";
@@ -120,13 +162,11 @@ export function statusLabel(s: SourceStatus): string {
 				return "queued";
 		}
 	}
+	if (s.static) return "wbudowane";
 	const last = s.lastRun;
 	if (!last) return "never run";
 	if (last.error) return "last run failed";
-	if (
-		last.finishedAt &&
-		Date.now() - new Date(last.finishedAt).getTime() > STALE_MS
-	) {
+	if (isStale(last.finishedAt)) {
 		return "stale";
 	}
 	return "ok";
@@ -154,6 +194,10 @@ export function metrics(s: SourceStatus): string {
 			return `${n} index rows`;
 		case "scoring":
 			return `${u} scored · ${n} alerts`;
+		// Layer and enrichment phases report stored rows, not crawled pages.
+		case "layer":
+		case "enrich":
+			return `${n} new · ${u} updated`;
 		default:
 			return `${p} pages · ${n} new · ${u} updated`;
 	}

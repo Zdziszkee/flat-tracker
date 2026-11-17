@@ -15,6 +15,12 @@ import type { Listing } from "./types.ts";
 export interface SaveReport {
 	/** Listings that did not exist before this run (the diff of new offers). */
 	newCount: number;
+	/**
+	 * Ids of the rows counted by `newCount`, in the same run. The crawl hands
+	 * them to fresh-arrival scoring so a new offer is scored the moment it is
+	 * saved. Always `newIds.length === newCount`.
+	 */
+	newIds: number[];
 	/** Listings that already existed and were overwritten (refined records). */
 	updatedCount: number;
 }
@@ -86,7 +92,7 @@ function extractFeatureFields(features: string | null) {
  * `listing_history` snapshot for time-series analytics.
  */
 export async function saveListings(list: Listing[]): Promise<SaveReport> {
-	if (list.length === 0) return { newCount: 0, updatedCount: 0 };
+	if (list.length === 0) return { newCount: 0, updatedCount: 0, newIds: [] };
 
 	// A crawl run is single-source, but keep it safe for multi-source batches.
 	const sources = [...new Set(list.map((l) => l.source))];
@@ -125,10 +131,7 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 		}
 	}
 
-	const newCount = list.filter(
-		(l) => !existing.has(`${l.source}:${l.externalId}`),
-	).length;
-	const updatedCount = list.length - newCount;
+	const newIds = new Set<number>();
 
 	const now = new Date();
 	const rows = list.map((l) => {
@@ -322,6 +325,14 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 			returned.map((r) => [`${r.source}:${r.externalId}`, r.id] as const),
 		);
 
+		// A row that the pre-read did not find is a genuine new offer. Its id
+		// rides back out of RETURNING, so the caller never re-queries by key.
+		for (const row of chunk) {
+			const key: `${string}:${string}` = `${row.source}:${row.externalId}`;
+			const id = idByKey.get(key);
+			if (id != null && !existing.has(key)) newIds.add(id);
+		}
+
 		const history: Array<{
 			listingId: number;
 			price: number | null;
@@ -351,7 +362,11 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 		}
 	}
 
-	return { newCount, updatedCount };
+	return {
+		newCount: newIds.size,
+		updatedCount: list.length - newIds.size,
+		newIds: [...newIds],
+	};
 }
 
 /** Record a per-site crawl run for crawler-health analytics. */

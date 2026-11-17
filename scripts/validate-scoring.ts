@@ -16,11 +16,15 @@ import {
 	type ScoreListingInput,
 } from "#/lib/scoring/alert-score";
 import {
+	ALERT_FRESHNESS,
 	ALERT_GATES,
 	FLAT_BUILDING_DELTAS,
+	freshArrivalRank,
+	freshArrivalTopN,
 	HEATING_DELTAS,
 	SCORE_VERSION,
 	SEGMENT_WEIGHTS,
+	shouldAlertFreshArrival,
 	TRAIN_PREFERRED_M,
 	TRAM_CITIES,
 	TRAM_TARGET_M,
@@ -175,7 +179,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.8",
+		SCORE_VERSION === "2027.9",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -587,6 +591,95 @@ check(
 	{ discount: nearFair.discountPct, gate: ALERT_GATES.minDiscountPct },
 );
 
+// --- Fresh arrivals (24-hour cohort) -----------------------------------
+// The rule is relative: a fresh offer alerts when it sits inside the top
+// `ALERT_FRESHNESS.topPercent` of the last 24 hours' offers in its region
+// and segment. Scores are the only input, so the fixtures are explicit
+// score lists.
+check(
+	"fresh-arrival policy is the 24h / top-5% block",
+	ALERT_FRESHNESS.windowHours === 24 && ALERT_FRESHNESS.topPercent === 5,
+	ALERT_FRESHNESS,
+);
+
+/** A cohort of `total` distinct scores, best first. */
+function freshCohort(total: number): number[] {
+	return Array.from({ length: total }, (_, i) => 100 - i * 0.5);
+}
+
+const freshCohort100 = freshCohort(100);
+const freshFifth = freshCohort100[4] ?? 0;
+const freshSixth = freshCohort100[5] ?? 0;
+check(
+	"a fresh offer above the cohort cut alerts",
+	shouldAlertFreshArrival(100, freshCohort100) &&
+		shouldAlertFreshArrival(freshFifth, freshCohort100),
+	{
+		rank1: freshArrivalRank(100, freshCohort100),
+		rank5: freshArrivalRank(freshFifth, freshCohort100),
+	},
+);
+check(
+	"a fresh offer below the cohort cut does not alert",
+	!shouldAlertFreshArrival(freshSixth, freshCohort100) &&
+		!shouldAlertFreshArrival(40, freshCohort100),
+	{ rank6: freshArrivalRank(freshSixth, freshCohort100) },
+);
+const freshCohort20 = freshCohort(20);
+check(
+	"the topPercent boundary is exact (5 of 100, 1 of 20)",
+	freshArrivalTopN(100, ALERT_FRESHNESS.topPercent) === 5 &&
+		freshArrivalTopN(20, ALERT_FRESHNESS.topPercent) === 1 &&
+		shouldAlertFreshArrival(freshCohort20[0] ?? 0, freshCohort20) &&
+		!shouldAlertFreshArrival(freshCohort20[1] ?? 0, freshCohort20),
+	{ top100: freshArrivalTopN(100, 5), top20: freshArrivalTopN(20, 5) },
+);
+check(
+	"an empty cohort alerts nothing",
+	!shouldAlertFreshArrival(90, []) && freshArrivalTopN(0, 5) === 0,
+	{},
+);
+check(
+	"a one-offer cohort is its own leader, a two-offer cohort is not",
+	shouldAlertFreshArrival(70, [70]) &&
+		shouldAlertFreshArrival(90, [90, 70]) &&
+		!shouldAlertFreshArrival(70, [90, 70]),
+	{},
+);
+check(
+	"ties share a rank, so a tied leader still alerts",
+	shouldAlertFreshArrival(80, [80, 80, 80]) &&
+		!shouldAlertFreshArrival(80, [90, 80, 80]),
+	{ rank: freshArrivalRank(80, [80, 80, 80]) },
+);
+
+// The gates live inside the score, so a gate-failing offer never reaches
+// the fresh-arrival rule. Each fixture below would be its own cohort leader
+// (a one-element cohort alerts), which isolates the gate as the blocker.
+const gateBlockedArrivals = [noEstimate, thinComps, nearFair];
+check(
+	"gates still block a fresh arrival (no estimate, confidence, discount)",
+	gateBlockedArrivals.every(
+		(scored) =>
+			!scored.eligible &&
+			shouldAlertFreshArrival(scored.totalScore, [scored.totalScore]),
+	) &&
+		noEstimate.gateReason === "no_comparable_estimate" &&
+		thinComps.gateReason === "confidence_below_gate" &&
+		nearFair.gateReason === "discount_below_gate",
+	gateBlockedArrivals.map((scored) => scored.gateReason),
+);
+check(
+	"a low value score is already below the discount gate",
+	valueCurveScore(0.01) < ALERT_GATES.minValueScore &&
+		valueCurveScore(ALERT_GATES.minDiscountPct / 100) >=
+			ALERT_GATES.minValueScore,
+	{
+		valueAt1pct: valueCurveScore(0.01),
+		valueAtDiscountGate: valueCurveScore(ALERT_GATES.minDiscountPct / 100),
+	},
+);
+
 // --- Discount curve --------------------------------------------------------
 // The headline discountPct, the gate and the value component all use the RAW
 // asking price against the local comparable median. The curve saturates:
@@ -746,6 +839,24 @@ check(
 	repeatedAlerts,
 );
 
+// Fresh-arrival rows carry their own payload contract: a rank inside the
+// cohort they competed with, and the reason that /alerts can group on.
+const freshAlertRows = await db
+	.select({
+		count: sql<number>`count(*)`,
+		badRank: sql<number>`sum(case when ${listingAlerts.rank} < 1 or ${listingAlerts.rank} > json_extract(${listingAlerts.payloadJson}, '$.cohortSize') then 1 else 0 end)`,
+		badChannel: sql<number>`sum(case when ${listingAlerts.channel} != 'in_app' then 1 else 0 end)`,
+	})
+	.from(listingAlerts)
+	.where(sql`json_extract(${listingAlerts.payloadJson}, '$.reason') = 'fresh_arrival'`);
+const freshAlerts = freshAlertRows[0];
+check(
+	"fresh-arrival alerts rank inside their cohort and use the in-app channel",
+	freshAlerts == null ||
+		((freshAlerts.badRank ?? 0) === 0 && (freshAlerts.badChannel ?? 0) === 0),
+	freshAlerts,
+);
+
 check("scoring tables are readable", true, { scores: stored?.count ?? 0, alerts: alertStats?.count ?? 0 });
 
 // --- Incremental-run invariants (relative to the CURRENT SCORE_VERSION) --
@@ -843,6 +954,8 @@ const alertedIds = new Set(
 // the list appends across days by design, so the ceiling is per daily cut,
 // not cumulative. (A same-day pool shrink is the only way a past cut could
 // exceed today's topN; the pool only grows within a day in practice.)
+// Fresh-arrival alerts follow their own cohort rule and are excluded here;
+// they are bounded by `shouldAlertFreshArrival` instead.
 const currentAlertRows = await db
 	.select({
 		listingId: listingAlerts.listingId,
@@ -858,6 +971,7 @@ const currentAlertRows = await db
 			eq(listingScores.scoreVersion, SCORE_VERSION),
 			eq(listings.isActive, true),
 			eq(listings.isVisible, true),
+			sql`coalesce(json_extract(${listingAlerts.payloadJson}, '$.reason'), '') != 'fresh_arrival'`,
 		),
 	);
 const currentAlertCounts = new Map<string, number>();

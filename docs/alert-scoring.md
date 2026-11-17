@@ -1,11 +1,12 @@
-# Alert scoring 2027.8
+# Alert scoring 2027.9
 
 Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
 model participates in the score. The job stores every component, reason
 and risk flag so an alert can be audited later. Scoring is incremental: the
-end of every `refreshAll()` scores each offer that has no current-version
-score yet (`incremental: true`) and appends the new top-5% offers to today's
-alert list; the daily 06:30 task additionally re-scores recent offers.
+crawl pipeline scores each newly saved offer immediately, the end of every
+`refreshAll()` scores anything still missing a current-version score
+(`incremental: true`) and appends the new top-5% offers to today's alert
+list; the daily 06:30 task additionally re-scores recent offers.
 
 ## Research basis
 
@@ -140,6 +141,31 @@ is alerted at most once, so the list grows incrementally as new offers come
 in. The alerts page always shows the three segments (Mieszkania, Domy
 z działką, Działki) as separate sections, even when a section is empty.
 
+## Fresh arrivals
+
+A newly saved offer is scored the moment the crawl stores it
+(`scoreArrivals` from `src/crawler/pipeline.ts`), and it is appended to
+today's alerts when it beats the offers that arrived in the previous 24
+hours in the same region and segment.
+
+- The cohort is current-version scores joined to `listings` where
+  `coalesce(firstSeenAt, listedAt, scrapedAt)` falls in the 24 h window. The
+  new offer competes inside its own cohort, because its score is stored
+  before the comparison.
+- The cut is `ALERT_FRESHNESS.topPercent` (5%, at least one position). A lone
+  arrival is its own leader; ties share a rank, so a tie never displaces an
+  incumbent. The gates (value score, confidence, discount) still decide
+  whether the offer is eligible at all.
+- The alert row carries `payload_json.reason = "fresh_arrival"` and the
+  cohort size, so `/api/alerts` can label it. Insertion is
+  `onConflictDoNothing` on `(listing_id, alert_date, channel)`, and already
+  scored ids are skipped, so a re-run inserts nothing.
+- This is an additional path, not a replacement: the market-wide top-5% cut
+  still runs at the end of the refresh, so a fresh offer that misses its
+  24-hour cohort can still enter through the full pool.
+- Scoring is advisory in the crawl: a failure is logged and swallowed, and
+  the final `scoring` phase cleans up anything the inline pass missed.
+
 ## Data and tables
 
 - `listing_scores`: one row per listing per score version, with components,
@@ -172,6 +198,10 @@ z działką, Działki) as separate sections, even when a section is empty.
   and apartamentowiec raise it, structured values beat title text
 - heating cost order: district > gas > electric
 - gates reject missing comps, thin comps and near-fair offers
+- fresh arrivals: above the cohort cut alerts, below does not, the boundary
+  holds for 5-of-100 and 1-of-20 cohorts, a lone arrival alerts, ties are
+  conservative, an empty cohort alerts nothing, and the gates stay the sole
+  blocker for a weak offer
 - stored scores are bounded, alerts respect gates, no duplicate alerts
 
 `bun run typecheck` and `bun run build` pass.

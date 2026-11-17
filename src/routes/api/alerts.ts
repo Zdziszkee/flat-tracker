@@ -6,6 +6,9 @@ import { db } from "#/db/index";
 import { listingAlerts, listingScores, listings } from "#/db/schema";
 import type { AlertDto, AlertsResponse } from "#/types/alerts";
 
+/** An alert is "fresh" while its row is younger than this window. */
+const FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Shared daily alert feed. Defaults to the latest alert date and supports
  * optional region and segment filters.
@@ -14,6 +17,7 @@ export const Route = createFileRoute("/api/alerts")({
 	server: {
 		handlers: {
 			GET: async ({ request }) => {
+				const generatedAt = new Date();
 				const params = new URL(request.url).searchParams;
 				const requestedDate = params.get("date");
 				const region = params.get("region");
@@ -37,8 +41,10 @@ export const Route = createFileRoute("/api/alerts")({
 					.select({
 						id: listingAlerts.id,
 						alertDate: listingAlerts.alertDate,
+						alertCreatedAt: listingAlerts.createdAt,
 						rank: listingAlerts.rank,
 						score: listingAlerts.score,
+						payloadJson: listingAlerts.payloadJson,
 						segment: listingScores.segment,
 						region: listingScores.region,
 						discountPct: listingScores.discountPct,
@@ -71,6 +77,7 @@ export const Route = createFileRoute("/api/alerts")({
 						propertyKind: listings.propertyKind,
 						offerType: listings.offerType,
 						firstSeenAt: listings.firstSeenAt,
+						listedAt: listings.listedAt,
 					})
 					.from(listingAlerts)
 					.innerJoin(listingScores, eq(listingAlerts.scoreId, listingScores.id))
@@ -82,46 +89,62 @@ export const Route = createFileRoute("/api/alerts")({
 						asc(listingAlerts.rank),
 					);
 
-				const alerts: AlertDto[] = rows.map((row) => ({
-					id: row.id,
-					alertDate: row.alertDate,
-					rank: row.rank,
-					score: row.score,
-					segment: row.segment as AlertDto["segment"],
-					region: row.region,
-					discountPct: row.discountPct,
-					fairPrice: row.fairPrice,
-					fairM2: row.fairM2,
-					askingPrice: row.askingPrice,
-					confidence: row.confidence,
-					valueScore: row.valueScore,
-					transitScore: row.transitScore,
-					greenScore: row.greenScore,
-					propertyScore: row.propertyScore,
-					riskScore: row.riskScore,
-					reasons: parseJson(row.reasonsJson, []),
-					flags: parseJson(row.flagsJson, []),
-					amenities: parseJson(row.amenitiesJson, null),
-					listing: {
-						id: row.listingId,
-						source: row.source,
-						title: row.title,
-						url: row.url,
-						price: row.price,
-						pricePerM2: row.pricePerM2,
-						areaM2: row.areaM2,
-						rooms: row.rooms,
-						floor: row.floor,
-						district: row.district,
-						city: row.city,
-						address: row.address,
-						lat: row.lat,
-						lng: row.lng,
-						propertyKind: row.propertyKind,
-						offerType: row.offerType,
+				const alerts: AlertDto[] = rows.map((row) => {
+					const createdAt = row.alertCreatedAt?.toISOString() ?? null;
+					const payload = parseJson<Record<string, unknown>>(
+						row.payloadJson,
+						{},
+					);
+					return {
+						id: row.id,
+						alertDate: row.alertDate,
+						alertCreatedAt: createdAt ?? generatedAt.toISOString(),
+						rank: row.rank,
+						score: row.score,
+						segment: row.segment as AlertDto["segment"],
+						region: row.region,
+						discountPct: row.discountPct,
+						fairPrice: row.fairPrice,
+						fairM2: row.fairM2,
+						askingPrice: row.askingPrice,
+						confidence: row.confidence,
+						valueScore: row.valueScore,
+						transitScore: row.transitScore,
+						greenScore: row.greenScore,
+						propertyScore: row.propertyScore,
+						riskScore: row.riskScore,
+						reasons: parseJson(row.reasonsJson, []),
+						flags: parseJson(row.flagsJson, []),
+						amenities: parseJson(row.amenitiesJson, null),
+						listedAt: row.listedAt?.toISOString() ?? null,
 						firstSeenAt: row.firstSeenAt?.toISOString() ?? null,
-					},
-				}));
+						isFresh:
+							createdAt != null &&
+							generatedAt.getTime() - Date.parse(createdAt) < FRESH_WINDOW_MS,
+						reason: typeof payload.reason === "string" ? payload.reason : null,
+						listing: {
+							id: row.listingId,
+							source: row.source,
+							title: row.title,
+							url: row.url,
+							price: row.price,
+							pricePerM2: row.pricePerM2,
+							areaM2: row.areaM2,
+							rooms: row.rooms,
+							floor: row.floor,
+							district: row.district,
+							city: row.city,
+							address: row.address,
+							lat: row.lat,
+							lng: row.lng,
+							propertyKind: row.propertyKind,
+							offerType: row.offerType,
+							firstSeenAt: row.firstSeenAt?.toISOString() ?? null,
+						},
+					};
+				});
+
+				const freshCount = alerts.filter((alert) => alert.isFresh).length;
 
 				const counts = {
 					total: alerts.length,
@@ -129,7 +152,13 @@ export const Route = createFileRoute("/api/alerts")({
 					bySegment: countBy(alerts, (alert) => alert.segment),
 				};
 
-				return json({ date, alerts, counts } satisfies AlertsResponse);
+				return json({
+					date,
+					generatedAt: generatedAt.toISOString(),
+					freshCount,
+					alerts,
+					counts,
+				} satisfies AlertsResponse);
 			},
 		},
 	},

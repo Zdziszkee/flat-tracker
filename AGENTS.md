@@ -326,6 +326,21 @@ are isolated and never abort the refresh. The engine is deterministic
 rules over the valuation comps, no ML model; `docs/alert-scoring.md` has
 the component breakdown and rationale.
 
+- **New offers are scored on arrival** (`scoreArrivals`, called from
+  `src/crawler/pipeline.ts` after `saveListings` returns `newIds`), not only
+  at the end of the refresh. Scoring is advisory there: a failure is logged
+  and swallowed, and the final phase cleans up whatever was missed. Scoring
+  per site means an offer is scored within seconds of being stored.
+- **Fresh-arrival alerts compare against the last 24 hours**: a newly
+  scored offer that passes the gates is appended to today's list when it
+  sits inside the top `ALERT_FRESHNESS.topPercent` (5%, at least one
+  position) of the offers first seen in the previous 24 h in the same
+  region and segment. The cohort uses
+  `coalesce(firstSeenAt, listedAt, scrapedAt)`, so a portal posting date
+  never drags an old offer in. The row carries
+  `payload_json.reason = "fresh_arrival"` plus the cohort size, and
+  `/api/alerts` labels it; this path is additive, the market-wide cut below
+  still runs.
 - **The top-5% cut is over the full eligible pool**, not the day's
   arrivals: every run ranks all scored, active offers that pass the gates,
   per region and segment, and appends only offers newly inside the cut.
@@ -335,7 +350,10 @@ the component breakdown and rationale.
   `(listing, alert_date, channel)` index rejects duplicates.
 - **/alerts always renders three fixed sections**, even when empty:
   Mieszkania, Domy z działką and Działki, fed by `/api/alerts` (latest
-  alert date by default, optional `region`/`segment`/`date` filters).
+  alert date by default, optional `region`/`segment`/`date` filters). Rows
+  whose alert was created in the last 24 h carry `isFresh` and a "Nowa
+  (24h)" badge and sort first inside their section; the response also
+  reports `freshCount` and `generatedAt`.
 - **Policy constants are versioned** (`src/lib/scoring/config.ts`):
   weights, curves, distance bands and gates sit behind `SCORE_VERSION`,
   and any change to a policy value requires a `SCORE_VERSION` bump so
@@ -351,8 +369,31 @@ the component breakdown and rationale.
   backfill: `POST /_nitro/tasks/score-listings` with a JSON payload like
   `{"all": true, "limit": 500, "dryRun": true}`.
 
-`bun run validate:scoring` pins score monotonicity, the gates and the
-stored-score/alert invariants.
+`bun run validate:scoring` pins score monotonicity, the gates, the
+fresh-arrival cohort rule and the stored-score/alert invariants.
+
+### The /sources registry
+
+`src/crawler/source-status.ts` is the single literal registry of every
+source the app uses: the 20 portals, the data layers (`rcn-import`,
+`gugik-import`, `price-indices`, `finwire`, `public-investments`,
+`osm-index`, `osm-roads`, `terrain`, `egib-import`) and the processing
+phases (`geocoding`, `airbnb-calendar`, `airbnb-enrich`, `building-assign`,
+`parcel-assign`, `parcel-enrich`, `listing-derived`, `scoring`). Each
+descriptor declares `group` (`portal` | `data` | `processing`), and the
+bundled datasets (`railways`, `uniqueness`) set `static: true`. The file
+must stay a literal — it may not import `sites/index.ts`, because
+`/api/crawl-status` and the /sources page read it on every request.
+
+Every phase records its own `crawl_runs` row (counts in
+`newCount`/`updatedCount`, failures through the shared error report), so the
+page can show a real "last refreshed" per source. `/api/crawl-status` adds
+`lastRefreshedAt` (newest successful finish across non-static sources),
+per-source `lastSuccessAt`, and passes `group`/`static` through; the panel
+groups the table into Portale, Dane i warstwy and Przetwarzanie i scoring,
+and a static layer reads "wbudowane" instead of a time. When adding a new
+import or phase, register its id here and record its run, or it will crawl
+without ever appearing on the page.
 
 ### Transaction scope: the tracked regions, explicitly
 

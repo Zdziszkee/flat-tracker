@@ -11,6 +11,8 @@ export interface AlertReason {
 export interface AlertDto {
 	id: number;
 	alertDate: string;
+	/** Wall-clock moment the alert row was appended, ISO 8601. */
+	alertCreatedAt: string;
 	rank: number;
 	score: number;
 	segment: AlertSegment;
@@ -28,6 +30,15 @@ export interface AlertDto {
 	reasons: AlertReason[];
 	flags: string[];
 	amenities: Record<string, unknown> | null;
+	/** Portal posting date of the offer, ISO 8601. */
+	listedAt: string | null;
+	/** When the crawler first stored the offer, ISO 8601. */
+	firstSeenAt: string | null;
+	/** True when the alert row is younger than 24 hours. */
+	isFresh: boolean;
+	/** Why the alert was raised (for example "fresh_arrival"); null when the
+	 * stored payload does not say. */
+	reason: string | null;
 	listing: {
 		id: number;
 		source: string;
@@ -51,6 +62,10 @@ export interface AlertDto {
 
 export interface AlertsResponse {
 	date: string;
+	/** Server time the response was assembled, ISO 8601. */
+	generatedAt: string;
+	/** Number of rows whose alert was created within the last 24 hours. */
+	freshCount: number;
 	alerts: AlertDto[];
 	counts: {
 		total: number;

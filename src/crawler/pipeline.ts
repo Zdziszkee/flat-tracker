@@ -1,6 +1,7 @@
 import { Data, Effect, Schedule, Schema } from "effect";
 
 import { briefError } from "#/lib/error-report";
+import { scoreArrivals } from "#/lib/scoring/run";
 import { crawlSite } from "./crawler.ts";
 import { type SaveReport, saveListings } from "./db-sink.ts";
 import type { SiteAdapter } from "./types.ts";
@@ -116,7 +117,14 @@ const runCrawl = (
 
 		const saved = saveToDb
 			? yield* saveEffect(adapter.id, validated)
-			: { newCount: 0, updatedCount: 0 };
+			: { newCount: 0, updatedCount: 0, newIds: [] as number[] };
+
+		// Fresh arrivals are scored the moment they are saved and may be
+		// appended to today's alerts. Scoring is advisory: the effect logs and
+		// swallows its failure, so it can never abort the crawl.
+		if (saveToDb && saved.newIds.length > 0) {
+			yield* arrivalScoringEffect(adapter.id, saved.newIds);
+		}
 
 		return {
 			site: adapter.id,
@@ -137,6 +145,36 @@ const saveEffect = (
 		try: () => saveListings([...list]),
 		catch: (cause) => crawlError(site, cause),
 	});
+
+/**
+ * Score the offers a crawl just saved. A failure is logged once and
+ * swallowed: the crawl's own result must never depend on the scoring graph.
+ */
+const arrivalScoringEffect = (
+	site: string,
+	listingIds: readonly number[],
+): Effect.Effect<void> =>
+	Effect.tryPromise({
+		try: () => scoreArrivals(listingIds),
+		catch: (cause) => crawlError(site, cause),
+	}).pipe(
+		Effect.tap((summary) =>
+			Effect.sync(() => {
+				const first = summary.errors[0];
+				if (first) {
+					console.error(
+						`[${site}] arrival scoring: ${summary.errors.length} error(s), first: ${first}`,
+					);
+				}
+			}),
+		),
+		Effect.catchAll((error) =>
+			Effect.sync(() => {
+				console.error(`[${site}] arrival scoring failed: ${briefError(error)}`);
+			}),
+		),
+		Effect.asVoid,
+	);
 
 /**
  * Same as runCrawl but wrapped in an exponential-backoff retry schedule.

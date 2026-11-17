@@ -8,7 +8,17 @@
  * a daily task; a listing is alerted at most once.
  */
 
-import { and, desc, eq, gte, isNotNull, or, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	gte,
+	inArray,
+	isNotNull,
+	or,
+	type SQL,
+	sql,
+} from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { regionOf, type TrackedRegion } from "#/db/region";
@@ -25,9 +35,12 @@ import {
 	scoreAlert,
 } from "#/lib/scoring/alert-score";
 import {
+	ALERT_FRESHNESS,
 	ALERT_GATES,
 	type AlertSegment,
+	freshArrivalRank,
 	SCORE_VERSION,
+	shouldAlertFreshArrival,
 } from "#/lib/scoring/config";
 import { estimateSaleValue } from "#/lib/valuation/offer-model";
 import { geoUniqueness } from "#/lib/valuation/uniqueness-geo";
@@ -70,6 +83,227 @@ const SEGMENT_BY_KIND: Record<string, AlertSegment> = {
 	plot: "plot",
 };
 
+/**
+ * Shared row shape for every scoring entry point. `parcelFeatures` is
+ * optional: it feeds plot scoring and is joined only when a parcel exists.
+ */
+const SCORE_ROW_COLUMNS = {
+	id: listings.id,
+	source: listings.source,
+	title: listings.title,
+	description: listings.description,
+	offerType: listings.offerType,
+	price: listings.price,
+	pricePerM2: listings.pricePerM2,
+	areaM2: listings.areaM2,
+	plotAreaM2: listings.plotAreaM2,
+	rooms: listings.rooms,
+	floor: listings.floor,
+	floorCount: listings.floorCount,
+	buildYear: listings.buildYear,
+	buildingMaterial: listings.buildingMaterial,
+	condition: listings.condition,
+	ownership: listings.ownership,
+	heatingType: listings.heatingType,
+	buildingType: listings.buildingType,
+	plotType: listings.plotType,
+	market: listings.market,
+	hasBalcony: listings.hasBalcony,
+	hasTerrace: listings.hasTerrace,
+	hasGarden: listings.hasGarden,
+	hasElevator: listings.hasElevator,
+	hasParking: listings.hasParking,
+	hasGarage: listings.hasGarage,
+	hasBasement: listings.hasBasement,
+	auctionType: listings.auctionType,
+	lat: listings.lat,
+	lng: listings.lng,
+	city: listings.city,
+	voivodeship: listings.voivodeship,
+	buildingId: listings.buildingId,
+	district: listings.district,
+	propertyKind: listings.propertyKind,
+	propertyType: listings.propertyType,
+	firstSeenAt: listings.firstSeenAt,
+	parcelId: listings.parcelId,
+	parcelAreaM2: parcelFeatures.areaM2,
+	parcelFrontageM: parcelFeatures.frontageM,
+	parcelRoadDistanceM: parcelFeatures.roadDistanceM,
+	parcelRoadClass: parcelFeatures.roadClass,
+	parcelBuildingCoverage: parcelFeatures.buildingCoverage,
+	parcelLandUseClass: parcelFeatures.landUseClass,
+	parcelZoningWz: parcelFeatures.zoningWz,
+	parcelZoningNoPlan: parcelFeatures.zoningNoPlan,
+	parcelZoningPlanCount: parcelFeatures.zoningPlanCount,
+	parcelFloodRisk: parcelFeatures.floodRisk,
+	parcelSlopeDeg: parcelFeatures.slopeDeg,
+	parcelElevationM: parcelFeatures.elevationM,
+} as const;
+
+/**
+ * Base eligibility for scoring: a sale, an active row, a visible row, a
+ * price, area and unit price, and a portal status that is not terminal. The
+ * derived kind when the listing-derived pass has run, the raw portal type
+ * otherwise: scoring must not silently skip a fresh DB whose derived columns
+ * have not been recomputed yet.
+ */
+function baseScoreFilters(): SQL[] {
+	return [
+		eq(listings.offerType, "sale"),
+		eq(listings.isActive, true),
+		eq(listings.isVisible, true),
+		or(isNotNull(listings.propertyKind), isNotNull(listings.propertyType)) ??
+			sql`1 = 1`,
+		isNotNull(listings.price),
+		isNotNull(listings.areaM2),
+		isNotNull(listings.pricePerM2),
+		sql`${listings.price} > 0`,
+		sql`${listings.areaM2} > 0`,
+		sql`${listings.pricePerM2} > 0`,
+		sql`coalesce(${listings.portalStatus}, '') not in ('sold', 'reserved', 'expired')`,
+	];
+}
+
+/**
+ * Only offers without a current-version score. The subquery rides the
+ * (listing_id, score_version) unique index.
+ */
+function missingCurrentScoreFilter(): SQL {
+	return sql`not exists (select 1 from ${listingScores} where ${listingScores.listingId} = ${listings.id} and ${listingScores.scoreVersion} = ${SCORE_VERSION})`;
+}
+
+async function loadScoreRows(filters: SQL[], limit?: number) {
+	let query = db
+		.select(SCORE_ROW_COLUMNS)
+		.from(listings)
+		.leftJoin(parcelFeatures, eq(listings.parcelId, parcelFeatures.parcelId))
+		.where(and(...filters))
+		.orderBy(desc(listings.firstSeenAt));
+	if (limit != null && limit > 0) {
+		query = query.limit(limit) as typeof query;
+	}
+	return query;
+}
+
+type ScoreRow = Awaited<ReturnType<typeof loadScoreRows>>[number];
+
+interface ScoredListing {
+	id: number;
+	scoreId: number;
+	score: AlertScore;
+	segment: AlertSegment;
+	region: TrackedRegion;
+}
+
+/**
+ * Score and store one listing row. Returns null when the row has no usable
+ * kind, segment or region (nothing to score: not an error). Throws on a
+ * storage/estimate failure so the caller attributes it to the listing.
+ */
+async function scoreListingRow(
+	row: ScoreRow,
+	now: Date,
+): Promise<ScoredListing | null> {
+	const kind = propertyKindOf({
+		source: row.source,
+		title: row.title,
+		propertyType: row.propertyKind ?? row.propertyType,
+	});
+	if (!kind) return null;
+	const segment = SEGMENT_BY_KIND[kind];
+	if (!segment) return null;
+	const region =
+		normalizeRegion(row.voivodeship) ??
+		(row.lat != null && row.lng != null ? regionOf(row.lat, row.lng) : null);
+	if (!region) return null;
+
+	const geo =
+		row.lat != null && row.lng != null
+			? await geoUniqueness(row.lat, row.lng)
+			: null;
+
+	const estimateResult = await estimateSaleValue(
+		{
+			id: row.id,
+			source: row.source,
+			externalId: String(row.id),
+			title: row.title,
+			price: row.price,
+			pricePerM2: row.pricePerM2,
+			areaM2: row.areaM2,
+			rooms: row.rooms,
+			district: row.district,
+			lat: row.lat,
+			lng: row.lng,
+			buildingId: row.buildingId,
+			market: row.market,
+			plotType: row.plotType,
+			kind: segment,
+		},
+		now,
+		{ includeUpside: false },
+	);
+
+	const input: ScoreListingInput = {
+		id: row.id,
+		source: row.source,
+		segment,
+		region,
+		city: row.city,
+		title: row.title,
+		description: row.description,
+		price: row.price,
+		pricePerM2: row.pricePerM2,
+		areaM2: row.areaM2,
+		plotAreaM2: row.plotAreaM2,
+		rooms: row.rooms,
+		floor: row.floor,
+		floorCount: row.floorCount,
+		buildYear: row.buildYear,
+		buildingMaterial: row.buildingMaterial,
+		condition: row.condition,
+		ownership: row.ownership,
+		heatingType: row.heatingType,
+		buildingType: row.buildingType,
+		plotType: row.plotType,
+		market: row.market,
+		hasBalcony: row.hasBalcony,
+		hasTerrace: row.hasTerrace,
+		hasGarden: row.hasGarden,
+		hasElevator: row.hasElevator,
+		hasParking: row.hasParking,
+		hasGarage: row.hasGarage,
+		hasBasement: row.hasBasement,
+		auctionType: row.auctionType,
+		lat: row.lat,
+		lng: row.lng,
+		parcelFeatures: row.parcelId
+			? {
+					areaM2: row.parcelAreaM2,
+					frontageM: row.parcelFrontageM,
+					roadDistanceM: row.parcelRoadDistanceM,
+					roadClass: row.parcelRoadClass,
+					buildingCoverage: row.parcelBuildingCoverage,
+					landUseClass: row.parcelLandUseClass,
+					zoningWz: row.parcelZoningWz,
+					zoningNoPlan: row.parcelZoningNoPlan,
+					zoningPlanCount: row.parcelZoningPlanCount,
+					floodRisk: row.parcelFloodRisk,
+					slopeDeg: row.parcelSlopeDeg,
+					elevationM: row.parcelElevationM,
+				}
+			: null,
+	};
+
+	const score = scoreAlert(input, estimateResult.estimate, geo);
+	const scoreId = await storeScore(row.id, score);
+	return { id: row.id, scoreId, score, segment, region };
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 function normalizeRegion(
 	value: string | null | undefined,
 ): TrackedRegion | null {
@@ -104,205 +338,29 @@ export async function runAlertScoring(
 	let scored = 0;
 	let eligible = 0;
 
-	const filters = [
-		eq(listings.offerType, "sale"),
-		eq(listings.isActive, true),
-		eq(listings.isVisible, true),
-		// The derived kind when the listing-derived pass has run, the raw
-		// portal type otherwise: scoring must not silently skip a fresh DB
-		// whose derived columns have not been recomputed yet.
-		or(isNotNull(listings.propertyKind), isNotNull(listings.propertyType)),
-		isNotNull(listings.price),
-		isNotNull(listings.areaM2),
-		isNotNull(listings.pricePerM2),
-		sql`${listings.price} > 0`,
-		sql`${listings.areaM2} > 0`,
-		sql`${listings.pricePerM2} > 0`,
-		sql`coalesce(${listings.portalStatus}, '') not in ('sold', 'reserved', 'expired')`,
-	];
+	const filters = baseScoreFilters();
 	if (!options.all && !options.incremental) {
 		filters.push(
 			sql`coalesce(${listings.firstSeenAt}, ${listings.listedAt}, ${listings.scrapedAt}) >= ${Math.floor(cutoff.getTime() / 1000)}`,
 		);
 	}
 	if (options.incremental) {
-		// Only offers without a current-version score. The subquery rides the
-		// (listing_id, score_version) unique index.
-		filters.push(
-			sql`not exists (select 1 from ${listingScores} where ${listingScores.listingId} = ${listings.id} and ${listingScores.scoreVersion} = ${SCORE_VERSION})`,
-		);
+		filters.push(missingCurrentScoreFilter());
 	}
 
-	let query = db
-		.select({
-			id: listings.id,
-			source: listings.source,
-			title: listings.title,
-			description: listings.description,
-			offerType: listings.offerType,
-			price: listings.price,
-			pricePerM2: listings.pricePerM2,
-			areaM2: listings.areaM2,
-			plotAreaM2: listings.plotAreaM2,
-			rooms: listings.rooms,
-			floor: listings.floor,
-			floorCount: listings.floorCount,
-			buildYear: listings.buildYear,
-			buildingMaterial: listings.buildingMaterial,
-			condition: listings.condition,
-			ownership: listings.ownership,
-			heatingType: listings.heatingType,
-			buildingType: listings.buildingType,
-			plotType: listings.plotType,
-			market: listings.market,
-			hasBalcony: listings.hasBalcony,
-			hasTerrace: listings.hasTerrace,
-			hasGarden: listings.hasGarden,
-			hasElevator: listings.hasElevator,
-			hasParking: listings.hasParking,
-			hasGarage: listings.hasGarage,
-			hasBasement: listings.hasBasement,
-			auctionType: listings.auctionType,
-			lat: listings.lat,
-			lng: listings.lng,
-			city: listings.city,
-			voivodeship: listings.voivodeship,
-			buildingId: listings.buildingId,
-			district: listings.district,
-			propertyKind: listings.propertyKind,
-			propertyType: listings.propertyType,
-			firstSeenAt: listings.firstSeenAt,
-			parcelId: listings.parcelId,
-			parcelAreaM2: parcelFeatures.areaM2,
-			parcelFrontageM: parcelFeatures.frontageM,
-			parcelRoadDistanceM: parcelFeatures.roadDistanceM,
-			parcelRoadClass: parcelFeatures.roadClass,
-			parcelBuildingCoverage: parcelFeatures.buildingCoverage,
-			parcelLandUseClass: parcelFeatures.landUseClass,
-			parcelZoningWz: parcelFeatures.zoningWz,
-			parcelZoningNoPlan: parcelFeatures.zoningNoPlan,
-			parcelZoningPlanCount: parcelFeatures.zoningPlanCount,
-			parcelFloodRisk: parcelFeatures.floodRisk,
-			parcelSlopeDeg: parcelFeatures.slopeDeg,
-			parcelElevationM: parcelFeatures.elevationM,
-		})
-		.from(listings)
-		.leftJoin(parcelFeatures, eq(listings.parcelId, parcelFeatures.parcelId))
-		.where(and(...filters))
-		.orderBy(desc(listings.firstSeenAt));
-
-	if (options.limit != null && options.limit > 0) {
-		query = query.limit(options.limit) as typeof query;
-	}
-
-	const rows = await query;
+	const rows = await loadScoreRows(filters, options.limit);
 	scanned = rows.length;
 
 	for (const row of rows) {
 		try {
-			const kind = propertyKindOf({
-				source: row.source,
-				title: row.title,
-				propertyType: row.propertyKind ?? row.propertyType,
-			});
-			if (!kind) continue;
-			const segment = SEGMENT_BY_KIND[kind];
-			if (!segment) continue;
-			const region =
-				normalizeRegion(row.voivodeship) ??
-				(row.lat != null && row.lng != null
-					? regionOf(row.lat, row.lng)
-					: null);
-			if (!region) continue;
-
-			const geo =
-				row.lat != null && row.lng != null
-					? await geoUniqueness(row.lat, row.lng)
-					: null;
-
-			const estimateResult = await estimateSaleValue(
-				{
-					id: row.id,
-					source: row.source,
-					externalId: String(row.id),
-					title: row.title,
-					price: row.price,
-					pricePerM2: row.pricePerM2,
-					areaM2: row.areaM2,
-					rooms: row.rooms,
-					district: row.district,
-					lat: row.lat,
-					lng: row.lng,
-					buildingId: row.buildingId,
-					market: row.market,
-					plotType: row.plotType,
-					kind: segment,
-				},
-				now,
-				{ includeUpside: false },
-			);
-
-			const input: ScoreListingInput = {
-				id: row.id,
-				source: row.source,
-				segment,
-				region,
-				city: row.city,
-				title: row.title,
-				description: row.description,
-				price: row.price,
-				pricePerM2: row.pricePerM2,
-				areaM2: row.areaM2,
-				plotAreaM2: row.plotAreaM2,
-				rooms: row.rooms,
-				floor: row.floor,
-				floorCount: row.floorCount,
-				buildYear: row.buildYear,
-				buildingMaterial: row.buildingMaterial,
-				condition: row.condition,
-				ownership: row.ownership,
-				heatingType: row.heatingType,
-				buildingType: row.buildingType,
-				plotType: row.plotType,
-				market: row.market,
-				hasBalcony: row.hasBalcony,
-				hasTerrace: row.hasTerrace,
-				hasGarden: row.hasGarden,
-				hasElevator: row.hasElevator,
-				hasParking: row.hasParking,
-				hasGarage: row.hasGarage,
-				hasBasement: row.hasBasement,
-				auctionType: row.auctionType,
-				lat: row.lat,
-				lng: row.lng,
-				parcelFeatures: row.parcelId
-					? {
-							areaM2: row.parcelAreaM2,
-							frontageM: row.parcelFrontageM,
-							roadDistanceM: row.parcelRoadDistanceM,
-							roadClass: row.parcelRoadClass,
-							buildingCoverage: row.parcelBuildingCoverage,
-							landUseClass: row.parcelLandUseClass,
-							zoningWz: row.parcelZoningWz,
-							zoningNoPlan: row.parcelZoningNoPlan,
-							zoningPlanCount: row.parcelZoningPlanCount,
-							floodRisk: row.parcelFloodRisk,
-							slopeDeg: row.parcelSlopeDeg,
-							elevationM: row.parcelElevationM,
-						}
-					: null,
-			};
-
-			const score = scoreAlert(input, estimateResult.estimate, geo);
-			await storeScore(row.id, score);
+			const entry = await scoreListingRow(row, now);
+			if (!entry) continue;
 			scored++;
-			bySegment[segment] = (bySegment[segment] ?? 0) + 1;
-			byRegion[region] = (byRegion[region] ?? 0) + 1;
-			if (score.eligible) eligible++;
+			bySegment[entry.segment] = (bySegment[entry.segment] ?? 0) + 1;
+			byRegion[entry.region] = (byRegion[entry.region] ?? 0) + 1;
+			if (entry.score.eligible) eligible++;
 		} catch (error) {
-			errors.push(
-				`listing ${row.id}: ${error instanceof Error ? error.message : String(error)}`,
-			);
+			errors.push(`listing ${row.id}: ${errorMessage(error)}`);
 		}
 	}
 
@@ -325,9 +383,144 @@ export async function runAlertScoring(
 	};
 }
 
-async function storeScore(listingId: number, score: AlertScore): Promise<void> {
+export interface ArrivalScoreSummary {
+	/** Listings scored by this call. */
+	scored: number;
+	/** Fresh-arrival alerts inserted into today's list. */
+	alerts: number;
+	/** Per-listing or batch failures, already collected for the caller. */
+	errors: string[];
+}
+
+/**
+ * Score the offers a crawl just saved and alert the ones that beat their
+ * 24-hour cohort.
+ *
+ * The cohort is every current-version scored offer in the same region and
+ * segment whose `coalesce(firstSeenAt, listedAt, scrapedAt)` falls inside
+ * the last `ALERT_FRESHNESS.windowHours` hours; the new offer is part of it
+ * because its score is stored before the cohort is read, so it competes
+ * with the peers that arrived before it. An offer alerts when its score sits
+ * inside the cohort's top `ALERT_FRESHNESS.topPercent`, i.e. it beats at
+ * least 95% of the offers seen in the previous day.
+ *
+ * This is an addition to the full-pool top-5% rule, not a replacement: the
+ * refresh's scoring phase still ranks the whole market and can alert a fresh
+ * offer that missed its cohort, and a fresh alert never removes anything
+ * from that list.
+ *
+ * Never throws: one bad listing (or a failed batch read) lands in `errors`,
+ * so a crawl is never aborted by scoring. Idempotent: the unique
+ * (listing_id, alert_date, channel) index makes a re-run insert nothing.
+ */
+export async function scoreArrivals(
+	listingIds: readonly number[],
+	now: Date = new Date(),
+): Promise<ArrivalScoreSummary> {
+	const summary: ArrivalScoreSummary = { scored: 0, alerts: 0, errors: [] };
+	const ids = [...new Set(listingIds)].filter(
+		(id) => Number.isInteger(id) && id > 0,
+	);
+	if (ids.length === 0) return summary;
+
+	const day = dateOnly(now);
+	const windowStart = new Date(
+		now.getTime() - ALERT_FRESHNESS.windowHours * 3_600_000,
+	);
+	try {
+		const rows = await loadScoreRows([
+			...baseScoreFilters(),
+			inArray(listings.id, ids),
+			missingCurrentScoreFilter(),
+		]);
+		for (const row of rows) {
+			try {
+				const entry = await scoreListingRow(row, now);
+				if (!entry) continue;
+				summary.scored++;
+				// ALERT_GATES live inside the score: an ineligible offer is
+				// stored but never competes for an alert.
+				if (!entry.score.eligible) continue;
+				if (await alertFreshArrival(entry, windowStart, now, day)) {
+					summary.alerts++;
+				}
+			} catch (error) {
+				summary.errors.push(`listing ${row.id}: ${errorMessage(error)}`);
+			}
+		}
+	} catch (error) {
+		summary.errors.push(`arrival batch: ${errorMessage(error)}`);
+	}
+	return summary;
+}
+
+/**
+ * Append today's fresh-arrival alert when the offer is inside the cohort's
+ * top cut. `rank` is 1 + the count of strictly higher cohort scores, the
+ * same meaning it has in the full-pool rule, so /alerts can read it
+ * unchanged.
+ */
+async function alertFreshArrival(
+	entry: ScoredListing,
+	windowStart: Date,
+	now: Date,
+	day: string,
+): Promise<boolean> {
+	const seenAt = sql`coalesce(${listings.firstSeenAt}, ${listings.listedAt}, ${listings.scrapedAt})`;
+	const cohort = await db
+		.select({ totalScore: listingScores.totalScore })
+		.from(listingScores)
+		.innerJoin(listings, eq(listingScores.listingId, listings.id))
+		.where(
+			and(
+				eq(listingScores.scoreVersion, SCORE_VERSION),
+				eq(listingScores.segment, entry.segment),
+				eq(listingScores.region, entry.region),
+				eq(listings.isActive, true),
+				eq(listings.isVisible, true),
+				sql`${seenAt} >= ${Math.floor(windowStart.getTime() / 1000)}`,
+				sql`${seenAt} <= ${Math.ceil(now.getTime() / 1000)}`,
+			),
+		);
+	const cohortScores = cohort.map((row) => row.totalScore);
+	if (!shouldAlertFreshArrival(entry.score.totalScore, cohortScores)) {
+		return false;
+	}
+
+	const inserted = await db
+		.insert(listingAlerts)
+		.values({
+			listingId: entry.id,
+			scoreId: entry.scoreId,
+			alertDate: day,
+			segment: entry.segment,
+			region: entry.region,
+			rank: freshArrivalRank(entry.score.totalScore, cohortScores),
+			score: entry.score.totalScore,
+			channel: "in_app",
+			status: "pending",
+			payloadJson: JSON.stringify({
+				reason: "fresh_arrival",
+				cohortSize: cohortScores.length,
+			}),
+		})
+		.onConflictDoNothing({
+			target: [
+				listingAlerts.listingId,
+				listingAlerts.alertDate,
+				listingAlerts.channel,
+			],
+		})
+		.returning({ id: listingAlerts.id });
+	return inserted.length > 0;
+}
+
+async function storeScore(
+	listingId: number,
+	score: AlertScore,
+): Promise<number> {
 	const expiresAt = new Date(Date.now() + 14 * 86_400_000);
-	await db
+	const stored = await db
 		.insert(listingScores)
 		.values({
 			listingId,
@@ -373,7 +566,13 @@ async function storeScore(listingId: number, score: AlertScore): Promise<void> {
 				computedAt: new Date(),
 				expiresAt,
 			},
-		});
+		})
+		.returning({ id: listingScores.id });
+	const row = stored[0];
+	if (!row) {
+		throw new Error(`score upsert returned no row for listing ${listingId}`);
+	}
+	return row.id;
 }
 
 /**

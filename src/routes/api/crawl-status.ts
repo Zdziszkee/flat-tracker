@@ -1,13 +1,17 @@
+import { statSync } from "node:fs";
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, max, or, sql } from "drizzle-orm";
 import {
 	getProgress,
 	isRunning,
 	type SourceProgress,
 } from "#/crawler/progress";
 import { remoteRefreshRunning } from "#/crawler/refresh-lock";
-import { sourceDescriptors } from "#/crawler/source-status";
+import {
+	type SourceDescriptor,
+	sourceDescriptors,
+} from "#/crawler/source-status";
 import { db } from "#/db/index";
 import { crawlRuns } from "#/db/schema";
 
@@ -17,6 +21,12 @@ import { crawlRuns } from "#/db/schema";
  * "Last refreshed" comes from `crawl_runs` (durable, per-source). Live
  * progress (pending/running/ok/failed while a refresh is underway) comes
  * from the in-memory registry in `src/crawler/progress.ts`.
+ *
+ * Each row also carries the registry's `group` (which /sources section it
+ * belongs to) and `static` flag (a reference layer that ships with the app
+ * and is never crawled, so it can never go stale). The response's
+ * `lastRefreshedAt` is the newest successful finish across every non-static
+ * source.
  */
 
 interface LastRun {
@@ -27,6 +37,27 @@ interface LastRun {
 	updatedCount: number | null;
 	error: string | null;
 	errorDetail: string | null;
+}
+
+/** Dataset bundled at build time: listed, but never crawled, so never stale. */
+function isStaticLayer(descriptor: SourceDescriptor): boolean {
+	return descriptor.static === true;
+}
+
+/**
+ * Last refresh of a layer built by a manual job instead of the hourly
+ * crawl (`assign-buildings`, `build:osm-roads`, `build:dem`). Those write a
+ * state file (or a tile directory) whose mtime is the only durable trace,
+ * so /sources can show real freshness instead of "never".
+ */
+function layerFileFreshness(descriptor: SourceDescriptor): Date | null {
+	const path = descriptor.freshnessFile;
+	if (!path) return null;
+	try {
+		return statSync(path).mtime;
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -49,6 +80,9 @@ function toLiveState(
 		log: source.log,
 	};
 }
+
+const toIso = (value: Date | null | undefined): string | null =>
+	value ? value.toISOString() : null;
 
 export const Route = createFileRoute("/api/crawl-status")({
 	server: {
@@ -87,16 +121,52 @@ export const Route = createFileRoute("/api/crawl-status")({
 				const lastBySource = new Map<string, LastRun>();
 				for (const r of rows) {
 					lastBySource.set(r.source, {
-						startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : null,
-						finishedAt: r.finishedAt
-							? new Date(r.finishedAt).toISOString()
-							: null,
+						startedAt: toIso(r.startedAt),
+						finishedAt: toIso(r.finishedAt),
 						pages: r.pages,
 						newCount: r.newCount,
 						updatedCount: r.updatedCount,
 						error: r.error,
 						errorDetail: r.errorDetail,
 					});
+				}
+
+				// Newest successful finish per source. A run is successful when it
+				// recorded no error (an empty string counts as no error). The
+				// column is a drizzle timestamp, so `max` maps back to a Date.
+				const lastSuccessRows = await db
+					.select({
+						source: crawlRuns.source,
+						lastSuccessAt: max(crawlRuns.finishedAt),
+					})
+					.from(crawlRuns)
+					.where(or(isNull(crawlRuns.error), eq(crawlRuns.error, "")))
+					.groupBy(crawlRuns.source);
+
+				const lastSuccessBySource = new Map<string, Date>();
+				for (const r of lastSuccessRows) {
+					if (r.lastSuccessAt) {
+						lastSuccessBySource.set(r.source, r.lastSuccessAt);
+					}
+				}
+
+				const descriptors = sourceDescriptors.map((descriptor) => ({
+					descriptor,
+					group: descriptor.group,
+					staticLayer: isStaticLayer(descriptor),
+					fileFreshness: layerFileFreshness(descriptor),
+				}));
+
+				// Overall freshness ignores static reference layers: they are
+				// shipped with the app, never crawled, so they cannot age.
+				let lastRefreshed: Date | null = null;
+				for (const { descriptor, staticLayer, fileFreshness } of descriptors) {
+					if (staticLayer) continue;
+					const success =
+						lastSuccessBySource.get(descriptor.id) ?? fileFreshness;
+					if (success && (!lastRefreshed || success > lastRefreshed)) {
+						lastRefreshed = success;
+					}
 				}
 
 				// The dev-boot crawl runs in a child process, so fall back to
@@ -106,6 +176,7 @@ export const Route = createFileRoute("/api/crawl-status")({
 
 				return json({
 					running: isRunning() || remote != null,
+					lastRefreshedAt: toIso(lastRefreshed),
 					progress: progress
 						? {
 								runId: progress.runId,
@@ -115,13 +186,24 @@ export const Route = createFileRoute("/api/crawl-status")({
 								phase: progress.phase,
 							}
 						: null,
-					sources: sourceDescriptors.map((d) => ({
-						id: d.id,
-						name: d.name,
-						kind: d.kind,
-						lastRun: lastBySource.get(d.id) ?? null,
-						live: toLiveState(progress?.sources.find((s) => s.source === d.id)),
-					})),
+					sources: descriptors.map(
+						({ descriptor, group, staticLayer, fileFreshness }) => ({
+							id: descriptor.id,
+							name: descriptor.name,
+							kind: descriptor.kind,
+							group,
+							static: staticLayer,
+							lastRun: lastBySource.get(descriptor.id) ?? null,
+							// A script-built layer has no crawl run; its state file is
+							// the freshness signal.
+							lastSuccessAt: toIso(
+								lastSuccessBySource.get(descriptor.id) ?? fileFreshness,
+							),
+							live: toLiveState(
+								progress?.sources.find((s) => s.source === descriptor.id),
+							),
+						}),
+					),
 				});
 			},
 		},

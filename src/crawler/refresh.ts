@@ -64,6 +64,21 @@ const STATE_PATH = "data/crawler/state.json";
 /** How long a source stays paused after it blocked us (429 wall / WAF). */
 const BLOCK_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 
+/**
+ * Label for the GUGiK import scope, mirroring `resolveScope` in
+ * `import-rcn-gugik.ts` (that helper is module-private). The scope is an
+ * import setting rather than a metric, so it is reported in the run log.
+ */
+function gugikScopeLabel(): string {
+	const value = (process.env.RCN_GUGIK_SCOPE ?? "").toLowerCase();
+	return value === "pl" ||
+		value === "poland" ||
+		value === "all" ||
+		value === "1"
+		? "poland"
+		: "małopolska + śląskie";
+}
+
 interface SiteRefresh {
 	site: string;
 	ok: boolean;
@@ -171,11 +186,20 @@ export async function refreshAll(
 		...siteAdapters.map((a) => a.id),
 		"geocoding",
 		"rcn-import",
+		"gugik-import",
 		"building-assign",
 		"parcel-assign",
+		// Only registered when it will actually run, so a default run (0
+		// tiles) does not leave a forever-pending row on /sources.
+		...(Number(process.env.EGIB_TILES_PER_REFRESH ?? 0) > 0
+			? ["egib-import"]
+			: []),
 		"parcel-enrich",
+		"price-indices",
+		"listing-derived",
 		"public-investments",
 		"finwire",
+		...(opts.includeAirbnbEnrich !== false ? ["airbnb-enrich"] : []),
 		"scoring",
 	]);
 	// Fresh clone: browser binaries are a separate download, so the
@@ -479,20 +503,30 @@ export async function refreshAll(
 				state: "running",
 				startedAt: new Date(aT0).toISOString(),
 			});
-			const enrich = await enrichAirbnbDetails({ limit: 100 });
-			await recordCrawlRun({
-				source: "airbnb-enrich",
-				startedAt: new Date(aT0),
-				finishedAt: new Date(),
-				pages: enrich.fetched,
-				newCount: enrich.enriched,
-				updatedCount: 0,
-			});
-			setSourceProgress("airbnb-enrich", {
-				state: "ok",
-				finishedAt: new Date().toISOString(),
-				newCount: enrich.enriched,
-			});
+			try {
+				const enrich = await enrichAirbnbDetails({ limit: 100 });
+				await recordCrawlRun({
+					source: "airbnb-enrich",
+					startedAt: new Date(aT0),
+					finishedAt: new Date(),
+					pages: enrich.fetched,
+					newCount: enrich.enriched,
+					updatedCount: 0,
+				});
+				setSourceProgress("airbnb-enrich", {
+					state: "ok",
+					finishedAt: new Date().toISOString(),
+					pages: enrich.fetched,
+					newCount: enrich.enriched,
+				});
+			} catch (err) {
+				await recordFailure({
+					source: "airbnb-enrich",
+					startedAt: aT0,
+					err,
+					context: "airbnb detail enrichment failed",
+				});
+			}
 		}
 
 		// Anchor new offers on the map: local OSM-index matches are instant,
@@ -539,8 +573,40 @@ export async function refreshAll(
 		// download per powiat and nothing on the runs after that.
 		let gugikNew = 0;
 		if (opts.includeRcn !== false) {
-			const { importRcnGugik } = await import("./import-rcn-gugik.ts");
-			gugikNew = await importRcnGugik();
+			const gugikT0 = Date.now();
+			setSourceProgress("gugik-import", {
+				state: "running",
+				startedAt: new Date(gugikT0).toISOString(),
+			});
+			try {
+				const { importRcnGugik } = await import("./import-rcn-gugik.ts");
+				gugikNew = await importRcnGugik();
+				await recordCrawlRun({
+					source: "gugik-import",
+					startedAt: new Date(gugikT0),
+					finishedAt: new Date(),
+					pages: 0,
+					newCount: gugikNew,
+					updatedCount: 0,
+				});
+				setSourceProgress("gugik-import", {
+					state: "ok",
+					finishedAt: new Date().toISOString(),
+					pages: 0,
+					newCount: gugikNew,
+					updatedCount: 0,
+					// The scope is an import setting, not a metric: it travels on
+					// the run log rather than in its own column.
+					log: `scope: ${gugikScopeLabel()}`,
+				});
+			} catch (err) {
+				await recordFailure({
+					source: "gugik-import",
+					startedAt: gugikT0,
+					err,
+					context: "GUGiK RCN import failed",
+				});
+			}
 		}
 
 		if (opts.includeRcn !== false) {
@@ -565,15 +631,24 @@ export async function refreshAll(
 		if (opts.includeRcn !== false && rcnNew + gugikNew > 0) {
 			const { assignBuildings } = await import("./assign-buildings.ts");
 			setPhase("building-assign");
+			const assignT0 = Date.now();
 			setSourceProgress("building-assign", {
 				state: "running",
-				startedAt: new Date().toISOString(),
+				startedAt: new Date(assignT0).toISOString(),
 			});
 			try {
 				const a = await assignBuildings();
 				console.log(
 					`[refresh] building assignment after RCN diff: ${a.listings} listings, ${a.transactions} transactions, ${a.addressBackfilled} addresses`,
 				);
+				await recordCrawlRun({
+					source: "building-assign",
+					startedAt: new Date(assignT0),
+					finishedAt: new Date(),
+					pages: 0,
+					newCount: a.transactions,
+					updatedCount: a.listings,
+				});
 				setSourceProgress("building-assign", {
 					state: "ok",
 					finishedAt: new Date().toISOString(),
@@ -581,11 +656,12 @@ export async function refreshAll(
 					updatedCount: a.listings,
 				});
 			} catch (err) {
-				setSourceProgress("building-assign", {
-					state: "failed",
-					error: String(err),
+				await recordFailure({
+					source: "building-assign",
+					startedAt: assignT0,
+					err,
+					context: "building assignment failed",
 				});
-				console.error("[refresh] building assignment failed:", err);
 			}
 		}
 
@@ -593,9 +669,10 @@ export async function refreshAll(
 		// parcel. New listings can arrive before the region-wide EGiB tile
 		// import reaches them, so a single-parcel WFS lookup is the fallback.
 		setPhase("parcel-assign");
+		const parcelAssignT0 = Date.now();
 		setSourceProgress("parcel-assign", {
 			state: "running",
-			startedAt: new Date().toISOString(),
+			startedAt: new Date(parcelAssignT0).toISOString(),
 		});
 		try {
 			const { assignParcels } = await import("./parcel-index.ts");
@@ -609,6 +686,14 @@ export async function refreshAll(
 					`${parcels.transactions} transactions, ${parcels.fetched} fetched from EGiB, ` +
 					`${parcels.missed} missed`,
 			);
+			await recordCrawlRun({
+				source: "parcel-assign",
+				startedAt: new Date(parcelAssignT0),
+				finishedAt: new Date(),
+				pages: 0,
+				newCount: parcels.listings + parcels.transactions,
+				updatedCount: parcels.fetched,
+			});
 			setSourceProgress("parcel-assign", {
 				state: "ok",
 				finishedAt: new Date().toISOString(),
@@ -616,11 +701,12 @@ export async function refreshAll(
 				updatedCount: parcels.fetched,
 			});
 		} catch (err) {
-			setSourceProgress("parcel-assign", {
-				state: "failed",
-				error: String(err),
+			await recordFailure({
+				source: "parcel-assign",
+				startedAt: parcelAssignT0,
+				err,
+				context: "parcel assignment failed",
 			});
-			console.error("[refresh] parcel assignment failed:", err);
 		}
 
 		// Fill the region-wide parcel index gradually. Default 0: the
@@ -628,6 +714,11 @@ export async function refreshAll(
 		// two-voivodeship import is a separate `bun run import:egib` job.
 		const egibTiles = Number(process.env.EGIB_TILES_PER_REFRESH ?? 0);
 		if (egibTiles > 0) {
+			const egibT0 = Date.now();
+			setSourceProgress("egib-import", {
+				state: "running",
+				startedAt: new Date(egibT0).toISOString(),
+			});
 			try {
 				const { importEgib } = await import("./import-egib.ts");
 				const egib = await importEgib({
@@ -638,17 +729,38 @@ export async function refreshAll(
 					`[refresh] egib: +${egib.inserted} parcels, ` +
 						`${egib.completed}/${egib.total} tiles complete`,
 				);
+				await recordCrawlRun({
+					source: "egib-import",
+					startedAt: new Date(egibT0),
+					finishedAt: new Date(),
+					pages: egib.ranTiles,
+					newCount: egib.inserted,
+					updatedCount: 0,
+				});
+				setSourceProgress("egib-import", {
+					state: "ok",
+					finishedAt: new Date().toISOString(),
+					pages: egib.ranTiles,
+					newCount: egib.inserted,
+					updatedCount: 0,
+				});
 			} catch (err) {
-				console.error("[refresh] egib import failed:", err);
+				await recordFailure({
+					source: "egib-import",
+					startedAt: egibT0,
+					err,
+					context: "EGiB tile import failed",
+				});
 			}
 		}
 
 		// Compute the physical features once per parcel. Bounded per refresh:
 		// the backlog drains over several runs, new parcels are first.
 		setPhase("parcel-enrich");
+		const parcelEnrichT0 = Date.now();
 		setSourceProgress("parcel-enrich", {
 			state: "running",
-			startedAt: new Date().toISOString(),
+			startedAt: new Date(parcelEnrichT0).toISOString(),
 		});
 		try {
 			const { enrichParcels } = await import("./enrich-parcels.ts");
@@ -660,23 +772,38 @@ export async function refreshAll(
 					`${enriched.withBuildings} with buildings, ${enriched.withRoad} with road, ` +
 					`${enriched.withZoning} with zoning`,
 			);
+			await recordCrawlRun({
+				source: "parcel-enrich",
+				startedAt: new Date(parcelEnrichT0),
+				finishedAt: new Date(),
+				pages: 0,
+				newCount: enriched.processed,
+				updatedCount: enriched.withBuildings,
+			});
 			setSourceProgress("parcel-enrich", {
 				state: "ok",
 				finishedAt: new Date().toISOString(),
 				newCount: enriched.processed,
+				updatedCount: enriched.withBuildings,
 			});
 		} catch (err) {
-			setSourceProgress("parcel-enrich", {
-				state: "failed",
-				error: String(err),
+			await recordFailure({
+				source: "parcel-enrich",
+				startedAt: parcelEnrichT0,
+				err,
+				context: "parcel enrichment failed",
 			});
-			console.error("[refresh] parcel enrichment failed:", err);
 		}
 
 		// Rebuild the quarterly price indices the per-offer valuation model
 		// consumes whenever the registry moved. Cheap relative to the import
 		// above and idempotent.
 		if (opts.includeRcn !== false) {
+			const priceIndexT0 = Date.now();
+			setSourceProgress("price-indices", {
+				state: "running",
+				startedAt: new Date(priceIndexT0).toISOString(),
+			});
 			try {
 				const { rebuildPriceIndices } = await import(
 					"../db/queries/price-indices.ts"
@@ -685,8 +812,27 @@ export async function refreshAll(
 				console.log(
 					`[refresh] price indices rebuilt: ${report.series} series, ${report.rows} rows`,
 				);
+				await recordCrawlRun({
+					source: "price-indices",
+					startedAt: new Date(priceIndexT0),
+					finishedAt: new Date(),
+					pages: 0,
+					newCount: report.rows,
+					updatedCount: report.series,
+				});
+				setSourceProgress("price-indices", {
+					state: "ok",
+					finishedAt: new Date().toISOString(),
+					newCount: report.rows,
+					updatedCount: report.series,
+				});
 			} catch (err) {
-				console.error("[refresh] price-index rebuild failed:", err);
+				await recordFailure({
+					source: "price-indices",
+					startedAt: priceIndexT0,
+					err,
+					context: "price-index rebuild failed",
+				});
 			}
 		}
 
@@ -695,6 +841,11 @@ export async function refreshAll(
 		// map anchor straight from SQL instead of replaying the dedupe in JS
 		// on every request.
 		setPhase("listing-derived");
+		const derivedT0 = Date.now();
+		setSourceProgress("listing-derived", {
+			state: "running",
+			startedAt: new Date(derivedT0).toISOString(),
+		});
 		try {
 			const { recomputeListingDerived } = await import(
 				"../db/listing-derived.ts"
@@ -705,8 +856,28 @@ export async function refreshAll(
 					`${derived.visible} visible, ${derived.changed} changed ` +
 					`(${derived.elapsedMs} ms)`,
 			);
+			// The pass creates no rows: `changed` is how many it rewrote.
+			await recordCrawlRun({
+				source: "listing-derived",
+				startedAt: new Date(derivedT0),
+				finishedAt: new Date(),
+				pages: 0,
+				newCount: 0,
+				updatedCount: derived.changed,
+			});
+			setSourceProgress("listing-derived", {
+				state: "ok",
+				finishedAt: new Date().toISOString(),
+				newCount: 0,
+				updatedCount: derived.changed,
+			});
 		} catch (err) {
-			console.error("[refresh] listing-derived recompute failed:", err);
+			await recordFailure({
+				source: "listing-derived",
+				startedAt: derivedT0,
+				err,
+				context: "listing-derived recompute failed",
+			});
 		}
 
 		// Score every offer that has no current-version score yet and append

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRightIcon, RefreshCwIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "#/components/ui/alert";
+import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import {
 	Card,
@@ -28,12 +29,95 @@ import {
 } from "#/components/ui/table";
 import { cn } from "#/lib/utils";
 import {
+	absoluteTime,
 	type CrawlStatusResponse,
 	duration,
+	freshnessLabel,
+	isStale,
 	metrics,
 	relativeTime,
+	type SourceGroup,
+	type SourceStatus,
 } from "./source-status";
 import { StatusBadge } from "./status-badge";
+
+/** Sections of the table, in the order the pipeline runs them. */
+const SECTIONS: { group: SourceGroup; title: string }[] = [
+	{ group: "portal", title: "Portale" },
+	{ group: "data", title: "Dane i warstwy" },
+	{ group: "processing", title: "Przetwarzanie i scoring" },
+];
+
+/**
+ * One source row. The error cell keeps its behaviour: the one-line cause in
+ * the row, the full cause chain and stack in an expandable panel.
+ */
+function SourceRow({ source }: { source: SourceStatus }) {
+	const error =
+		source.live?.error || source.lastRun?.error || source.live?.log || "";
+	// The expanded panel wants the stack, not the one-liner: live progress
+	// carries it in `log`, finished runs in `errorDetail`.
+	const detail =
+		source.live?.log ||
+		source.lastRun?.errorDetail ||
+		source.lastRun?.error ||
+		error;
+	const lastTouchedAt = source.lastSuccessAt ?? source.lastRun?.finishedAt;
+
+	return (
+		<TableRow>
+			<TableCell className="max-w-0 px-4 py-2">
+				<div className="flex items-center gap-2">
+					<span className="truncate font-medium">{source.name}</span>
+					<span className="text-xs text-muted-foreground">({source.id})</span>
+				</div>
+			</TableCell>
+			<TableCell className="px-4 py-2">
+				{source.static ? (
+					<span className="text-muted-foreground">wbudowane</span>
+				) : (
+					<div className="flex items-center gap-2">
+						<span
+							className="text-muted-foreground tabular-nums"
+							title={
+								lastTouchedAt
+									? `Ostatni udany przebieg: ${absoluteTime(lastTouchedAt)}`
+									: undefined
+							}
+						>
+							{relativeTime(lastTouchedAt)}
+						</span>
+						<StatusBadge source={source} />
+					</div>
+				)}
+			</TableCell>
+			<TableCell className="px-4 py-2 text-muted-foreground tabular-nums">
+				{source.static
+					? ""
+					: duration(source.lastRun?.startedAt, source.lastRun?.finishedAt)}
+			</TableCell>
+			<TableCell className="px-4 py-2">{metrics(source)}</TableCell>
+			<TableCell className="max-w-xs px-4 py-2 text-destructive-foreground">
+				{error ? (
+					<Collapsible className="group">
+						<CollapsibleTrigger className="flex w-full cursor-pointer items-start gap-1.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+							<ChevronRightIcon
+								aria-hidden="true"
+								className="mt-0.5 size-3.5 shrink-0 transition-transform group-open:rotate-90"
+							/>
+							<span className="line-clamp-2 break-words">{error}</span>
+						</CollapsibleTrigger>
+						<CollapsibleContent>
+							<pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-2 font-mono text-xs leading-relaxed text-foreground">
+								{detail}
+							</pre>
+						</CollapsibleContent>
+					</Collapsible>
+				) : null}
+			</TableCell>
+		</TableRow>
+	);
+}
 
 /**
  * "Źródła danych" panel: per-source freshness plus the live refresh progress
@@ -61,12 +145,20 @@ export function SourcesPanel() {
 
 	const running = data?.running ?? false;
 	const sources = data?.sources ?? [];
-	const doneCount = sources.filter(
+	// Built-in reference layers never run, so they neither progress nor age.
+	const refreshable = sources.filter((s) => !s.static);
+	const doneCount = refreshable.filter(
 		(s) => s.live?.state === "ok" || s.live?.state === "failed",
 	).length;
 	const pct =
-		sources.length > 0 ? Math.round((doneCount / sources.length) * 100) : 0;
+		refreshable.length > 0
+			? Math.round((doneCount / refreshable.length) * 100)
+			: 0;
 	const refreshBusy = running || refresh.isPending;
+
+	const lastRefreshedAt = data?.lastRefreshedAt ?? null;
+	const lastRefreshedAbsolute = absoluteTime(lastRefreshedAt);
+	const stale = isStale(lastRefreshedAt);
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -100,7 +192,7 @@ export function SourcesPanel() {
 						<div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
 							<span>Etap: {data?.progress?.phase ?? "crawl"}</span>
 							<span className="tabular-nums">
-								{doneCount}/{sources.length}
+								{doneCount}/{refreshable.length}
 							</span>
 						</div>
 						<Progress value={pct} aria-label="Postęp odświeżania" />
@@ -123,6 +215,35 @@ export function SourcesPanel() {
 			)}
 
 			<Card className="gap-0 overflow-hidden py-0">
+				<CardHeader className="border-b px-4 py-3">
+					<CardTitle className="text-sm">Ostatnie odświeżenie danych</CardTitle>
+					<CardDescription className="text-xs">
+						Najnowszy udany przebieg portali i danych. Warstwy wbudowane nie
+						liczą się do tego wskaźnika.
+					</CardDescription>
+					<CardAction className="flex flex-wrap items-center justify-end gap-2">
+						{isLoading || !data ? (
+							<Skeleton className="h-6 w-20" />
+						) : (
+							<>
+								<span className="text-lg font-semibold tabular-nums">
+									<time
+										dateTime={lastRefreshedAt ?? undefined}
+										title={lastRefreshedAbsolute}
+									>
+										{relativeTime(lastRefreshedAt)}
+									</time>
+									{lastRefreshedAt && (
+										<span className="sr-only"> ({lastRefreshedAbsolute})</span>
+									)}
+								</span>
+								<Badge variant={stale ? "destructive" : "secondary"}>
+									{freshnessLabel(lastRefreshedAt)}
+								</Badge>
+							</>
+						)}
+					</CardAction>
+				</CardHeader>
 				<Table>
 					<TableHeader>
 						<TableRow className="bg-muted/50 hover:bg-muted/50">
@@ -143,9 +264,9 @@ export function SourcesPanel() {
 							</TableHead>
 						</TableRow>
 					</TableHeader>
-					<TableBody>
-						{isLoading &&
-							[0, 1, 2, 3, 4, 5].map((row) => (
+					{isLoading && (
+						<TableBody>
+							{[0, 1, 2, 3, 4, 5].map((row) => (
 								<TableRow key={row}>
 									<TableCell className="px-4 py-2">
 										<Skeleton className="h-4 w-32" />
@@ -164,62 +285,32 @@ export function SourcesPanel() {
 									</TableCell>
 								</TableRow>
 							))}
-						{sources.map((s) => {
-							const error =
-								s.live?.error || s.lastRun?.error || s.live?.log || "";
-							// The expanded panel wants the stack, not the one-liner: live
-							// progress carries it in `log`, finished runs in `errorDetail`.
-							const detail =
-								s.live?.log ||
-								s.lastRun?.errorDetail ||
-								s.lastRun?.error ||
-								error;
+						</TableBody>
+					)}
+					{!isLoading &&
+						SECTIONS.map(({ group, title }) => {
+							const rows = sources.filter((s) => s.group === group);
+							if (rows.length === 0) return null;
 							return (
-								<TableRow key={s.id}>
-									<TableCell className="max-w-0 px-4 py-2">
-										<div className="flex items-center gap-2">
-											<span className="truncate font-medium">{s.name}</span>
-											<span className="text-xs text-muted-foreground">
-												({s.id})
+								<TableBody key={group}>
+									<TableRow className="bg-muted/30 hover:bg-muted/30">
+										<TableHead
+											scope="rowgroup"
+											colSpan={5}
+											className="px-4 text-xs font-semibold uppercase tracking-wide text-foreground"
+										>
+											{title}
+											<span className="ml-2 font-normal text-muted-foreground tabular-nums">
+												{rows.length}
 											</span>
-										</div>
-									</TableCell>
-									<TableCell className="px-4 py-2">
-										<div className="flex items-center gap-2">
-											<span className="text-muted-foreground tabular-nums">
-												{relativeTime(s.lastRun?.finishedAt)}
-											</span>
-											<StatusBadge source={s} />
-										</div>
-									</TableCell>
-									<TableCell className="px-4 py-2 text-muted-foreground tabular-nums">
-										{duration(s.lastRun?.startedAt, s.lastRun?.finishedAt)}
-									</TableCell>
-									<TableCell className="px-4 py-2">{metrics(s)}</TableCell>
-									<TableCell className="max-w-xs px-4 py-2 text-destructive-foreground">
-										{error ? (
-											<Collapsible className="group">
-												<CollapsibleTrigger className="flex w-full cursor-pointer items-start gap-1.5 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-													<ChevronRightIcon
-														aria-hidden="true"
-														className="mt-0.5 size-3.5 shrink-0 transition-transform group-open:rotate-90"
-													/>
-													<span className="line-clamp-2 break-words">
-														{error}
-													</span>
-												</CollapsibleTrigger>
-												<CollapsibleContent>
-													<pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-2 font-mono text-xs leading-relaxed text-foreground">
-														{detail}
-													</pre>
-												</CollapsibleContent>
-											</Collapsible>
-										) : null}
-									</TableCell>
-								</TableRow>
+										</TableHead>
+									</TableRow>
+									{rows.map((source) => (
+										<SourceRow key={source.id} source={source} />
+									))}
+								</TableBody>
 							);
 						})}
-					</TableBody>
 				</Table>
 			</Card>
 		</div>

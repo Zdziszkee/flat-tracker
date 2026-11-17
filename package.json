@@ -68,7 +68,8 @@
     "backfill:egib-buildings-parcel": "tsx scripts/backfill-egib-buildings-parcel.ts",
     "audit:rcn": "tsx scripts/rcn-audit.ts",
     "drain:airbnb": "tsx scripts/drain-airbnb.ts",
-    "enrich:airbnb": "tsx scripts/enrich-airbnb.ts"
+    "enrich:airbnb": "tsx scripts/enrich-airbnb.ts",
+    "validate:sources": "tsx scripts/validate-source-status.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",

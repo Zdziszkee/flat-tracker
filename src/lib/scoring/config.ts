@@ -7,7 +7,7 @@
 
 import { clamp } from "#/lib/stats";
 
-export const SCORE_VERSION = "2027.8";
+export const SCORE_VERSION = "2027.9";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -16,6 +16,65 @@ export const ALERT_GATES = {
 	/** Asking price must be at least this far below the local comparable median. */
 	minDiscountPct: 10,
 } as const;
+
+/**
+ * Fresh-arrival alerts. A newly saved offer is scored immediately and
+ * appended to today's list when its total score sits inside the top
+ * `topPercent` of the offers first seen in the last `windowHours`, in the
+ * same region and segment. This is an additional rule, not a replacement:
+ * the market-wide top-5% cut still runs after every refresh, so a fresh
+ * offer that misses its 24-hour cohort can still enter through the full
+ * pool. The window is measured on `coalesce(firstSeenAt, listedAt,
+ * scrapedAt)`, so a portal posting date never drags an old offer into a
+ * cohort. A cut always keeps at least one position: a lone arrival is its
+ * own cohort leader.
+ */
+export const ALERT_FRESHNESS = {
+	windowHours: 24,
+	topPercent: 5,
+} as const;
+
+/**
+ * Position of `score` in a cohort, 1 = best. Ties do not count as beaten:
+ * an offer shares the rank of every equal score, which keeps the rule
+ * conservative (a tie at the cut does not displace the incumbents).
+ */
+export function freshArrivalRank(
+	score: number,
+	cohortScores: readonly number[],
+): number {
+	let rank = 1;
+	for (const other of cohortScores) {
+		if (other > score) rank++;
+	}
+	return rank;
+}
+
+/** How many cohort positions the top `topPercent` cut keeps (at least one). */
+export function freshArrivalTopN(
+	cohortSize: number,
+	topPercent: number = ALERT_FRESHNESS.topPercent,
+): number {
+	if (cohortSize <= 0 || topPercent <= 0) return 0;
+	return Math.max(1, Math.ceil((cohortSize * topPercent) / 100));
+}
+
+/**
+ * Whether a fresh arrival belongs in today's alerts: inside the top
+ * `topPercent` of its cohort. An empty cohort alerts nothing (there is no
+ * field to beat); a single-offer cohort is its own leader.
+ */
+export function shouldAlertFreshArrival(
+	score: number,
+	cohortScores: readonly number[],
+	topPercent: number = ALERT_FRESHNESS.topPercent,
+): boolean {
+	if (cohortScores.length === 0) return false;
+	return (
+		freshArrivalRank(score, cohortScores) <=
+		freshArrivalTopN(cohortScores.length, topPercent)
+	);
+}
 
 export type AlertSegment = "flat" | "house" | "plot";
 

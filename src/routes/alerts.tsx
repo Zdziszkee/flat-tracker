@@ -71,6 +71,16 @@ function offerCount(count: number): string {
 	return `${count} ${noun}`;
 }
 
+/**
+ * Fresh arrivals lead their region group; rank order decides inside each
+ * part, so the standing top-5% list keeps its original ordering.
+ */
+function sortFreshFirst(alerts: AlertDto[]): AlertDto[] {
+	return [...alerts].sort(
+		(a, b) => Number(b.isFresh) - Number(a.isFresh) || a.rank - b.rank,
+	);
+}
+
 function AlertsPage() {
 	const [region, setRegion] = useState("all");
 	const { data, isLoading } = useAlerts({
@@ -93,7 +103,17 @@ function AlertsPage() {
 						Top 5% ofert na sprzedaż w trzech segmentach: mieszkania, działki i
 						domy. Co najmniej 10% taniej od mediany podobnych z okolicy, osobno
 						dla regionu i segmentu. Nowe oferty są oceniane po każdym
-						odświeżeniu danych. Data: {data?.date ?? "…"}
+						odświeżeniu danych.
+					</p>
+					<p className="mt-1 text-sm text-muted-foreground">
+						Data alertów:{" "}
+						<span className="font-medium text-foreground tabular-nums">
+							{data?.date ?? "…"}
+						</span>{" "}
+						· nowe w ostatnich 24 h:{" "}
+						<span className="font-medium text-foreground tabular-nums">
+							{data?.freshCount ?? 0}
+						</span>
 					</p>
 				</div>
 				<div className="flex flex-wrap items-end gap-3">
@@ -123,7 +143,7 @@ function AlertsPage() {
 
 			<div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 xl:grid-cols-3">
 				{SECTIONS.map(({ segment, label, mapKind }) => {
-					const alerts = bySegment.get(segment) ?? [];
+					const alerts = sortFreshFirst(bySegment.get(segment) ?? []);
 					return (
 						<section
 							key={segment}
@@ -194,7 +214,7 @@ function RegionGroups({
 	return (
 		<div className="flex flex-col gap-4">
 			{regions.map((region) => {
-				const regionAlerts = byRegion.get(region) ?? [];
+				const regionAlerts = sortFreshFirst(byRegion.get(region) ?? []);
 				const label = REGION_LABELS[region] ?? region;
 				return (
 					<div key={region}>
@@ -252,8 +272,15 @@ function AlertCard({
 	return (
 		<Card className="gap-4 py-4">
 			<CardHeader className="px-4">
-				<CardDescription className="text-xs">
-					#{alert.rank} · {REGION_LABELS[alert.region] ?? alert.region}
+				<CardDescription className="flex flex-wrap items-center gap-2 text-xs">
+					<span>
+						#{alert.rank} · {REGION_LABELS[alert.region] ?? alert.region}
+					</span>
+					{alert.isFresh && (
+						<Badge className="px-1.5 py-0 text-[10px] uppercase tracking-wide">
+							Nowa (24h)
+						</Badge>
+					)}
 				</CardDescription>
 				<CardTitle className="leading-snug">
 					<a
