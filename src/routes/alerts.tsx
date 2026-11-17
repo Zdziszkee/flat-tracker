@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { useAlerts } from "#/hooks/use-alerts";
 import { formatNumber } from "#/lib/format";
+import type { ListingSearch } from "#/lib/listing-features";
 import type { AlertSegment } from "#/lib/scoring/config";
 import type { AlertDto } from "#/types/alerts";
 
@@ -15,12 +16,31 @@ const REGION_LABELS: Record<string, string> = {
 	slaskie: "Śląsk",
 };
 
+/** Display order for the per-region groups inside a section. */
+const REGION_ORDER = ["malopolskie", "slaskie"];
+
 /** The three sections are always rendered, in this order, even when empty. */
-const SECTIONS: ReadonlyArray<{ segment: AlertSegment; label: string }> = [
-	{ segment: "flat", label: "Mieszkania" },
-	{ segment: "house", label: "Domy z działką" },
-	{ segment: "plot", label: "Działki" },
+const SECTIONS: ReadonlyArray<{
+	segment: AlertSegment;
+	label: string;
+	mapKind: NonNullable<ListingSearch["kind"]>;
+}> = [
+	{ segment: "flat", label: "Mieszkania", mapKind: "apartment" },
+	{ segment: "house", label: "Domy z działką", mapKind: "house" },
+	{ segment: "plot", label: "Działki", mapKind: "plot" },
 ];
+
+function offerCount(count: number): string {
+	const mod10 = count % 10;
+	const mod100 = count % 100;
+	const noun =
+		count === 1
+			? "oferta"
+			: mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
+				? "oferty"
+				: "ofert";
+	return `${count} ${noun}`;
+}
 
 function AlertsPage() {
 	const [region, setRegion] = useState("all");
@@ -39,19 +59,20 @@ function AlertsPage() {
 		<div className="p-6">
 			<div className="mb-4 flex flex-wrap items-end justify-between gap-3">
 				<div>
-					<h1 className="text-xl font-semibold">Alerty dnia</h1>
+					<h1 className="text-balance text-xl font-semibold">Alerty dnia</h1>
 					<p className="text-sm text-gray-600">
 						Top 5% ofert na sprzedaż w trzech segmentach: mieszkania, domy i
 						działki. Co najmniej 10% taniej od mediany podobnych z okolicy,
 						osobno dla regionu i segmentu. Nowe oferty są oceniane po każdym
-						odświeżeniu danych. Data: {data?.date ?? "..."}
+						odświeżeniu danych. Data: {data?.date ?? "…"}
 					</p>
 				</div>
 				<div className="flex flex-wrap items-end gap-3">
 					<label className="text-sm">
 						<span className="mb-1 block text-gray-600">Region</span>
 						<select
-							className="rounded border px-2 py-1"
+							name="region"
+							className="rounded border bg-white px-2 py-1 text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
 							value={region}
 							onChange={(event) => setRegion(event.target.value)}
 						>
@@ -60,41 +81,47 @@ function AlertsPage() {
 							<option value="slaskie">Śląsk</option>
 						</select>
 					</label>
-					<Link to="/" className="text-blue-600 underline">
+					<Link
+						to="/"
+						className="rounded text-blue-600 underline hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+					>
 						Start
 					</Link>
-					<Link to="/listings" className="text-blue-600 underline">
+					<Link
+						to="/listings"
+						className="rounded text-blue-600 underline hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+					>
 						Ogłoszenia
 					</Link>
 				</div>
 			</div>
 
-			{isLoading && <p className="text-gray-500">Ładowanie alertów...</p>}
+			{isLoading && (
+				<output className="block text-gray-500">Ładowanie alertów…</output>
+			)}
 
 			<div className="space-y-8">
-				{SECTIONS.map(({ segment, label }) => {
+				{SECTIONS.map(({ segment, label, mapKind }) => {
 					const alerts = bySegment.get(segment) ?? [];
 					return (
-						<section key={segment}>
-							<h2 className="mb-2 text-lg font-semibold">
+						<section key={segment} aria-labelledby={`section-${segment}`}>
+							<h2
+								id={`section-${segment}`}
+								className="mb-2 text-lg font-semibold"
+							>
 								{label}{" "}
-								<span className="text-sm font-normal text-gray-500">
-									· top 5% · {alerts.length}{" "}
-									{alerts.length === 1 ? "oferta" : "ofert"}
+								<span className="text-sm font-normal text-gray-500 tabular-nums">
+									· top 5% · {offerCount(alerts.length)}
 								</span>
 							</h2>
 							{alerts.length === 0 ? (
 								<p className="rounded border border-dashed p-6 text-sm text-gray-500">
 									{isLoading
-										? "Ładowanie..."
+										? "Ładowanie…"
 										: "Brak ofert spełniających progi w tym segmencie. Lista uzupełnia się automatycznie po każdym odświeżeniu danych."}
 								</p>
 							) : (
-								<div className="grid gap-3 xl:grid-cols-2">
-									{alerts.map((alert) => (
-										<AlertCard key={alert.id} alert={alert} />
-									))}
-								</div>
+								<RegionGroups alerts={alerts} mapKind={mapKind} />
 							)}
 						</section>
 					);
@@ -104,12 +131,92 @@ function AlertsPage() {
 	);
 }
 
-function AlertCard({ alert }: { alert: AlertDto }) {
+/**
+ * Cards grouped by region. A small subheading appears only when both regions
+ * are present (a single-region view needs no extra hierarchy).
+ */
+function RegionGroups({
+	alerts,
+	mapKind,
+}: {
+	alerts: AlertDto[];
+	mapKind: NonNullable<ListingSearch["kind"]>;
+}) {
+	const byRegion = new Map<string, AlertDto[]>();
+	for (const alert of alerts) {
+		const group = byRegion.get(alert.region) ?? [];
+		group.push(alert);
+		byRegion.set(alert.region, group);
+	}
+	const orderOf = (region: string) => {
+		const index = REGION_ORDER.indexOf(region);
+		return index === -1 ? REGION_ORDER.length : index;
+	};
+	const regions = [...byRegion.keys()].sort((a, b) => orderOf(a) - orderOf(b));
+	const grouped = regions.length > 1;
+
+	return (
+		<div className="space-y-4">
+			{regions.map((region) => {
+				const regionAlerts = byRegion.get(region) ?? [];
+				const label = REGION_LABELS[region] ?? region;
+				return (
+					<div key={region}>
+						{grouped && (
+							<h3 className="mb-2 text-sm font-semibold text-gray-700">
+								{label}{" "}
+								<span className="font-normal text-gray-500 tabular-nums">
+									· {offerCount(regionAlerts.length)}
+								</span>
+							</h3>
+						)}
+						<div className="grid gap-3 xl:grid-cols-2">
+							{regionAlerts.map((alert) => (
+								<AlertCard key={alert.id} alert={alert} mapKind={mapKind} />
+							))}
+						</div>
+					</div>
+				);
+			})}
+		</div>
+	);
+}
+
+/**
+ * Deep link to the offer on the map, pre-filtered to its source and kind.
+ * The map schema has no per-listing focus param, so this narrows the feed to
+ * the same segment and portal rather than pretending to center the pin.
+ */
+function mapSearchFor(
+	alert: AlertDto,
+	mapKind: NonNullable<ListingSearch["kind"]>,
+): ListingSearch {
+	return {
+		source: alert.listing.source,
+		kind: mapKind,
+		offerType: "sale",
+	};
+}
+
+function AlertCard({
+	alert,
+	mapKind,
+}: {
+	alert: AlertDto;
+	mapKind: NonNullable<ListingSearch["kind"]>;
+}) {
 	const discount = alert.discountPct;
+	const askingM2 =
+		alert.listing.pricePerM2 ??
+		(alert.listing.price != null &&
+		alert.listing.areaM2 != null &&
+		alert.listing.areaM2 > 0
+			? alert.listing.price / alert.listing.areaM2
+			: null);
 	return (
 		<article className="rounded border bg-white p-4 shadow-sm">
 			<div className="flex items-start justify-between gap-3">
-				<div>
+				<div className="min-w-0">
 					<div className="text-xs text-gray-500">
 						#{alert.rank} · {REGION_LABELS[alert.region] ?? alert.region}
 					</div>
@@ -117,11 +224,12 @@ function AlertCard({ alert }: { alert: AlertDto }) {
 						href={alert.listing.url}
 						target="_blank"
 						rel="noreferrer"
-						className="font-medium hover:text-blue-600 hover:underline"
+						aria-label={`Otwórz ofertę „${alert.listing.title}” w nowej karcie (${alert.listing.source})`}
+						className="block break-words font-medium hover:text-blue-600 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
 					>
 						{alert.listing.title}
 					</a>
-					<div className="mt-1 text-sm text-gray-600">
+					<div className="mt-1 break-words text-sm text-gray-600">
 						{alert.listing.district ?? alert.listing.city ?? "brak dzielnicy"} ·{" "}
 						{alert.listing.areaM2 != null
 							? `${formatNumber(Math.round(alert.listing.areaM2))} m²`
@@ -129,13 +237,15 @@ function AlertCard({ alert }: { alert: AlertDto }) {
 						· {alert.listing.rooms ?? "?"} pok.
 					</div>
 				</div>
-				<div className="text-right">
-					<div className="text-2xl font-semibold">{alert.score.toFixed(1)}</div>
+				<div className="shrink-0 text-right">
+					<div className="text-2xl font-semibold tabular-nums">
+						{alert.score.toFixed(1)}
+					</div>
 					<div className="text-xs text-gray-500">score</div>
 				</div>
 			</div>
 
-			<div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+			<div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
 				<Metric label="Cena" value={alert.listing.price} suffix=" zł" />
 				<Metric label="Wycena" value={alert.fairPrice} suffix=" zł" />
 				<Metric
@@ -144,6 +254,8 @@ function AlertCard({ alert }: { alert: AlertDto }) {
 					suffix="%"
 					emphasis={(discount ?? 0) >= 10}
 				/>
+				<Metric label="Cena za m²" value={askingM2} suffix=" zł/m²" />
+				<Metric label="Wycena za m²" value={alert.fairM2} suffix=" zł/m²" />
 				<Metric
 					label="Pewność"
 					value={(alert.confidence ?? 0) * 100}
@@ -169,8 +281,11 @@ function AlertCard({ alert }: { alert: AlertDto }) {
 								: "text-red-700"
 						}
 					>
-						{reason.direction === "positive" ? "+" : ""}
-						{reason.impact.toFixed(1)} · {reason.label}
+						<span className="tabular-nums">
+							{reason.direction === "positive" ? "+" : ""}
+							{reason.impact.toFixed(1)}
+						</span>{" "}
+						· {reason.label}
 					</li>
 				))}
 			</ul>
@@ -187,6 +302,26 @@ function AlertCard({ alert }: { alert: AlertDto }) {
 					))}
 				</div>
 			)}
+
+			<div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+				<Link
+					to="/map"
+					search={mapSearchFor(alert, mapKind)}
+					className="rounded text-blue-600 underline hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+					aria-label={`Pokaż ofertę „${alert.listing.title}” na mapie`}
+				>
+					Pokaż na mapie
+				</Link>
+				<a
+					href={alert.listing.url}
+					target="_blank"
+					rel="noreferrer"
+					aria-label={`Otwórz ogłoszenie „${alert.listing.title}” w portalu ${alert.listing.source} (nowa karta)`}
+					className="rounded text-blue-600 underline hover:text-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+				>
+					Ogłoszenie w portalu <span aria-hidden="true">↗</span>
+				</a>
+			</div>
 		</article>
 	);
 }
@@ -205,7 +340,7 @@ function Metric({
 	return (
 		<div className={emphasis ? "text-emerald-700" : ""}>
 			<div className="text-xs text-gray-500">{label}</div>
-			<div className="font-medium">
+			<div className="font-medium tabular-nums">
 				{value == null
 					? "—"
 					: `${suffix === "%" ? formatDecimal(value) : formatNumber(Math.round(value))}${suffix}`}
@@ -224,7 +359,7 @@ function ScorePill({ label, value }: { label: string; value: number }) {
 	return (
 		<div className={`rounded px-1 py-1 ${tone}`}>
 			<div className="text-[10px] uppercase tracking-wide">{label}</div>
-			<div className="font-semibold">{value}</div>
+			<div className="font-semibold tabular-nums">{value}</div>
 		</div>
 	);
 }
