@@ -5,7 +5,7 @@
  * value requires a new `SCORE_VERSION` so stored scores stay auditable.
  */
 
-export const SCORE_VERSION = "2027.5";
+export const SCORE_VERSION = "2027.6";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -135,6 +135,42 @@ export const ESTIMATE_CONFIDENCE = {
 	medium: 0.75,
 	low: 0.45,
 } as const;
+
+/**
+ * Plot value confidence for a listing-only comparable set, used INSTEAD of
+ * `ESTIMATE_CONFIDENCE[level]` when fewer than three RCN comps survive.
+ *
+ * Why plots need their own base: the offer-model confidence level is built
+ * for RCN-backed unit comparables (rcnCount, same-building matches, recent
+ * transactions, time adjustment). With no RCN comps at all the level is
+ * capped at "low" (0.45) for EVERY segment, but for flats and houses that
+ * is a temporary data gap, while for plots it is close to the structural
+ * norm: RCN publishes very few pure land transactions, and plot asking
+ * prices within a small radius are homogeneous land asking prices with no
+ * building attributes left to mismatch. The flat/house treatment (0.45
+ * base) combined with the plot segment weights (value 0.40, property
+ * 0.35 at 0.55 confidence) made the 0.5 gate mathematically unreachable
+ * at realistic comp spreads. 0.65 says a listing-only land comp set is
+ * worth more than a listing-only unit comp set, not that it is RCN-grade.
+ */
+export const PLOT_LISTING_BASE_CONFIDENCE = 0.65;
+
+/**
+ * Listing-only comparable discount for plots. Other segments use 0.85;
+ * land asks are less negotiable and more homogeneous, so the asking-vs-
+ * asking comparison loses less trust than a unit comparison does.
+ */
+export const PLOT_LISTING_RCN_FACTOR = 0.9;
+
+/**
+ * Plot comp-spread floor. Plot comps mix building, agricultural and
+ * recreational land, so the interquartile spread is structurally wider
+ * than a flat comp set without meaning the median is wrong. The generic
+ * spread factor decays to 0.45 at 40%+; for plots it never drops below
+ * this floor. A wide spread still lowers the confidence and keeps the
+ * `wide_comp_spread` risk flag.
+ */
+export const PLOT_SPREAD_FACTOR_FLOOR = 0.7;
 
 export function clamp(value: number, min = 0, max = 100): number {
 	return Math.min(max, Math.max(min, value));

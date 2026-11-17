@@ -1,4 +1,4 @@
-# Alert scoring 2027.5
+# Alert scoring 2027.6
 
 Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
 model participates in the score. The job stores every component, reason
@@ -49,6 +49,24 @@ carry the asking-vs-transaction wedge.
 Listing-only comparable sets are trusted at a 0.85 value-confidence factor
 (RCN-backed sets use 1.0), so a fresh database without the RCN import can
 still produce alerts, at visibly lower confidence.
+
+**Plot-specific listing-only policy (2027.6).** RCN publishes very few pure
+land transactions, so a listing-only comp set is the structural norm for
+plots, not a temporary data gap. The offer-model confidence level is built
+for RCN-backed unit comps and caps every RCN-less set at "low" (0.45),
+which combined with the plot weights made the 0.5 confidence gate
+mathematically unreachable. For plots with fewer than three RCN comps:
+
+- base confidence 0.65 (`PLOT_LISTING_BASE_CONFIDENCE`) replaces the
+  RCN-oriented level; RCN-backed plot sets keep the reported level,
+- listing-only factor 0.9 (`PLOT_LISTING_RCN_FACTOR`): land asks are more
+  homogeneous and less negotiable than unit asks,
+- comp-spread decay floored at 0.7 (`PLOT_SPREAD_FACTOR_FLOOR`): land comp
+  sets mix building, agricultural and recreational plots, so a wide spread
+  does not mean the median is wrong. The `wide_comp_spread` risk flag stays.
+
+Flats and houses keep the generic treatment (0.45 base, 0.85 factor, no
+spread floor). The constants live in `config.ts` with the full rationale.
 
 ### Transit
 

@@ -17,6 +17,9 @@ import {
 	DISTANCE_BANDS,
 	distanceScore,
 	ESTIMATE_CONFIDENCE,
+	PLOT_LISTING_BASE_CONFIDENCE,
+	PLOT_LISTING_RCN_FACTOR,
+	PLOT_SPREAD_FACTOR_FLOOR,
 	SCORE_VERSION,
 	SEGMENT_WEIGHTS,
 	valueCurveScore,
@@ -153,18 +156,34 @@ function valueComponent(
 		});
 	}
 	const level = estimate?.confidence.level ?? "low";
-	const baseConfidence = ESTIMATE_CONFIDENCE[level] ?? 0.45;
+	const isPlot = input.segment === "plot";
+	const listingOnly = rcnCount < 3;
+	// Plots get a listing-only base instead of the RCN-oriented level: the
+	// offer-model level caps every RCN-less set at "low" (0.45), which with
+	// the plot segment weights made the 0.5 confidence gate unreachable
+	// even for a dense, tight local land comp set. See config.ts for the
+	// policy rationale; RCN-backed plot sets keep the reported level.
+	const baseConfidence =
+		isPlot && listingOnly
+			? PLOT_LISTING_BASE_CONFIDENCE
+			: (ESTIMATE_CONFIDENCE[level] ?? 0.45);
 	const count = estimate?.confidence.totalCount ?? 0;
 	const countFactor = clamp((count - 2) / 18, 0.2, 1);
 	const spread = estimate?.confidence.spreadPct ?? 100;
-	const spreadFactor =
+	const rawSpreadFactor =
 		spread <= 10 ? 1 : spread >= 40 ? 0.45 : 1 - (spread - 10) / 60;
+	// Land comp sets mix building/agricultural/recreational plots, so their
+	// spread is structurally wider without the median being less usable;
+	// floor the decay for plots (the wide_comp_spread risk flag stays).
+	const spreadFactor = isPlot
+		? Math.max(rawSpreadFactor, PLOT_SPREAD_FACTOR_FLOOR)
+		: rawSpreadFactor;
 	// Listing-only comparables are asking prices like the offer itself, so
 	// they support the discount comparison at reduced trust. The old 0.55
 	// factor capped the value confidence at 0.45 * 0.55 < 0.25, which made
 	// the 0.5 alert gate unreachable for every offer before the RCN import
 	// lands (fresh clone, new region).
-	const rcnFactor = rcnCount >= 3 ? 1 : 0.85;
+	const rcnFactor = listingOnly ? (isPlot ? PLOT_LISTING_RCN_FACTOR : 0.85) : 1;
 	const confidence = clamp(
 		baseConfidence * countFactor * spreadFactor * rcnFactor,
 		0.05,
