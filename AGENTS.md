@@ -99,6 +99,7 @@ bun run build:powiats     # regenerate src/data/region-powiats.ts (Overpass)
 bun run validate:powiats  # dataset sanity: counts, city centres, overlaps
 bun run validate:finwire  # finwire page parsing + chain-index math
 bun run validate:upside   # forward-looking upside/risk math
+bun run validate:scoring  # alert-score rules, gates and stored-alert invariants
 bun run build:forecasts   # refresh data/forecasts/models.json (price/rent/STR paths + calibrated bands)
 bun run validate:forecast # deterministic forecast, conformal calibration and IRR math
 bun run validate:tailwind-scan # Tailwind scanner stays out of src/data (timeout-guarded)
@@ -273,8 +274,10 @@ region-wide GUGiK per-powiat GeoPackages — małopolska scope by default
 `RCN_GUGIK_SCOPE=poland` to make the server refresh cover the whole country
 instead. When either import inserts new rows, building assignment
 (`assign-buildings`) re-runs automatically so new price history shows up
-colored on the map. The run ends with the `listing-derived` phase, which
-recomputes `is_visible`/`property_kind`/map anchors for the map and table.
+colored on the map. The run's final passes are the `listing-derived`
+phase, which recomputes `is_visible`/`property_kind`/map anchors for the
+map and table, and the `scoring` phase, which scores new offers and
+appends today's top-5% alerts (see "Alert scoring" below).
 Portal failures are isolated per site (one blocked portal does not abort
 the rest of the run). The task and plugin are registered explicitly in
 `vite.config.ts` (no Nitro directory scanning — TanStack Start owns
@@ -295,6 +298,47 @@ can never shrink the catalogue. Kraków (1261) is skipped in both scopes:
 under `1261-G/...` ids would double-count Kraków in the building price
 history. Rows outside the tracked regions keep their registry coordinates
 but stay unbound — the `osm_buildings` index covers małopolskie + śląskie.
+
+### Alert scoring
+
+Every refresh ends with a `scoring` phase (`src/crawler/refresh.ts`) that
+runs `runAlertScoring({ incremental: true })` in the refresh child process,
+never in the HTTP server: every active sale offer without a current-version
+score is scored exactly once, then the new top-5% per region + segment is
+appended to today's `listing_alerts`. The phase shows on /sources
+(descriptor id `scoring` in `src/crawler/source-status.ts`) and is recorded
+in `crawl_runs` (alerts as new, scored offers as updated); scoring failures
+are isolated and never abort the refresh. The engine is deterministic
+rules over the valuation comps, no ML model; `docs/alert-scoring.md` has
+the component breakdown and rationale.
+
+- **The top-5% cut is over the full eligible pool**, not the day's
+  arrivals: every run ranks all scored, active offers that pass the gates,
+  per region and segment, and appends only offers newly inside the cut.
+  Already-alerted listings are skipped after the cut, not before (skipping
+  first would append another 5% of the remainder on every run), so each
+  listing is alerted at most once and re-runs are idempotent: the unique
+  `(listing, alert_date, channel)` index rejects duplicates.
+- **/alerts always renders three fixed sections**, even when empty:
+  Mieszkania, Domy z działką and Działki, fed by `/api/alerts` (latest
+  alert date by default, optional `region`/`segment`/`date` filters).
+- **Policy constants are versioned** (`src/lib/scoring/config.ts`):
+  weights, curves, distance bands and gates sit behind `SCORE_VERSION`,
+  and any change to a policy value requires a `SCORE_VERSION` bump so
+  stored scores stay auditable (`listing_scores` keeps one row per listing
+  per version). Incremental runs then re-score the pool under the new
+  version.
+- **Daily re-score at 06:30**: the `score-listings` Nitro task (cron
+  `30 6 * * *`, wired in `vite.config.ts` like `refresh`) re-scores recent
+  offers on top of the incremental pass. It spawns `server/score-child.ts`
+  through `src/lib/scoring/process.ts`, single-flighted by a pid lock in
+  `data/scoring/score.lock` (a stale lock from a crashed run is replaced);
+  without the TS runner it falls back to an in-process run. Manual
+  backfill: `POST /_nitro/tasks/score-listings` with a JSON payload like
+  `{"all": true, "limit": 500, "dryRun": true}`.
+
+`bun run validate:scoring` pins score monotonicity, the gates and the
+stored-score/alert invariants.
 
 ### Transaction scope: the tracked regions, explicitly
 
@@ -662,6 +706,10 @@ before the columns existed.
 called by the map only above zoom 15.2 for the current viewport. The
 request is rejected without a bbox; `?all=1` is the explicit ~38 MB dump
 and must not be used by a page.
+
+The `/alerts` page reads a separate feed: `/api/alerts` serves the latest
+alert date from `listing_alerts` joined with scores and listings, with
+optional `region`/`segment`/`date` filters (see "Alert scoring").
 
 ### Adding a new site (e.g. Facebook Marketplace, Morizon)
 
