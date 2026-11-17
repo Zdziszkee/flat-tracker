@@ -8,10 +8,6 @@ Before editing files for a substantial task:
 - Use the loaded `SKILL.md` guidance while making the change.
 - Monorepos: when working across packages, run the skill check from the workspace root and prefer the local skill for the package being changed.
 - Multiple matches: prefer the most specific local skill for the package or concern you are changing; load additional skills only when the task spans multiple packages or concerns.
-
-skills:
-  - task: "Building chat, tool calling, adapters, streaming or other AI features with TanStack AI"
-    load: "node_modules/@tanstack/ai/skills/ai-core/SKILL.md"
 <!-- intent-skills:end -->
 
 # Flat Tracker — Agent & Contributor Guide
@@ -939,7 +935,9 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
 - DB access goes through `#/db/index` only. It migrates on import, so a new
   script never needs a manual `db:migrate`; don't open `better-sqlite3`
   directly (except throwaway tools in `scripts/`).
-- `scripts/` holds throwaway utilities (db-state, overpass-test).
+- `scripts/` holds the importers, generators and `validate:*` regression
+  checks, each wired as a `bun run <name>` package script; one-off probes
+  belong there only while they are in use.
 - Schema gaps that are known and intentional: `todos` is an unused template
   table (no code reads it), and nothing ever sets `listings.is_active = 0`
   (the sink always writes 1) — "active" means "still in the DB", removal

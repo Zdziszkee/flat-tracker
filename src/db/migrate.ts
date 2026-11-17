@@ -17,7 +17,7 @@ import * as schema from "./schema.ts";
  */
 
 /** Migration folder: repo-relative first (dev), module-relative as fallback. */
-export function resolveMigrationsFolder(): string | null {
+function resolveMigrationsFolder(): string | null {
 	const candidates = [
 		resolve(process.cwd(), "drizzle"),
 		fileURLToPath(new URL("../../drizzle", import.meta.url)),

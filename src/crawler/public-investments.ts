@@ -70,7 +70,7 @@ function textOf(raw: string | null): string | null {
 }
 
 /** One KML document's point placemarks (the city maps are point-only). */
-export function parseKml(kml: string): KmlPlace[] {
+function parseKml(kml: string): KmlPlace[] {
 	const places: KmlPlace[] = [];
 	for (const match of kml.matchAll(
 		/<Placemark\b[^>]*>([\s\S]*?)<\/Placemark>/giu,
@@ -95,7 +95,7 @@ export function parseKml(kml: string): KmlPlace[] {
 }
 
 /** Explicit delivery-year phrase first; otherwise a plausible 1990-2035 year. */
-export function investmentYear(description: string | null): number | null {
+function investmentYear(description: string | null): number | null {
 	if (!description) return null;
 	const explicit = description.match(
 		/(?:planowany termin oddania do u[żz]ytkowania|rok oddania|oddano do u[żz]ytkowania|realizacja)[^0-9]{0,50}((?:19|20)\d{2})/iu,

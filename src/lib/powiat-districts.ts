@@ -31,7 +31,7 @@
  * "wodzisaw"): every district string containing ł missed its alias, and the
  * "Małopolskie" guard never matched the name it was written for.
  */
-export function normDistrict(s: string): string {
+function normDistrict(s: string): string {
 	return s
 		.toLowerCase()
 		.normalize("NFD")
@@ -44,7 +44,7 @@ export function normDistrict(s: string): string {
  * District strings that do not normalize onto a powiat name in the dataset.
  * Keys are `normDistrict` output, values are exact powiat names.
  */
-export const DISTRICT_ALIASES: Record<string, string> = {
+const DISTRICT_ALIASES: Record<string, string> = {
 	// małopolskie city powiaty: the dataset entry is the bare city name.
 	krakow: "Kraków",
 	tarnow: "Tarnów",
@@ -86,7 +86,7 @@ export const DISTRICT_ALIASES: Record<string, string> = {
  * is not a powiat, and a bare region name ("Zagłębie") carries no district
  * information.
  */
-export const NOT_A_POWIAT = new Set([
+const NOT_A_POWIAT = new Set([
 	"malopolskie",
 	"malopolska",
 	"slaskie",

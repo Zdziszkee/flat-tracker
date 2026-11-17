@@ -19,7 +19,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-export const RCN_GPKG_BASE_URL =
+const RCN_GPKG_BASE_URL =
 	"https://opendata.geoportal.gov.pl/InneDane/latest_exports/rcn_transakcje_ceny/GPKG";
 
 export const TERYT_INDEX_PATH = "data/rcn/gugik/teryt-index.json";
@@ -61,13 +61,13 @@ export interface PowiatPackage {
 	bytes: number;
 }
 
-export type PowiatIndex = Record<string, { bytes: number }>;
+type PowiatIndex = Record<string, { bytes: number }>;
 
 export function powiatZipUrl(teryt: string): string {
 	return `${RCN_GPKG_BASE_URL}/${teryt}_transakcje_ceny.gpkg.zip`;
 }
 
-export function readPowiatIndex(): PowiatIndex | null {
+function readPowiatIndex(): PowiatIndex | null {
 	try {
 		const raw = JSON.parse(
 			readFileSync(TERYT_INDEX_PATH, "utf8"),
