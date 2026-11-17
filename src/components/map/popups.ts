@@ -15,7 +15,9 @@ import type {
 	MapListingDto,
 	OfferValuation,
 } from "#/types/listing";
-import type { ApiListing, BuildingLookup } from "./types";
+import type { OccupancyCell } from "#/types/occupancy";
+import type { BuildingLookup, ParcelLookup } from "#/types/transactions";
+import type { ApiListing } from "./types";
 
 const BUILDING_TYPE_LABELS: Record<string, string> = {
 	block: "blok",
@@ -963,4 +965,104 @@ export function renderValuationHtml(valuation: OfferValuation): string {
 		${valuation.str ? roi("Najem krótkoterminowy (szac.)", valuation.str, "text-rose-700") : ""}
 		${forecastBlock}
 	</div>`;
+}
+
+/** Occupancy cell popup for the STR heatmap layer. */
+export function occupancyPopupHtml(
+	props: OccupancyCell & { occupancyRate: number },
+): string {
+	return `<div class="flex min-w-48 flex-col gap-1 text-sm">
+			<div class="font-semibold">Obłożenie STR</div>
+			<div class="text-muted-foreground">${props.lat.toFixed(3)}, ${props.lng.toFixed(3)}</div>
+			<div class="flex justify-between gap-3 pt-1">
+				<span>Obłożenie</span>
+				<span class="font-medium">${props.occupancyRate.toFixed(1)}%</span>
+			</div>
+			<div class="flex justify-between gap-3">
+				<span>Ofert w komórce</span>
+				<span class="font-medium">${props.listings}</span>
+			</div>
+			<div class="flex justify-between gap-3">
+				<span>Zarezerwowane noce</span>
+				<span class="font-medium">${props.bookedNights}</span>
+			</div>
+			${props.avgPrice != null ? `<div class="flex justify-between gap-3"><span>Śr. cena/noc</span><span class="font-medium">${Math.round(props.avgPrice).toLocaleString("pl-PL")} zł</span></div>` : ""}
+		</div>`;
+}
+
+/**
+ * Cadastral-parcel popup: the parcel's own RCN history plus the 1 km / 5 year
+ * land-price comparison (a distinct per-ar unit outside Kraków).
+ */
+export function parcelPopupHtml(
+	data: ParcelLookup,
+	where: string | null,
+): string {
+	const pid = data.parcel?.id ?? "";
+	const s = data.parcel?.stats;
+	const area = data.parcel?.area;
+	const meta = data.parcel?.meta;
+	const LAND_LABELS: Record<string, string> = {
+		gruntyRolne: "rolna",
+		gruntyZabudowaneIZurbanizowane: "budowlana/zurbanizowana",
+		gruntyLesne: "leśna",
+		terenyKomunikacyjne: "komunikacyjna",
+		inne: "inna",
+	};
+	const landLabel =
+		meta?.landUse != null ? (LAND_LABELS[meta.landUse] ?? meta.landUse) : null;
+	const areaAr = meta?.areaHa != null ? meta.areaHa * 100 : null;
+	const unitLabel = area?.unit === "ar" ? "zł/ar" : "zł/m²";
+	const fmtU = (n: number | null | undefined) =>
+		n == null
+			? "—"
+			: `${Math.round(n * (area?.unit === "ar" ? 100 : 1)).toLocaleString("pl-PL")} ${unitLabel}`;
+	const rows = (s?.recent ?? [])
+		.map(
+			(r) =>
+				`<tr><td>${r.date}</td><td>${Math.round(r.price).toLocaleString(
+					"pl-PL",
+				)} zł</td><td>${fmtU(r.pricePerM2)}</td><td>${r.areaM2 ?? "?"} m²${
+					r.street ? ` · ${r.street} ${r.streetNumber ?? ""}` : ""
+				}</td></tr>`,
+		)
+		.join("");
+	const isAr = area?.unit === "ar";
+	const areaHtml = area?.medianM2
+		? `<div class="mt-1 border-t pt-1 text-xs">
+					<div class="text-muted-foreground">Otoczenie (1 km, 5 lat): mediana <b>${(area.unit === "ar" ? Math.round(area.medianM2) : Math.round(area.medianM2 * 10) / 10).toLocaleString("pl-PL")} ${area.unit === "ar" ? "zł/ar" : "zł/m²"}</b> · ${area.txCount} transakcji (${area.txCount24m} w 24 mies.)</div>
+					${area.lastVsMedianPct != null ? `<div class="${area.lastVsMedianPct <= -15 ? "text-emerald-400" : area.lastVsMedianPct >= 15 ? "text-red-400" : "text-muted-foreground"}">Ostatnia transakcja: <b>${area.lastVsMedianPct > 0 ? "+" : ""}${area.lastVsMedianPct}%</b> vs mediana okolicy</div>` : ""}
+				</div>`
+		: "";
+	return `<div class="flex min-w-56 flex-col gap-0.5 p-1 text-sm">
+			<div class="font-medium">Działka ${pid}</div>
+			${where ? `<div class="text-xs text-muted-foreground">${escapeHtml(where)}</div>` : ""}
+			${landLabel || areaAr != null ? `<div class="text-xs text-muted-foreground">${landLabel ? `działka ${landLabel}` : ""}${landLabel && areaAr != null ? " · " : ""}${areaAr != null ? `${areaAr.toLocaleString("pl-PL")} ar` : ""}</div>` : ""}
+			${
+				s && s.txCount > 0
+					? `<div class="mt-1">${s.txCount} transakcji RCN · średnio ${fmtU(
+							s.avgPricePerM2,
+						)}</div>
+					<div class="text-muted-foreground">zakres ${fmtU(
+						s.minPricePerM2,
+					)} – ${fmtU(s.maxPricePerM2)}</div>
+					${
+						rows
+							? `<table class="mt-2 w-full text-xs"><thead><tr class="text-left text-muted-foreground"><th>data</th><th>cena</th><th>${unitLabel}</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+							: ""
+					}`
+					: `<div class="mt-1 text-muted-foreground">Brak transakcji RCN na tej działce.</div>`
+			}
+			${areaHtml}
+			${
+				area && area.basedOn.length > 0
+					? `<div class="mt-1 text-xs text-muted-foreground">na podstawie ${area.basedOn.length} transakcji w okolicy:</div><table class="w-full text-xs"><tbody>${area.basedOn
+							.map(
+								(b) =>
+									`<tr><td>${b.date}</td><td class="text-right">${Math.round(b.price).toLocaleString("pl-PL")} zł</td><td class="text-right">${isAr ? `${Math.round(b.perUnit).toLocaleString("pl-PL")} zł/ar` : `${Math.round(b.perUnit)} zł/m²`}</td></tr>`,
+							)
+							.join("")}</tbody></table>`
+					: ""
+			}
+		</div>`;
 }

@@ -164,33 +164,20 @@ const mapColumns = {
 	constructionEndDate: listings.constructionEndDate,
 };
 
-type MapRow = {
-	id: number;
-	source: string;
-	externalId: string;
-	title: string;
-	url: string;
-	price: number | null;
-	pricePerM2: number | null;
-	areaM2: number | null;
-	rooms: number | null;
-	floor: string | null;
-	district: string | null;
-	city: string | null;
-	address: string | null;
-	lat: number | null;
-	lng: number | null;
+/**
+ * DB row feeding `toMapPoint`. Same fields as the wire DTO, before
+ * serialization: Drizzle returns `Date` for timestamps, and the derived
+ * columns can be null on a row that predates `rebuild-listing-derived`.
+ */
+type MapRow = Omit<
+	MapListingDto,
+	"mapLat" | "mapLng" | "listedAt" | "firstSeenAt" | "propertyKind"
+> & {
 	mapLat: number | null;
 	mapLng: number | null;
 	listedAt: Date | null;
 	firstSeenAt: Date | null;
-	offerType: string;
-	propertyType: string | null;
 	propertyKind: string | null;
-	buildingId: number | null;
-	buildingAddress: string | null;
-	constructionEndLabel: string | null;
-	constructionEndDate: string | null;
 };
 
 function toMapPoint(row: MapRow): MapListingDto & { kind: "listing" } {

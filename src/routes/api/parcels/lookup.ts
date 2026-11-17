@@ -4,6 +4,11 @@ import { eq, sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import { transactionHistoryByParcel } from "#/db/queries/transaction-history";
 import { parcelFeatures, parcels } from "#/db/schema";
+import type {
+	ParcelAreaStats,
+	ParcelMeta,
+	ParcelStats,
+} from "#/types/transactions";
 
 /**
  * Click-to-inspect for the cadastral-parcel layer: given a clicked point
@@ -11,34 +16,9 @@ import { parcelFeatures, parcels } from "#/db/schema";
  * history of everything bound to it (transactions.parcelId).
  */
 
-interface ParcelStats {
-	txCount: number;
-	avgPricePerM2: number | null;
-	minPricePerM2: number | null;
-	maxPricePerM2: number | null;
-	byYear: Array<{ year: string; count: number; avgPricePerM2: number | null }>;
-	recent: Array<{
-		date: string;
-		price: number;
-		pricePerM2: number | null;
-		areaM2: number | null;
-		rooms: number | null;
-		street: string | null;
-		streetNumber: string | null;
-		district: string | null;
-	}>;
-}
-
-async function parcelStats(parcelId: string): Promise<ParcelStats> {
-	const history = await transactionHistoryByParcel(parcelId);
-	return {
-		txCount: history.txCount,
-		avgPricePerM2: history.avgPricePerM2,
-		minPricePerM2: history.minPricePerM2,
-		maxPricePerM2: history.maxPricePerM2,
-		byYear: history.byYear,
-		recent: history.recent,
-	};
+/** Parcel stats are the shared transaction-history block, unchanged. */
+function parcelStats(parcelId: string): Promise<ParcelStats> {
+	return transactionHistoryByParcel(parcelId);
 }
 
 export const Route = createFileRoute("/api/parcels/lookup")({
@@ -103,11 +83,7 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 				const landUnit = parcelId.startsWith("1261") ? "m2" : "ar";
 				const unitMul = landUnit === "ar" ? 100 : 1;
 				// Parcel land metadata (type/size) from the GUGiK import.
-				const meta = await db.get<{
-					landUse: string | null;
-					zoning: string | null;
-					areaHa: number | null;
-				}>(sql`
+				const meta = await db.get<ParcelMeta>(sql`
 					SELECT land_use AS landUse, zoning, area_ha AS areaHa
 					FROM parcel_meta
 					WHERE parcel_id = ${parcelId}
@@ -130,20 +106,7 @@ export const Route = createFileRoute("/api/parcels/lookup")({
 					return lu;
 				};
 				const ownGroup = landGroup(ownMeta?.landUse ?? null);
-				let area: {
-					unit: string;
-					medianM2: number | null;
-					txCount: number;
-					txCount24m: number;
-					byYear: Array<{ year: string; medianM2: number; tx: number }>;
-					lastVsMedianPct: number | null;
-					basedOn: Array<{
-						date: string;
-						price: number;
-						perUnit: number;
-						parcelId: string;
-					}>;
-				} | null = null;
+				let area: ParcelAreaStats | null = null;
 				if (anchorLat != null && anchorLng != null) {
 					const dLat = 1000 / 111_320;
 					const dLng = 1000 / (111_320 * Math.cos((anchorLat * Math.PI) / 180));

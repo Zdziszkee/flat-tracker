@@ -3,37 +3,23 @@ import { and, desc, eq, inArray, isNotNull, type SQL, sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import { buildings, transactions } from "#/db/schema";
 import { dateExpr, yearExpr } from "#/db/sql";
+import type {
+	BuildingTransactionSummary,
+	TransactionHistory,
+} from "#/types/transactions";
+
+export type {
+	BuildingTransactionSummary,
+	TransactionHistory,
+	TransactionHistoryRow,
+	TransactionHistoryYear,
+} from "#/types/transactions";
 
 /**
  * The aggregate/byYear/recent block that the building and parcel lookups both
- * render. It was written three times; keep the query shape in one place so a
- * date-format or ordering change cannot make the two popups disagree.
+ * render. The shape lives in `src/types/transactions.ts` (shared with the
+ * client); only the query itself belongs here.
  */
-export interface TransactionHistory {
-	txCount: number;
-	avgPricePerM2: number | null;
-	minPricePerM2: number | null;
-	maxPricePerM2: number | null;
-	minPrice: number | null;
-	maxPrice: number | null;
-	minDate: string | null;
-	maxDate: string | null;
-	byYear: Array<{
-		year: string;
-		count: number;
-		avgPricePerM2: number | null;
-	}>;
-	recent: Array<{
-		date: string;
-		price: number;
-		pricePerM2: number | null;
-		areaM2: number | null;
-		rooms: number | null;
-		street: string | null;
-		streetNumber: string | null;
-		district: string | null;
-	}>;
-}
 
 export async function transactionHistory(
 	where: SQL,
@@ -114,15 +100,6 @@ export function transactionHistoryByParcel(
 	parcelId: string,
 ): Promise<TransactionHistory> {
 	return transactionHistory(eq(transactions.parcelId, parcelId));
-}
-
-export interface BuildingTransactionSummary {
-	buildingId: number | null;
-	address: string | null;
-	txCount: number;
-	txAvgPricePerM2: number | null;
-	txMinDate: string | null;
-	txMaxDate: string | null;
 }
 
 /**

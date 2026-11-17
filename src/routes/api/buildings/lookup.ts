@@ -209,43 +209,8 @@ function findBuildingAt(
 	return best;
 }
 
-interface BuildingStats {
-	txCount: number;
-	avgPricePerM2: number | null;
-	minPricePerM2: number | null;
-	maxPricePerM2: number | null;
-	minPrice: number | null;
-	maxPrice: number | null;
-	minDate: string | null;
-	maxDate: string | null;
-	byYear: Array<{ year: string; count: number; avgPricePerM2: number | null }>;
-	recent: Array<{
-		date: string;
-		price: number;
-		pricePerM2: number | null;
-		areaM2: number | null;
-		rooms: number | null;
-		street: string | null;
-		streetNumber: string | null;
-		district: string | null;
-	}>;
-}
-
-async function buildingStats(buildingId: number): Promise<BuildingStats> {
-	const history = await transactionHistoryByBuilding(buildingId);
-	return {
-		txCount: history.txCount,
-		avgPricePerM2: history.avgPricePerM2,
-		minPricePerM2: history.minPricePerM2,
-		maxPricePerM2: history.maxPricePerM2,
-		minPrice: history.minPrice,
-		maxPrice: history.maxPrice,
-		minDate: history.minDate,
-		maxDate: history.maxDate,
-		byYear: history.byYear,
-		recent: history.recent,
-	};
-}
+/** Price history for the clicked building is the shared RCN block. */
+const buildingStats = transactionHistoryByBuilding;
 
 export const Route = createFileRoute("/api/buildings/lookup")({
 	server: {
