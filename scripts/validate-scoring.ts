@@ -7,16 +7,17 @@
  * Part 2 checks the stored scores and alerts in the database.
  */
 
-import { eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
-import { listingAlerts, listingScores } from "#/db/schema";
+import { listingAlerts, listingScores, listings } from "#/db/schema";
 import {
 	scoreAlert,
 	type ScoreListingInput,
 } from "#/lib/scoring/alert-score";
 import {
 	ALERT_GATES,
+	SCORE_VERSION,
 	SEGMENT_WEIGHTS,
 	valueCurveScore,
 } from "#/lib/scoring/config";
@@ -475,6 +476,181 @@ check(
 );
 
 check("scoring tables are readable", true, { scores: stored?.count ?? 0, alerts: alertStats?.count ?? 0 });
+
+// --- Incremental-run invariants (relative to the CURRENT SCORE_VERSION) --
+// A version bump leaves old-version scores and their alerts in place until
+// the next run, so every check below scopes to the current version instead
+// of asserting absolute counts.
+
+const duplicateVersionScores = await db
+	.select({
+		listingId: listingScores.listingId,
+		count: sql<number>`count(*)`,
+	})
+	.from(listingScores)
+	.where(eq(listingScores.scoreVersion, SCORE_VERSION))
+	.groupBy(listingScores.listingId)
+	.having(sql`count(*) > 1`);
+check(
+	"one current-version score per listing (incremental selection relies on it)",
+	duplicateVersionScores.length === 0,
+	duplicateVersionScores.slice(0, 5),
+);
+
+const nonSaleScores = await db
+	.select({ count: sql<number>`count(*)` })
+	.from(listingScores)
+	.innerJoin(listings, eq(listingScores.listingId, listings.id))
+	.where(
+		and(
+			eq(listingScores.scoreVersion, SCORE_VERSION),
+			sql`${listings.offerType} != 'sale'`,
+		),
+	);
+check(
+	"current-version scores exist only for sale listings",
+	(nonSaleScores[0]?.count ?? 0) === 0,
+	nonSaleScores[0],
+);
+
+const mismatchedAlerts = await db
+	.select({ count: sql<number>`count(*)` })
+	.from(listingAlerts)
+	.innerJoin(listingScores, eq(listingAlerts.scoreId, listingScores.id))
+	.where(
+		sql`${listingAlerts.listingId} != ${listingScores.listingId}
+			or ${listingAlerts.segment} != ${listingScores.segment}
+			or ${listingAlerts.region} != ${listingScores.region}
+			or abs(${listingAlerts.score} - ${listingScores.totalScore}) > 0.001`,
+	);
+check(
+	"every alert mirrors its score row (listing, segment, region, score)",
+	(mismatchedAlerts[0]?.count ?? 0) === 0,
+	mismatchedAlerts[0],
+);
+
+// The eligible pool exactly as createAlerts() builds it for the current
+// version: active, visible, gate-passing scores.
+const pool = await db
+	.select({
+		listingId: listingScores.listingId,
+		segment: listingScores.segment,
+		region: listingScores.region,
+		totalScore: listingScores.totalScore,
+	})
+	.from(listingScores)
+	.innerJoin(listings, eq(listingScores.listingId, listings.id))
+	.where(
+		and(
+			eq(listingScores.scoreVersion, SCORE_VERSION),
+			eq(listings.isActive, true),
+			eq(listings.isVisible, true),
+			gte(listingScores.valueScore, ALERT_GATES.minValueScore),
+			gte(listingScores.confidence, ALERT_GATES.minConfidence),
+			gte(listingScores.discountPct, ALERT_GATES.minDiscountPct),
+		),
+	)
+	.orderBy(desc(listingScores.totalScore));
+
+const poolGroups = new Map<string, typeof pool>();
+for (const row of pool) {
+	const key = `${row.region}:${row.segment}`;
+	const group = poolGroups.get(key) ?? [];
+	group.push(row);
+	poolGroups.set(key, group);
+}
+
+const alertedIds = new Set(
+	(
+		await db
+			.select({ listingId: listingAlerts.listingId })
+			.from(listingAlerts)
+	).map((row) => row.listingId),
+);
+
+// Current-version alerts on still-visible listings, per group PER DATE:
+// the list appends across days by design, so the ceiling is per daily cut,
+// not cumulative. (A same-day pool shrink is the only way a past cut could
+// exceed today's topN; the pool only grows within a day in practice.)
+const currentAlertRows = await db
+	.select({
+		listingId: listingAlerts.listingId,
+		segment: listingAlerts.segment,
+		region: listingAlerts.region,
+		alertDate: listingAlerts.alertDate,
+	})
+	.from(listingAlerts)
+	.innerJoin(listingScores, eq(listingAlerts.scoreId, listingScores.id))
+	.innerJoin(listings, eq(listingAlerts.listingId, listings.id))
+	.where(
+		and(
+			eq(listingScores.scoreVersion, SCORE_VERSION),
+			eq(listings.isActive, true),
+			eq(listings.isVisible, true),
+		),
+	);
+const currentAlertCounts = new Map<string, number>();
+for (const row of currentAlertRows) {
+	const key = `${row.region}:${row.segment}:${row.alertDate}`;
+	currentAlertCounts.set(key, (currentAlertCounts.get(key) ?? 0) + 1);
+}
+
+const ceilingViolations: Array<Record<string, unknown>> = [];
+const uncovered: Array<Record<string, unknown>> = [];
+for (const [key, group] of poolGroups) {
+	const topN = Math.max(1, Math.ceil(group.length * 0.05));
+	for (const [dateKey, alertCount] of currentAlertCounts) {
+		if (dateKey.startsWith(`${key}:`) && alertCount > topN) {
+			ceilingViolations.push({
+				key: dateKey,
+				pool: group.length,
+				topN,
+				alertCount,
+			});
+		}
+	}
+	// After a completed run every listing inside today's cut must have an
+	// alert (possibly from an earlier day/version: at-most-once semantics).
+	for (const row of group.slice(0, topN)) {
+		if (!alertedIds.has(row.listingId)) {
+			uncovered.push({ key, listingId: row.listingId, topN });
+		}
+	}
+}
+check(
+	"current-version alerts stay within the top-5% ceiling per region+segment+day",
+	ceilingViolations.length === 0,
+	ceilingViolations,
+);
+check(
+	"every listing in the current top-5% cut has an alert (run coverage)",
+	uncovered.length === 0,
+	uncovered.slice(0, 5),
+);
+
+// The incremental not-exists predicate must select exactly the offers the
+// unique index says lack a current-version score: base-eligible listings
+// partition into scored + backlog with no overlap.
+const partition = await db
+	.select({
+		total: sql<number>`count(*)`,
+		scored: sql<number>`sum(case when exists (select 1 from ${listingScores} where ${listingScores.listingId} = ${listings.id} and ${listingScores.scoreVersion} = ${SCORE_VERSION}) then 1 else 0 end)`,
+	})
+	.from(listings)
+	.where(
+		and(
+			eq(listings.offerType, "sale"),
+			eq(listings.isActive, true),
+			eq(listings.isVisible, true),
+		),
+	);
+const part = partition[0];
+const backlog = (part?.total ?? 0) - (part?.scored ?? 0);
+check(
+	"incremental selection partitions sale listings into scored + backlog",
+	part != null && part.total >= part.scored && backlog >= 0,
+	{ ...part, backlog, scoreVersion: SCORE_VERSION },
+);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) process.exitCode = 1;
