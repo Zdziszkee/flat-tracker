@@ -273,9 +273,12 @@ small, fixed vocabulary the scoring layer already understands.
   then does `scoreArrivals` score it. The pipeline is
   `crawlSite -> extractFactsForListings -> saveListings -> scoreArrivals`, so
   a stored row is never scored against a blank heating/building/plot column,
-  and the day's top-25 cut only ever sees enriched offers. A model outage
-  never stops storage: a failed batch leaves the offers saved without facts
-  and the `listing-facts` repair phase retries them.
+  and the day's top-25 cut only ever sees enriched offers. A list-only record
+  (no description of its own) is read from the prose the database already
+  holds, so a re-crawl enriches it in the same run. Existing rows whose facts
+  just landed are re-scored immediately (`factIds`, at most 200 per crawl).
+  A model outage never stops storage: a failed batch leaves the offers saved
+  without facts and the `listing-facts` repair phase retries them.
 - **Where**: `src/lib/llm/` — `client.ts` (transport), `listing-facts.ts`
   (prompt, parsing, normalization; pure) and `extract.ts` (batching, the
   inline pre-store pass, promotion). Transport is TanStack AI (`chat()` with

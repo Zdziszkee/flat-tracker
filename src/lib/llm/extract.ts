@@ -453,17 +453,33 @@ function inlineProseEligible(
 	);
 }
 
-/** Hashes of the offers already read under the current prompt, by `source:id`. */
-async function loadKnownFactHashes(
+/**
+ * The row the crawl is about to update: the description it will keep and the
+ * facts already stored for it.
+ *
+ * The description matters because a list-only record has none of its own: the
+ * prose lives in the database from an earlier detail pass and the upsert keeps
+ * it (`coalesce(excluded.description, listings.description)`). Reading that
+ * text means an offer is enriched in the same run that re-crawls it, instead
+ * of waiting for the repair phase.
+ */
+interface KnownFactState {
+	hash: string | null;
+	version: string | null;
+	description: string | null;
+}
+
+/** Stored facts and prose for the offers a crawl produced, by `source:id`. */
+async function loadKnownFactState(
 	rows: readonly FactSourceListing[],
-): Promise<Map<string, { hash: string; version: string }>> {
+): Promise<Map<string, KnownFactState>> {
 	const bySource = new Map<string, string[]>();
 	for (const row of rows) {
 		const ids = bySource.get(row.source) ?? [];
 		ids.push(row.externalId);
 		bySource.set(row.source, ids);
 	}
-	const out = new Map<string, { hash: string; version: string }>();
+	const out = new Map<string, KnownFactState>();
 	for (const [source, ids] of bySource) {
 		for (let start = 0; start < ids.length; start += 400) {
 			const chunk = ids.slice(start, start + 400);
@@ -471,18 +487,20 @@ async function loadKnownFactHashes(
 				.select({
 					source: listings.source,
 					externalId: listings.externalId,
+					description: listings.description,
 					hash: listingFacts.sourceHash,
 					version: listingFacts.promptVersion,
 				})
 				.from(listings)
-				.innerJoin(listingFacts, eq(listingFacts.listingId, listings.id))
+				.leftJoin(listingFacts, eq(listingFacts.listingId, listings.id))
 				.where(
 					and(eq(listings.source, source), inArray(listings.externalId, chunk)),
 				);
 			for (const row of known) {
 				out.set(factKey(row.source, row.externalId), {
-					hash: row.hash,
-					version: row.version,
+					hash: row.hash ?? null,
+					version: row.version ?? null,
+					description: row.description ?? null,
 				});
 			}
 		}
@@ -546,26 +564,27 @@ export async function extractFactsForListings(
 
 	// One entry per offer: a crawl may emit the same ad twice (list card plus
 	// detail page); the richer text wins, and the key is what the sink knows.
-	const deduped = new Map<string, FactSourceListing>();
+	// The prose test runs after the stored-description fallback below, because
+	// a list-only row often has no description of its own while the database
+	// already holds one.
+	const candidates = new Map<string, FactSourceListing>();
 	for (const row of list) {
 		if ((row.offerType ?? "sale") !== "sale") continue;
-		if (!inlineProseEligible(row.title, row.description)) continue;
 		const key = factKey(row.source, row.externalId);
-		const previous = deduped.get(key);
+		const previous = candidates.get(key);
 		if (
 			!previous ||
 			(row.description?.length ?? 0) > (previous.description?.length ?? 0)
 		) {
-			deduped.set(key, row);
+			candidates.set(key, row);
 		}
 	}
-	summary.eligible = deduped.size;
-	if (deduped.size === 0) {
+	if (candidates.size === 0) {
 		summary.durationMs = Date.now() - startedAt;
 		return summary;
 	}
 
-	const known = await loadKnownFactHashes([...deduped.values()]);
+	const known = await loadKnownFactState([...candidates.values()]);
 	// Synthetic ids for the prompt: they only have to be unique inside the run,
 	// and the answer is mapped back to the offer by id.
 	const queue: Array<{
@@ -574,10 +593,16 @@ export async function extractFactsForListings(
 		input: { id: number; title: string; description: string | null };
 		hash: string;
 	}> = [];
-	for (const [key, row] of deduped) {
-		const hash = factTextHash(row.title, row.description);
-		const seen = known.get(key);
-		if (seen && seen.hash === hash && seen.version === FACT_PROMPT_VERSION) {
+	for (const [key, row] of candidates) {
+		const stored = known.get(key);
+		// The crawl's description is what the upsert will store; a list-only row
+		// falls back to the prose the database already holds (the sink keeps it
+		// when the new record has none).
+		const description = row.description ?? stored?.description ?? null;
+		if (!inlineProseEligible(row.title, description)) continue;
+		summary.eligible += 1;
+		const hash = factTextHash(row.title, description);
+		if (stored?.hash === hash && stored.version === FACT_PROMPT_VERSION) {
 			summary.skipped += 1;
 			continue;
 		}
@@ -585,7 +610,7 @@ export async function extractFactsForListings(
 		queue.push({
 			id,
 			key,
-			input: { id, title: row.title, description: row.description },
+			input: { id, title: row.title, description },
 			hash,
 		});
 	}

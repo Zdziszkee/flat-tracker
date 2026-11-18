@@ -5,7 +5,7 @@ import {
 	extractFactsForListings,
 	type PreparedListingFacts,
 } from "#/lib/llm/extract";
-import { scoreArrivals } from "#/lib/scoring/run";
+import { runAlertScoring, scoreArrivals } from "#/lib/scoring/run";
 import { crawlSite } from "./crawler.ts";
 import { type SaveReport, saveListings } from "./db-sink.ts";
 import type { SiteAdapter } from "./types.ts";
@@ -130,13 +130,30 @@ const runCrawl = (
 
 		const saved = saveToDb
 			? yield* saveEffect(adapter.id, validated, facts)
-			: { newCount: 0, updatedCount: 0, newIds: [] as number[] };
+			: {
+					newCount: 0,
+					updatedCount: 0,
+					newIds: [] as number[],
+					factIds: [] as number[],
+				};
 
 		// Fresh arrivals are scored the moment they are saved and may be
 		// appended to today's alerts. Scoring is advisory: the effect logs and
 		// swallows its failure, so it can never abort the crawl.
 		if (saveToDb && saved.newIds.length > 0) {
 			yield* arrivalScoringEffect(adapter.id, saved.newIds);
+		}
+
+		// An existing row (a list-only offer whose detail page just arrived, or
+		// an ad whose text changed) got facts after it was already scored. Its
+		// stored score predates the new gate evidence, so it is re-scored now
+		// rather than at the 06:30 pass. Bounded like the repair phase.
+		if (saveToDb && saved.factIds.length > 0) {
+			const fresh = new Set(saved.newIds);
+			const rescore = saved.factIds.filter((id) => !fresh.has(id));
+			if (rescore.length > 0) {
+				yield* factRescoreEffect(adapter.id, rescore.slice(0, 200));
+			}
 		}
 
 		return {
@@ -201,6 +218,38 @@ const factsEffect = (
 				return new Map<string, PreparedListingFacts>();
 			}),
 		),
+	);
+
+/**
+ * Re-score existing offers whose facts just landed.
+ *
+ * `scoreArrivals` only scores offers without a current-version score, so a
+ * row that was already scored (a list-only offer whose detail page arrived a
+ * run later, or an ad whose text changed) needs the targeted path the repair
+ * phase uses. Advisory like the arrival scoring: a failure is logged once and
+ * never aborts the crawl; the daily 06:30 pass would also catch it.
+ */
+const factRescoreEffect = (
+	site: string,
+	listingIds: readonly number[],
+): Effect.Effect<void> =>
+	Effect.tryPromise({
+		try: () => runAlertScoring({ all: true, listingIds }),
+		catch: (cause) => crawlError(site, cause),
+	}).pipe(
+		Effect.tap((summary) =>
+			Effect.sync(() => {
+				console.log(
+					`[${site}] facts: re-scored ${summary.scored} existing offer(s)`,
+				);
+			}),
+		),
+		Effect.catchAll((error) =>
+			Effect.sync(() => {
+				console.error(`[${site}] fact re-score failed: ${briefError(error)}`);
+			}),
+		),
+		Effect.asVoid,
 	);
 
 /**

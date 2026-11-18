@@ -1061,6 +1061,21 @@ check(
 	modelCallers.length === 1 && modelCallers[0] === "src/lib/llm/extract.ts",
 	modelCallers,
 );
+// The per-offer order is the contract: scrape -> facts -> store -> score. A
+// regression here silently restores the old "score first, extract later"
+// behaviour, which is exactly what let an electric-heated flat alert as
+// "heating unconfirmed".
+const pipelineSource = readSource("src/crawler/pipeline.ts");
+const factsStepAt = pipelineSource.indexOf("yield* factsEffect");
+const saveStepAt = pipelineSource.indexOf("yield* saveEffect");
+const scoreStepAt = pipelineSource.indexOf("yield* arrivalScoringEffect");
+check(
+	"the crawl reads facts before it stores, and scores after storing",
+	factsStepAt > 0 &&
+		saveStepAt > factsStepAt &&
+		scoreStepAt > saveStepAt,
+	{ factsStepAt, saveStepAt, scoreStepAt },
+);
 check(
 	"no consumer file imports the LLM client",
 	consumerFiles.every((file) => {

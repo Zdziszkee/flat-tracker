@@ -27,6 +27,12 @@ export interface SaveReport {
 	newIds: number[];
 	/** Listings that already existed and were overwritten (refined records). */
 	updatedCount: number;
+	/**
+	 * Existing rows whose freshly read facts filled gate-relevant columns. A
+	 * stored score predates them, so the caller re-scores these (new rows are
+	 * covered by `newIds`).
+	 */
+	factIds: number[];
 }
 
 /**
@@ -99,7 +105,8 @@ export async function saveListings(
 	list: Listing[],
 	facts?: ReadonlyMap<string, PreparedListingFacts>,
 ): Promise<SaveReport> {
-	if (list.length === 0) return { newCount: 0, updatedCount: 0, newIds: [] };
+	if (list.length === 0)
+		return { newCount: 0, updatedCount: 0, newIds: [], factIds: [] };
 
 	// A crawl run is single-source, but keep it safe for multi-source batches.
 	const sources = [...new Set(list.map((l) => l.source))];
@@ -139,6 +146,7 @@ export async function saveListings(
 	}
 
 	const newIds = new Set<number>();
+	const factIds = new Set<number>();
 
 	const now = new Date();
 	const rows = list.map((l) => {
@@ -381,6 +389,7 @@ export async function saveListings(
 				const id = idByKey.get(key);
 				if (!prepared || id == null) continue;
 				await storeListingFacts(id, prepared);
+				if (prepared.facts) factIds.add(id);
 			}
 		}
 	}
@@ -389,6 +398,7 @@ export async function saveListings(
 		newCount: newIds.size,
 		updatedCount: list.length - newIds.size,
 		newIds: [...newIds],
+		factIds: [...factIds],
 	};
 }
 
