@@ -956,6 +956,20 @@ export async function refreshAll(
 					newCount: facts.stored,
 					updatedCount: facts.promoted,
 				});
+				// New offers were scored inline during the crawl, before the
+				// facts existed. A filled heating/building/plot-type column can
+				// flip an eligibility gate, so those offers are re-scored now
+				// instead of waiting for the 06:30 task.
+				if (facts.gateIds.length > 0) {
+					const { runAlertScoring } = await import("../lib/scoring/run.ts");
+					const rescored = await runAlertScoring({
+						all: true,
+						listingIds: facts.gateIds.slice(0, 200),
+					});
+					console.log(
+						`[refresh] listing-facts: re-scored ${rescored.scored} offers with new facts`,
+					);
+				}
 			}
 		} catch (err) {
 			await recordFailure({

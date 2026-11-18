@@ -56,6 +56,12 @@ export interface ExtractFactsSummary {
 	sent: number;
 	stored: number;
 	promoted: number;
+	/**
+	 * Listings whose gate-relevant columns (heating, building style, plot type)
+	 * were filled by this run. Their stored score predates the facts, so the
+	 * refresh re-scores them before rebuilding the leaderboard.
+	 */
+	gateIds: number[];
 	skipped: number;
 	errors: number;
 	firstErrors: string[];
@@ -150,6 +156,7 @@ export async function extractListingFacts(
 		sent: 0,
 		stored: 0,
 		promoted: 0,
+		gateIds: [],
 		skipped: 0,
 		errors: 0,
 		firstErrors: [],
@@ -277,6 +284,9 @@ export async function extractListingFacts(
 			summary.stored += 1;
 			await promoteFacts(row.id, facts);
 			summary.promoted += 1;
+			if (facts.heating || facts.buildingType || facts.plotType) {
+				summary.gateIds.push(row.id);
+			}
 		}
 	};
 
