@@ -854,6 +854,12 @@ export const listingScores = sqliteTable(
 		fairPrice: real("fair_price"),
 		fairM2: real("fair_m2"),
 		askingPrice: real("asking_price"),
+		/** Comparables behind the median used for the fair value. */
+		compCount: integer("comp_count", { mode: "number" }).notNull().default(0),
+		/** RCN transactions among those comparables. */
+		compRcnCount: integer("comp_rcn_count", { mode: "number" })
+			.notNull()
+			.default(0),
 		/** Top positive and negative score contributions, JSON array. */
 		reasonsJson: text("reasons_json").notNull().default(sql`'[]'`),
 		/** Raw amenity distances and shares, JSON object. */

@@ -353,7 +353,21 @@ the component breakdown and rationale.
   alert date by default, optional `region`/`segment`/`date` filters). Rows
   whose alert was created in the last 24 h carry `isFresh` and a "Nowa
   (24h)" badge and sort first inside their section; the response also
-  reports `freshCount` and `generatedAt`.
+  reports `freshCount` and `generatedAt`. Each card shows the offer's
+  physical facts (build year, heating, material, building type, floors,
+  market, condition, ownership, plot area, amenity flags), the nearest named
+  park/forest/water/station/tram/bus with distances (a distance is shown
+  only when its feature has a name, never inferred), and the valuation
+  sample (`Wycena z N ofert, w tym M z RCN`).
+- **The valuation median's sample is stored with the score**:
+  `listing_scores.comp_count` and `comp_rcn_count` hold how many
+  comparables (total, RCN-only) the weighted median used, capped at 140 and
+  at least 3. `0` means "not recorded" (a row written before the columns
+  existed), so consumers treat it as unknown, not as "no comparables".
+  `amenities_json` carries the nearest feature names next to their
+  distances. Because an alert keeps the score row that raised it, the
+  alert feed reads the listing's current-version row for these two fields
+  when the alert's own row predates them.
 - **Policy constants are versioned** (`src/lib/scoring/config.ts`):
   weights, curves, distance bands and gates sit behind `SCORE_VERSION`,
   and any change to a policy value requires a `SCORE_VERSION` bump so
@@ -367,7 +381,10 @@ the component breakdown and rationale.
   `data/scoring/score.lock` (a stale lock from a crashed run is replaced);
   without the TS runner it falls back to an in-process run. Manual
   backfill: `POST /_nitro/tasks/score-listings` with a JSON payload like
-  `{"all": true, "limit": 500, "dryRun": true}`.
+  `{"all": true, "limit": 500, "dryRun": true}`, or
+  `{"all": true, "listingIds": [1, 2, 3]}` to re-score exactly the
+  listings a display change affects (for example the alert rows that
+  predate `comp_count`) without touching the whole pool.
 
 `bun run validate:scoring` pins score monotonicity, the gates, the
 fresh-arrival cohort rule and the stored-score/alert invariants.
@@ -977,6 +994,15 @@ errors, `Schema` for boundary validation, `Schedule` for retries.
   this was written). Served by `/api/railways` (lazy import), drawn as a
   white-cased dark line + blue station dots with names; regenerate when a
   fresh PBF lands.
+- **Green/water/transit proximity data** (`src/data/region-uniqueness.ts`,
+  `bun run build:uniqueness`) comes from the same PBF extracts. Green areas
+  are tagged ways **plus multipolygon relations**, whose outer member ways
+  are stitched into closed rings, so a park mapped as a relation (Planty,
+  Park Jordana, Park Krakowski) is present; every green and water polygon
+  carries the OSM `name` when the source has one. The names feed the
+  alert cards and map popups; a distance is never labelled with a name
+  borrowed from a different feature. Regenerate after a PBF refresh: the
+  relation pass is a multi-minute read of both extracts.
 - The RCN importer skips the download when `RCN_GML_PATH` points at an
   already-extracted file (handy for testing with a partial slice).
 - `src/data/region-powiats.ts` is generated (`bun run build:powiats`,

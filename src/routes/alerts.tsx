@@ -34,7 +34,7 @@ import { formatNumber } from "#/lib/format";
 import type { ListingSearch } from "#/lib/listing-features";
 import type { AlertSegment } from "#/lib/scoring/config";
 import { cn } from "#/lib/utils";
-import type { AlertDto } from "#/types/alerts";
+import type { AlertDto, AlertProperties } from "#/types/alerts";
 
 export const Route = createFileRoute("/alerts")({
 	component: AlertsPage,
@@ -69,6 +69,171 @@ function offerCount(count: number): string {
 				? "oferty"
 				: "ofert";
 	return `${count} ${noun}`;
+}
+
+const MARKET_LABELS: Record<string, string> = {
+	primary: "pierwotny",
+	secondary: "wtórny",
+};
+
+const AMENITY_LABELS: ReadonlyArray<{
+	key: keyof Pick<
+		AlertProperties,
+		| "hasElevator"
+		| "hasParking"
+		| "hasGarage"
+		| "hasBasement"
+		| "hasBalcony"
+		| "hasTerrace"
+		| "hasGarden"
+	>;
+	label: string;
+}> = [
+	{ key: "hasElevator", label: "Winda" },
+	{ key: "hasParking", label: "Parking" },
+	{ key: "hasGarage", label: "Garaż" },
+	{ key: "hasBasement", label: "Piwnica" },
+	{ key: "hasBalcony", label: "Balkon" },
+	{ key: "hasTerrace", label: "Taras" },
+	{ key: "hasGarden", label: "Ogród" },
+];
+
+/** Raw portal values read fine once underscores become spaces. */
+function humanizeToken(value: string): string {
+	return value.replace(/_/g, " ").trim();
+}
+
+/**
+ * Compact facts in a fixed order. Only values the portal actually published
+ * appear, so a missing build year never renders as a placeholder.
+ */
+function factEntries(
+	properties: AlertProperties,
+): Array<{ label: string; value: string }> {
+	const facts: Array<{ label: string; value: string | null }> = [
+		{ label: "Rok budowy", value: properties.buildYear?.toString() ?? null },
+		{
+			label: "Ogrzewanie",
+			value:
+				properties.heatingType != null
+					? humanizeToken(properties.heatingType)
+					: null,
+		},
+		{
+			label: "Materiał",
+			value:
+				properties.buildingMaterial != null
+					? humanizeToken(properties.buildingMaterial)
+					: null,
+		},
+		{
+			label: "Typ budynku",
+			value:
+				properties.buildingType != null
+					? humanizeToken(properties.buildingType)
+					: null,
+		},
+		{
+			label: "Kondygnacje",
+			value: properties.floorCount?.toString() ?? null,
+		},
+		{
+			label: "Rynek",
+			value:
+				properties.market != null
+					? (MARKET_LABELS[properties.market] ??
+						humanizeToken(properties.market))
+					: null,
+		},
+		{
+			label: "Stan",
+			value:
+				properties.condition != null
+					? humanizeToken(properties.condition)
+					: null,
+		},
+		{
+			label: "Własność",
+			value:
+				properties.ownership != null
+					? humanizeToken(properties.ownership)
+					: null,
+		},
+		{
+			label: "Działka",
+			value:
+				properties.plotAreaM2 != null
+					? `${formatNumber(Math.round(properties.plotAreaM2))} m²`
+					: null,
+		},
+	];
+	return facts.filter(
+		(fact): fact is { label: string; value: string } => fact.value != null,
+	);
+}
+
+function amenityLabels(properties: AlertProperties): string[] {
+	return AMENITY_LABELS.filter(({ key }) => properties[key]).map(
+		({ label }) => label,
+	);
+}
+
+interface NearestFeature {
+	label: string;
+	name: string;
+	distanceM: number;
+}
+
+/**
+ * Named nearby features. A distance without a name is not shown: the score
+ * payload of older rows carries no names, and inventing one would mislead.
+ */
+function nearestFeatures(amenities: AlertDto["amenities"]): NearestFeature[] {
+	if (!amenities) return [];
+	const features: NearestFeature[] = [];
+	const push = (
+		label: string,
+		name: string | null | undefined,
+		distance: number | null | undefined,
+	) => {
+		if (name && distance != null) {
+			features.push({ label, name, distanceM: distance });
+		}
+	};
+	push("Park", amenities.parkName, amenities.parkM);
+	push("Las", amenities.forestName, amenities.forestM);
+	push("Woda", amenities.waterName, amenities.waterM);
+	if (!features.some((feature) => feature.label === "Woda")) {
+		push("Woda", amenities.riverName, amenities.riverM);
+	}
+	push("Dworzec", amenities.stationName, amenities.trainStationM);
+	if (amenities.transitName && amenities.transitM != null) {
+		push("Przystanek", amenities.transitName, amenities.transitM);
+	} else if (amenities.tramName && amenities.tramM != null) {
+		push("Przystanek", amenities.tramName, amenities.tramM);
+	} else {
+		push("Przystanek", amenities.busName, amenities.busM);
+	}
+	return features;
+}
+
+const kilometers = new Intl.NumberFormat("pl-PL", {
+	minimumFractionDigits: 1,
+	maximumFractionDigits: 1,
+});
+
+/** `350 m` below a kilometre, then `1,4 km` with a Polish decimal comma. */
+function formatDistance(distanceM: number): string {
+	if (distanceM < 1000) return `${Math.round(distanceM)} m`;
+	return `${kilometers.format(distanceM / 1000)} km`;
+}
+
+/** The comparable sample behind the median, when the valuation had one. */
+function comparableNote(alert: AlertDto): string | null {
+	if (alert.compCount <= 0) return null;
+	const rcn =
+		alert.compRcnCount > 0 ? `, w tym ${alert.compRcnCount} z RCN` : "";
+	return `Wycena z ${offerCount(alert.compCount)}${rcn}`;
 }
 
 /**
@@ -269,6 +434,10 @@ function AlertCard({
 		alert.listing.areaM2 > 0
 			? alert.listing.price / alert.listing.areaM2
 			: null);
+	const facts = factEntries(alert.properties);
+	const amenities = amenityLabels(alert.properties);
+	const nearby = nearestFeatures(alert.amenities);
+	const valuation = comparableNote(alert);
 	return (
 		<Card className="gap-4 py-4">
 			<CardHeader className="px-4">
@@ -326,6 +495,50 @@ function AlertCard({
 						suffix="%"
 					/>
 				</div>
+
+				{facts.length > 0 && (
+					<dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+						{facts.map((fact) => (
+							<div
+								key={fact.label}
+								className="flex items-baseline gap-1 whitespace-nowrap"
+							>
+								<dt className="text-muted-foreground">{fact.label}</dt>
+								<dd className="font-medium">{fact.value}</dd>
+							</div>
+						))}
+					</dl>
+				)}
+
+				{amenities.length > 0 && (
+					<ul className="flex flex-wrap gap-1">
+						{amenities.map((label) => (
+							<li key={label}>
+								<Badge variant="outline" className="text-[10px]">
+									{label}
+								</Badge>
+							</li>
+						))}
+					</ul>
+				)}
+
+				{nearby.length > 0 && (
+					<ul className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+						{nearby.map((feature) => (
+							<li key={feature.label} className="whitespace-nowrap">
+								<span>{feature.label}:</span>{" "}
+								<span className="text-foreground">{feature.name}</span>{" "}
+								<span className="tabular-nums">
+									({formatDistance(feature.distanceM)})
+								</span>
+							</li>
+						))}
+					</ul>
+				)}
+
+				{valuation && (
+					<p className="text-xs text-muted-foreground">{valuation}</p>
+				)}
 
 				<div className="grid grid-cols-5 gap-1 text-center text-xs">
 					<ScorePill label="Cena" value={alert.valueScore} />

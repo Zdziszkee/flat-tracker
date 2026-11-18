@@ -15,6 +15,8 @@ export interface SpawnScoreOptions {
 	all?: boolean;
 	limit?: number;
 	days?: number;
+	/** Backfill only these listings. */
+	listingIds?: readonly number[];
 	dryRun?: boolean;
 }
 
@@ -59,6 +61,9 @@ export function spawnScoreProcess(
 	if (options.all) args.push("--all");
 	if (options.limit != null) args.push(`--limit=${options.limit}`);
 	if (options.days != null) args.push(`--days=${options.days}`);
+	if (options.listingIds?.length) {
+		args.push(`--listing-ids=${options.listingIds.join(",")}`);
+	}
 	if (options.dryRun) args.push("--dry-run");
 	const child = spawn(process.execPath, args, {
 		cwd: process.cwd(),

@@ -43,13 +43,18 @@ export default defineTask({
 				? payload.days
 				: undefined;
 		const dryRun = payload?.dryRun === true;
+		const listingIds = Array.isArray(payload?.listingIds)
+			? payload.listingIds.filter(
+					(id): id is number => typeof id === "number" && Number.isInteger(id) && id > 0,
+				)
+			: undefined;
 
 		if (canSpawnScoreProcess()) {
 			const running = scoreRunning();
 			if (running != null) {
 				return { result: { started: false, alreadyRunning: true } };
 			}
-			const pid = spawnScoreProcess({ all, limit, days, dryRun });
+			const pid = spawnScoreProcess({ all, limit, days, listingIds, dryRun });
 			return {
 				result: {
 					started: pid != null,
@@ -59,7 +64,7 @@ export default defineTask({
 			};
 		}
 
-		const summary = await runAlertScoring({ all, limit, days, dryRun });
+		const summary = await runAlertScoring({ all, limit, days, listingIds, dryRun });
 		console.log(
 			`[score fallback] scanned=${summary.scanned} scored=${summary.scored} ` +
 				`eligible=${summary.eligible} alerts=${summary.alerts} ` +

@@ -2,6 +2,57 @@
 
 import type { AlertSegment } from "#/lib/scoring/config";
 
+/**
+ * Proximity evidence stored with a score (`listing_scores.amenities_json`).
+ *
+ * Distances are metres. The `*Name` fields are optional because rows scored
+ * before named proximity evidence existed carry distances only; a name is
+ * never invented, so the UI shows an entry only when both parts are present.
+ */
+export interface AlertAmenities {
+	parkM?: number | null;
+	parkName?: string | null;
+	forestM?: number | null;
+	forestName?: string | null;
+	waterM?: number | null;
+	waterName?: string | null;
+	riverM?: number | null;
+	riverName?: string | null;
+	trainStationM?: number | null;
+	stationName?: string | null;
+	transitM?: number | null;
+	transitName?: string | null;
+	tramM?: number | null;
+	tramName?: string | null;
+	busM?: number | null;
+	busName?: string | null;
+	railM?: number | null;
+	lakeM?: number | null;
+	city?: string | null;
+	centerM?: number | null;
+	source?: string | null;
+}
+
+/** The physical facts of an offer that the alert card surfaces. */
+export interface AlertProperties {
+	buildYear: number | null;
+	heatingType: string | null;
+	buildingType: string | null;
+	buildingMaterial: string | null;
+	condition: string | null;
+	ownership: string | null;
+	floorCount: number | null;
+	plotAreaM2: number | null;
+	market: string | null;
+	hasElevator: boolean;
+	hasParking: boolean;
+	hasGarage: boolean;
+	hasBasement: boolean;
+	hasBalcony: boolean;
+	hasTerrace: boolean;
+	hasGarden: boolean;
+}
+
 export interface AlertReason {
 	label: string;
 	impact: number;
@@ -29,7 +80,13 @@ export interface AlertDto {
 	riskScore: number;
 	reasons: AlertReason[];
 	flags: string[];
-	amenities: Record<string, unknown> | null;
+	amenities: AlertAmenities | null;
+	/** Physical facts of the offer, all optional and never guessed. */
+	properties: AlertProperties;
+	/** Comparables behind the valuation median (0 when unsampled). */
+	compCount: number;
+	/** RCN transactions among those comparables. */
+	compRcnCount: number;
 	/** Portal posting date of the offer, ISO 8601. */
 	listedAt: string | null;
 	/** When the crawler first stored the offer, ISO 8601. */

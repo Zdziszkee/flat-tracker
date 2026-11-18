@@ -19,6 +19,8 @@ interface IndexItem {
 	coords?: Array<[number, number]>;
 	pt?: [number, number];
 	kind?: string;
+	/** Feature name from OSM, when the dataset carries one. */
+	name?: string | null;
 }
 
 interface Indexes {
@@ -32,24 +34,37 @@ interface Indexes {
 
 export interface GeoUniqueness {
 	parkM: number | null;
+	parkName: string | null;
 	parkCount500m: number;
 	forestM: number | null;
+	forestName: string | null;
 	forestShare500m: number;
 	waterM: number | null;
+	waterName: string | null;
 	waterShare1000m: number;
 	lakeM: number | null;
 	riverM: number | null;
 	railM: number | null;
 	trainStationM: number | null;
+	stationName: string | null;
 	transitM: number | null;
+	transitName: string | null;
 	tramM: number | null;
+	tramName: string | null;
 	busM: number | null;
+	busName: string | null;
 	city: string | null;
 	centerM: number | null;
 	source: "osm-ways";
 }
 
 let indexesPromise: Promise<Indexes> | null = null;
+
+/** Nearest candidate: the distance and the name of the SAME feature. */
+interface Nearest {
+	distance: number;
+	name: string | null;
+}
 
 function bboxOf(coords: readonly [number, number][]): IndexItem | null {
 	if (coords.length === 0) return null;
@@ -66,8 +81,20 @@ function bboxOf(coords: readonly [number, number][]): IndexItem | null {
 	return { minX, minY, maxX, maxY, coords: [...coords] };
 }
 
-function pointItem(pt: [number, number], kind: string): IndexItem {
-	return { minX: pt[0], minY: pt[1], maxX: pt[0], maxY: pt[1], pt, kind };
+function pointItem(
+	pt: [number, number],
+	kind: string,
+	name: string | null = null,
+): IndexItem {
+	return {
+		minX: pt[0],
+		minY: pt[1],
+		maxX: pt[0],
+		maxY: pt[1],
+		pt,
+		kind,
+		name,
+	};
 }
 
 function loadTree(items: IndexItem[]): RBush<IndexItem> {
@@ -85,11 +112,15 @@ async function getIndexes(): Promise<Indexes> {
 			]);
 			const green = uniqueness.GREEN_POLYGONS.flatMap((polygon) => {
 				const item = bboxOf(polygon.ring);
-				return item ? [{ ...item, kind: polygon.kind }] : [];
+				return item
+					? [{ ...item, kind: polygon.kind, name: polygon.name ?? null }]
+					: [];
 			});
 			const water = uniqueness.WATER_POLYGONS.flatMap((polygon) => {
 				const item = bboxOf(polygon.ring);
-				return item ? [{ ...item, kind: polygon.kind }] : [];
+				return item
+					? [{ ...item, kind: polygon.kind, name: polygon.name ?? null }]
+					: [];
 			});
 			const river = uniqueness.RIVER_LINES.flatMap((line) => {
 				const item = bboxOf(line.points);
@@ -100,10 +131,10 @@ async function getIndexes(): Promise<Indexes> {
 				return item ? [{ ...item, kind: "rail" }] : [];
 			});
 			const transit = uniqueness.TRANSIT_POINTS.map((point) =>
-				pointItem(point.pt, point.kind),
+				pointItem(point.pt, point.kind, point.name),
 			);
 			const stations = railways.RAIL_STATIONS.map((station) =>
-				pointItem(station.pt, "train"),
+				pointItem(station.pt, "train", station.name),
 			);
 			return {
 				green: loadTree(green),
@@ -217,15 +248,19 @@ function nearestGeometry(
 	maxM: number,
 	closed: boolean,
 	kind?: string,
-): number | null {
+): Nearest | null {
 	let best = Number.POSITIVE_INFINITY;
+	let bestName: string | null = null;
 	for (const item of candidates(tree, lng, lat, maxM)) {
 		if (kind && item.kind !== kind) continue;
 		if (!item.coords) continue;
 		const distance = lineDistanceM(lng, lat, item.coords, closed);
-		best = Math.min(best, distance);
+		if (distance < best) {
+			best = distance;
+			bestName = item.name ?? null;
+		}
 	}
-	return Number.isFinite(best) ? best : null;
+	return Number.isFinite(best) ? { distance: best, name: bestName } : null;
 }
 
 function nearestPoint(
@@ -234,14 +269,19 @@ function nearestPoint(
 	lat: number,
 	maxM: number,
 	kind?: string,
-): number | null {
+): Nearest | null {
 	let best = Number.POSITIVE_INFINITY;
+	let bestName: string | null = null;
 	for (const item of candidates(tree, lng, lat, maxM)) {
 		if (kind && item.kind !== kind) continue;
 		if (!item.pt) continue;
-		best = Math.min(best, haversineM(lat, lng, item.pt[1], item.pt[0]));
+		const distance = haversineM(lat, lng, item.pt[1], item.pt[0]);
+		if (distance < best) {
+			best = distance;
+			bestName = item.name ?? null;
+		}
 	}
-	return Number.isFinite(best) ? best : null;
+	return Number.isFinite(best) ? { distance: best, name: bestName } : null;
 }
 
 function nearestPolygon(
@@ -250,17 +290,21 @@ function nearestPolygon(
 	lat: number,
 	maxM: number,
 	kind?: string,
-): number | null {
+): Nearest | null {
 	let best = Number.POSITIVE_INFINITY;
+	let bestName: string | null = null;
 	for (const item of candidates(tree, lng, lat, maxM)) {
 		if (kind && item.kind !== kind) continue;
 		if (!item.coords) continue;
 		const distance = pointInRing(lng, lat, item.coords)
 			? 0
 			: lineDistanceM(lng, lat, item.coords, true);
-		best = Math.min(best, distance);
+		if (distance < best) {
+			best = distance;
+			bestName = item.name ?? null;
+		}
 	}
-	return Number.isFinite(best) ? best : null;
+	return Number.isFinite(best) ? { distance: best, name: bestName } : null;
 }
 
 function coveredByPolygon(
@@ -337,20 +381,38 @@ export async function geoUniqueness(
 			centerM = distance;
 		}
 	}
+	// One lookup per reported distance, so a name always belongs to the
+	// feature whose distance is stored next to it.
+	const park = nearestPolygon(indexes.green, lng, lat, 3000, "park");
+	const forest = nearestPolygon(indexes.green, lng, lat, 3000, "forest");
+	const water = nearestPolygon(indexes.water, lng, lat, 3000);
+	const station = nearestPoint(indexes.stations, lng, lat, 5000);
+	const transit = nearestPoint(indexes.transit, lng, lat, 3000);
+	const tram = nearestPoint(indexes.transit, lng, lat, 3000, "tram");
+	const bus = nearestPoint(indexes.transit, lng, lat, 3000, "bus");
 	return {
-		parkM: nearestPolygon(indexes.green, lng, lat, 3000, "park"),
+		parkM: park?.distance ?? null,
+		parkName: park?.name ?? null,
 		parkCount500m: countPolygons(indexes.green, lng, lat, 500, "park"),
-		forestM: nearestPolygon(indexes.green, lng, lat, 3000, "forest"),
+		forestM: forest?.distance ?? null,
+		forestName: forest?.name ?? null,
 		forestShare500m: polygonShare(indexes.green, lng, lat, 500, "forest"),
-		waterM: nearestPolygon(indexes.water, lng, lat, 3000),
+		waterM: water?.distance ?? null,
+		waterName: water?.name ?? null,
 		waterShare1000m: polygonShare(indexes.water, lng, lat, 1000, "water"),
-		lakeM: nearestPolygon(indexes.water, lng, lat, 3000),
-		riverM: nearestGeometry(indexes.river, lng, lat, 3000, false),
-		railM: nearestGeometry(indexes.rail, lng, lat, 2000, false),
-		trainStationM: nearestPoint(indexes.stations, lng, lat, 5000),
-		transitM: nearestPoint(indexes.transit, lng, lat, 3000),
-		tramM: nearestPoint(indexes.transit, lng, lat, 3000, "tram"),
-		busM: nearestPoint(indexes.transit, lng, lat, 3000, "bus"),
+		lakeM: water?.distance ?? null,
+		riverM:
+			nearestGeometry(indexes.river, lng, lat, 3000, false)?.distance ?? null,
+		railM:
+			nearestGeometry(indexes.rail, lng, lat, 2000, false)?.distance ?? null,
+		trainStationM: station?.distance ?? null,
+		stationName: station?.name ?? null,
+		transitM: transit?.distance ?? null,
+		transitName: transit?.name ?? null,
+		tramM: tram?.distance ?? null,
+		tramName: tram?.name ?? null,
+		busM: bus?.distance ?? null,
+		busName: bus?.name ?? null,
 		city,
 		centerM,
 		source: "osm-ways",

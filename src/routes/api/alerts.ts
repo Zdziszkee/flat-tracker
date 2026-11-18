@@ -1,13 +1,27 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
 import { and, asc, desc, eq, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 
 import { db } from "#/db/index";
 import { listingAlerts, listingScores, listings } from "#/db/schema";
-import type { AlertDto, AlertsResponse } from "#/types/alerts";
+import { SCORE_VERSION } from "#/lib/scoring/config";
+import type {
+	AlertAmenities,
+	AlertDto,
+	AlertProperties,
+	AlertsResponse,
+} from "#/types/alerts";
 
 /** An alert is "fresh" while its row is younger than this window. */
 const FRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Current-version score row for the same listing. Used only for the sample
+ * size and named amenities, which describe the valuation rather than the
+ * alert policy of the version that raised the alert.
+ */
+const latestScore = alias(listingScores, "latest_score");
 
 /**
  * Shared daily alert feed. Defaults to the latest alert date and supports
@@ -60,6 +74,35 @@ export const Route = createFileRoute("/api/alerts")({
 						reasonsJson: listingScores.reasonsJson,
 						amenitiesJson: listingScores.amenitiesJson,
 						flagsJson: listingScores.flagsJson,
+						compCount: listingScores.compCount,
+						compRcnCount: listingScores.compRcnCount,
+						/**
+						 * Comparable evidence from the listing's current-version score row.
+						 * An alert computed under an older SCORE_VERSION keeps its own
+						 * scores, but the sample size and named amenities describe the
+						 * valuation, not the policy, so the newest evidence is shown.
+						 */
+						latestCompCount: latestScore.compCount,
+						latestCompRcnCount: latestScore.compRcnCount,
+						latestAmenitiesJson: latestScore.amenitiesJson,
+						listings: {
+							buildYear: listings.buildYear,
+							heatingType: listings.heatingType,
+							buildingType: listings.buildingType,
+							buildingMaterial: listings.buildingMaterial,
+							condition: listings.condition,
+							ownership: listings.ownership,
+							floorCount: listings.floorCount,
+							plotAreaM2: listings.plotAreaM2,
+							market: listings.market,
+							hasElevator: listings.hasElevator,
+							hasParking: listings.hasParking,
+							hasGarage: listings.hasGarage,
+							hasBasement: listings.hasBasement,
+							hasBalcony: listings.hasBalcony,
+							hasTerrace: listings.hasTerrace,
+							hasGarden: listings.hasGarden,
+						},
 						listingId: listings.id,
 						source: listings.source,
 						title: listings.title,
@@ -82,6 +125,13 @@ export const Route = createFileRoute("/api/alerts")({
 					.from(listingAlerts)
 					.innerJoin(listingScores, eq(listingAlerts.scoreId, listingScores.id))
 					.innerJoin(listings, eq(listingAlerts.listingId, listings.id))
+					.leftJoin(
+						latestScore,
+						and(
+							eq(latestScore.listingId, listingAlerts.listingId),
+							eq(latestScore.scoreVersion, SCORE_VERSION),
+						),
+					)
 					.where(and(...filters))
 					.orderBy(
 						asc(listingAlerts.region),
@@ -115,7 +165,16 @@ export const Route = createFileRoute("/api/alerts")({
 						riskScore: row.riskScore,
 						reasons: parseJson(row.reasonsJson, []),
 						flags: parseJson(row.flagsJson, []),
-						amenities: parseJson(row.amenitiesJson, null),
+						amenities: mergeAmenities(
+							parseAmenities(row.amenitiesJson),
+							parseAmenities(row.latestAmenitiesJson),
+						),
+						properties: toProperties(row.listings),
+						compCount: preferEvidence(row.latestCompCount, row.compCount),
+						compRcnCount: preferEvidence(
+							row.latestCompRcnCount,
+							row.compRcnCount,
+						),
 						listedAt: row.listedAt?.toISOString() ?? null,
 						firstSeenAt: row.firstSeenAt?.toISOString() ?? null,
 						isFresh:
@@ -179,4 +238,101 @@ function countBy(
 	const out: Record<string, number> = {};
 	for (const alert of alerts) out[key(alert)] = (out[key(alert)] ?? 0) + 1;
 	return out;
+}
+
+/**
+ * Amenity evidence as stored with a score. Values are passed through
+ * untouched: the payload shape is additive and older rows only carry
+ * distances, so a missing name stays missing rather than being guessed.
+ */
+function parseAmenities(value: string | null): AlertAmenities | null {
+	if (value == null) return null;
+	const parsed = parseJson<Record<string, unknown> | null>(value, null);
+	if (parsed == null || typeof parsed !== "object") return null;
+	if (Object.keys(parsed).length === 0) return null;
+	return parsed as AlertAmenities;
+}
+
+/**
+ * A zero count means "not recorded" (the score predates the column), so the
+ * newest non-zero sample wins. The alert's own row stays authoritative for
+ * every score value.
+ */
+function preferEvidence(latest: number | null, stored: number | null): number {
+	if (latest != null && latest > 0) return latest;
+	return stored ?? 0;
+}
+
+const AMENITY_NAME_KEYS = [
+	"parkName",
+	"forestName",
+	"waterName",
+	"riverName",
+	"stationName",
+	"transitName",
+	"tramName",
+	"busName",
+] as const;
+
+/**
+ * Fill names missing from the alert's own payload with the listing's latest
+ * score row. Distances are kept from the alert's row: only names are lifted,
+ * and only where the alert row has none.
+ */
+function mergeAmenities(
+	base: AlertAmenities | null,
+	latest: AlertAmenities | null,
+): AlertAmenities | null {
+	if (base == null) return latest;
+	if (latest == null) return base;
+	const merged = { ...base };
+	for (const key of AMENITY_NAME_KEYS) {
+		const name = latest[key];
+		if (merged[key] == null && typeof name === "string" && name.length > 0) {
+			Object.assign(merged, { [key]: name });
+		}
+	}
+	return merged;
+}
+
+/** The listing columns the alert card renders as physical facts. */
+interface ListingFactColumns {
+	buildYear: number | null;
+	heatingType: string | null;
+	buildingType: string | null;
+	buildingMaterial: string | null;
+	condition: string | null;
+	ownership: string | null;
+	floorCount: number | null;
+	plotAreaM2: number | null;
+	market: string | null;
+	hasElevator: boolean | null;
+	hasParking: boolean | null;
+	hasGarage: boolean | null;
+	hasBasement: boolean | null;
+	hasBalcony: boolean | null;
+	hasTerrace: boolean | null;
+	hasGarden: boolean | null;
+}
+
+/** Nullable columns become plain booleans; absent flags stay false. */
+function toProperties(listing: ListingFactColumns): AlertProperties {
+	return {
+		buildYear: listing.buildYear,
+		heatingType: listing.heatingType,
+		buildingType: listing.buildingType,
+		buildingMaterial: listing.buildingMaterial,
+		condition: listing.condition,
+		ownership: listing.ownership,
+		floorCount: listing.floorCount,
+		plotAreaM2: listing.plotAreaM2,
+		market: listing.market,
+		hasElevator: Boolean(listing.hasElevator),
+		hasParking: Boolean(listing.hasParking),
+		hasGarage: Boolean(listing.hasGarage),
+		hasBasement: Boolean(listing.hasBasement),
+		hasBalcony: Boolean(listing.hasBalcony),
+		hasTerrace: Boolean(listing.hasTerrace),
+		hasGarden: Boolean(listing.hasGarden),
+	};
 }

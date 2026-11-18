@@ -107,6 +107,10 @@ export interface AlertScore {
 	fairPrice: number | null;
 	fairM2: number | null;
 	askingPrice: number | null;
+	/** Comparables behind the valuation median; 0 when not recorded. */
+	compCount: number;
+	/** RCN transactions among those comparables. */
+	compRcnCount: number;
 	eligible: boolean;
 	gateReason: string | null;
 	reasons: ScoreReason[];
@@ -819,6 +823,8 @@ export function scoreAlert(
 		fairPrice: fair,
 		fairM2: estimate?.fairM2 ?? null,
 		askingPrice: asking,
+		compCount: estimate?.confidence.totalCount ?? 0,
+		compRcnCount: estimate?.confidence.rcnCount ?? 0,
 		eligible: gateReason == null,
 		gateReason,
 		reasons,

@@ -169,7 +169,11 @@ hours in the same region and segment.
 ## Data and tables
 
 - `listing_scores`: one row per listing per score version, with components,
-  reasons, amenities and flags.
+  reasons, amenities and flags. `comp_count`/`comp_rcn_count` record how many
+  comparables the valuation median used (total and RCN-only); `0` means the
+  count was not recorded (rows written before the columns existed), not "no
+  comparables". `amenities_json` carries the nearest park, forest, water,
+  station, transit, tram and bus names next to their distances.
 - `listing_alerts`: one row per listing per day per channel, with a unique
   index that makes the job idempotent.
 - `src/lib/scoring/config.ts`: versioned policy constants.

@@ -28,6 +28,19 @@ function numberArg(name: string): number | undefined {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+/** `--listing-ids=1,2,3` for a targeted backfill. */
+function idListArg(name: string): number[] | undefined {
+	const prefix = `--${name}=`;
+	const value = process.argv.find((arg) => arg.startsWith(prefix));
+	if (!value) return undefined;
+	const ids = value
+		.slice(prefix.length)
+		.split(",")
+		.map((part) => Number(part.trim()))
+		.filter((id) => Number.isInteger(id) && id > 0);
+	return ids.length > 0 ? ids : undefined;
+}
+
 function acquireLock(): boolean {
 	mkdirSync(STATE_DIR, { recursive: true });
 	if (existsSync(LOCK_PATH)) {
@@ -73,6 +86,7 @@ async function main(): Promise<void> {
 			all: process.argv.includes("--all"),
 			limit: numberArg("limit"),
 			days: numberArg("days"),
+			listingIds: idListArg("listing-ids"),
 			dryRun: process.argv.includes("--dry-run"),
 		});
 		mkdirSync(STATE_DIR, { recursive: true });

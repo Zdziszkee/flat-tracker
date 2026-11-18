@@ -58,6 +58,12 @@ export interface ScoreRunOptions {
 	days?: number;
 	/** Hard cap for a manual/backfill run. */
 	limit?: number;
+	/**
+	 * Restrict the run to these listings. Used to backfill scores that were
+	 * stored before a field existed (for example the comparable counts on
+	 * the alert cards) without re-running the whole pool.
+	 */
+	listingIds?: readonly number[];
 	/** Compute and store scores but do not create alerts. */
 	dryRun?: boolean;
 	now?: Date;
@@ -339,13 +345,16 @@ export async function runAlertScoring(
 	let eligible = 0;
 
 	const filters = baseScoreFilters();
-	if (!options.all && !options.incremental) {
+	if (!options.all && !options.incremental && !options.listingIds?.length) {
 		filters.push(
 			sql`coalesce(${listings.firstSeenAt}, ${listings.listedAt}, ${listings.scrapedAt}) >= ${Math.floor(cutoff.getTime() / 1000)}`,
 		);
 	}
 	if (options.incremental) {
 		filters.push(missingCurrentScoreFilter());
+	}
+	if (options.listingIds?.length) {
+		filters.push(inArray(listings.id, [...new Set(options.listingIds)]));
 	}
 
 	const rows = await loadScoreRows(filters, options.limit);
@@ -538,6 +547,8 @@ async function storeScore(
 			fairPrice: score.fairPrice,
 			fairM2: score.fairM2,
 			askingPrice: score.askingPrice,
+			compCount: score.compCount,
+			compRcnCount: score.compRcnCount,
 			reasonsJson: JSON.stringify(score.reasons),
 			amenitiesJson: JSON.stringify(score.amenities),
 			flagsJson: JSON.stringify(score.flags),
@@ -560,6 +571,8 @@ async function storeScore(
 				fairPrice: score.fairPrice,
 				fairM2: score.fairM2,
 				askingPrice: score.askingPrice,
+				compCount: score.compCount,
+				compRcnCount: score.compRcnCount,
 				reasonsJson: JSON.stringify(score.reasons),
 				amenitiesJson: JSON.stringify(score.amenities),
 				flagsJson: JSON.stringify(score.flags),
