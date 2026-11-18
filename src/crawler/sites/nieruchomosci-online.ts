@@ -256,7 +256,9 @@ function detailToListing(
 		description,
 		heatingType: null,
 		propertyType:
-			propertyTypeFromValue(node["@type"]) ?? propertyTypeFromListingUrl(url),
+			// The URL slug states the category; the schema.org type is a
+			// catch-all ("Accommodation" covers flats, houses and plots).
+			propertyTypeFromListingUrl(url) ?? propertyTypeFromValue(node["@type"]),
 		features: detailFeatures(node),
 		lat: num(geo.latitude),
 		lng: num(geo.longitude),

@@ -120,9 +120,12 @@ function itemToListing(
 		description,
 		heatingType: typeof heating === "string" ? heating : null,
 		propertyType:
-			propertyTypeFromValue(offered["@type"]) ??
+			// The slug is the only honest signal here: domiporta labels every
+			// item `Accommodation`, plots included, so the schema.org type
+			// cannot tell a flat from a building plot.
 			propertyTypeFromListingUrl(url) ??
-			propertyTypeFromListingUrl(pageUrl),
+			propertyTypeFromListingUrl(pageUrl) ??
+			propertyTypeFromValue(offered["@type"]),
 		features:
 			Object.keys(amenities).length ||
 			yearBuilt != null ||

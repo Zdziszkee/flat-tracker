@@ -213,6 +213,12 @@ check(
 );
 check(
 	propertyTypeFromListingUrl(
+		"https://www.domiporta.pl/nieruchomosci/sprzedam-dzialke-cieszyn-857m2/156554732",
+	) === "plot",
+	"plot kind from a domiporta slug",
+);
+check(
+	propertyTypeFromListingUrl(
 		"https://krakow.nieruchomosci-online.pl/mieszkanie-w-apartamentowcu,wysoki-standard/1.html",
 	) === "apartment",
 	"flat kind from a nieruchomosci-online slug",
