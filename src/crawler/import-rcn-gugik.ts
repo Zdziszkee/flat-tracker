@@ -158,6 +158,17 @@ export interface RcnGugikOptions {
 	only?: string[];
 	/** Stop after N packages (smoke test against the live source). */
 	limit?: number;
+	/**
+	 * Called after every imported powiat. The refresh forwards this to the
+	 * live progress registry, so /sources shows "RCN 7/20 powiatów" instead of
+	 * an indeterminate phase for the longest import of the run.
+	 */
+	onProgress?: (progress: {
+		done: number;
+		total: number;
+		teryt: string;
+		newRows: number;
+	}) => void;
 }
 
 function resolveScope(env: string | undefined): RcnGugikScope {
@@ -682,6 +693,12 @@ export async function importRcnGugik(
 				eta_seconds: eta,
 			})}`,
 		);
+		opts.onProgress?.({
+			done: i + 1,
+			total: queue.length,
+			teryt: pkg.teryt,
+			newRows: totalNew,
+		});
 	}
 
 	// A drain this long will meet a lock or a throttled download sooner or

@@ -600,7 +600,17 @@ export async function refreshAll(
 			});
 			try {
 				const { importRcnGugik } = await import("./import-rcn-gugik.ts");
-				gugikNew = await importRcnGugik();
+				gugikNew = await importRcnGugik({
+					onProgress: ({ done, total, teryt, newRows }) => {
+						setSourceProgress("gugik-import", {
+							state: "running",
+							done,
+							total,
+							newCount: newRows,
+							log: `TERYT ${teryt}`,
+						});
+					},
+				});
 				await recordCrawlRun({
 					source: "gugik-import",
 					startedAt: new Date(gugikT0),
