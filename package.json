@@ -64,6 +64,8 @@
     "validate:tailwind-scan": "bun scripts/validate-tailwind-scan.ts",
     "validate:server-cache": "bun scripts/validate-server-cache.ts",
     "validate:scoring": "node --import tsx scripts/validate-scoring.ts",
+    "validate:facts": "bun scripts/validate-listing-facts.ts",
+    "extract:facts": "bun run db:migrate && node --import tsx scripts/extract-listing-facts.ts",
     "backfill:egib-buildings": "tsx scripts/backfill-egib-buildings.ts",
     "backfill:egib-buildings-parcel": "tsx scripts/backfill-egib-buildings-parcel.ts",
     "audit:rcn": "tsx scripts/rcn-audit.ts",
@@ -74,6 +76,8 @@
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",
     "@tailwindcss/vite": "^4.1.18",
+    "@tanstack/ai": "^1.5.0",
+    "@tanstack/ai-openai": "^1.1.1",
     "@tanstack/charts": "^0.14.0",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-query": "latest",

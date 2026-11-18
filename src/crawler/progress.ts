@@ -34,6 +34,7 @@ export type RefreshPhase =
 	| "parcel-assign"
 	| "parcel-enrich"
 	| "listing-derived"
+	| "listing-facts"
 	| "scoring"
 	| "public-investments"
 	| "finwire"

@@ -925,3 +925,29 @@ export const listingAlerts = sqliteTable(
 		index("listing_alerts_status_idx").on(t.status),
 	],
 );
+
+/**
+ * Model-extracted facts per listing, kept beside the listing instead of
+ * inside it. The portals publish no heating, building style or condition for
+ * the bulk feeds, yet sellers state them in prose; the extraction fills those
+ * columns, and this table records what the model answered, with which model
+ * and for which text. The content hash makes re-runs cheap: an unchanged
+ * description is never sent again.
+ */
+export const listingFacts = sqliteTable(
+	"listing_facts",
+	{
+		listingId: integer("listing_id")
+			.primaryKey()
+			.references(() => listings.id),
+		model: text().notNull(),
+		promptVersion: text("prompt_version").notNull(),
+		/** sha256 of the title+description the facts came from. */
+		sourceHash: text("source_hash").notNull(),
+		factsJson: text("facts_json").notNull().default(sql`'{}'`),
+		extractedAt: integer("extracted_at", { mode: "timestamp" })
+			.notNull()
+			.default(sql`(unixepoch())`),
+	},
+	(t) => [index("listing_facts_extracted_idx").on(t.extractedAt)],
+);

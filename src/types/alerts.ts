@@ -37,6 +37,8 @@ export interface AlertAmenities {
 export interface AlertProperties {
 	buildYear: number | null;
 	heatingType: string | null;
+	/** Human label resolved from the column, the portal blob or the prose. */
+	heatingLabel: string | null;
 	buildingType: string | null;
 	buildingMaterial: string | null;
 	condition: string | null;

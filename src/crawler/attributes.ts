@@ -19,6 +19,7 @@ export interface NormalizedListingAttributes {
 	plotAreaM2: number | null;
 	plotType: string | null;
 	buildingType: string | null;
+	heatingType: string | null;
 	hasBalcony: boolean | null;
 	hasTerrace: boolean | null;
 	hasGarden: boolean | null;
@@ -54,6 +55,7 @@ const EMPTY: NormalizedListingAttributes = {
 	plotAreaM2: null,
 	plotType: null,
 	buildingType: null,
+	heatingType: null,
 	hasBalcony: null,
 	hasTerrace: null,
 	hasGarden: null,
@@ -512,6 +514,16 @@ export function normalizeListingAttributes(
 				"zabudowa",
 			]),
 		),
+		// Raw label or portal code ("urban", "gas", "C.o. miejskie"); the
+		// scoring layer classifies it, this only stops the value living and
+		// dying inside the features blob.
+		heatingType: pickString(map, [
+			"heating",
+			"heating_type",
+			"heatingtype",
+			"ogrzewanie",
+			"rodzaj_ogrzewania",
+		]),
 		hasBalcony: hasFeature(
 			map,
 			facts,

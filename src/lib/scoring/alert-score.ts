@@ -21,7 +21,6 @@ import {
 	distanceScore,
 	ESTIMATE_CONFIDENCE,
 	FLAT_BUILDING_DELTAS,
-	HEATING_DELTAS,
 	PLOT_GREEN,
 	PLOT_LISTING_BASE_CONFIDENCE,
 	PLOT_LISTING_RCN_FACTOR,
@@ -39,6 +38,7 @@ import {
 	TRANSIT_MIX,
 	valueCurveScore,
 } from "./config";
+import { type HeatingEvidence, resolveHeatingEvidence } from "./heating";
 
 export interface ScoreParcelFeatures {
 	areaM2?: number | null;
@@ -75,6 +75,8 @@ export interface ScoreListingInput {
 	condition?: string | null;
 	ownership?: string | null;
 	heatingType?: string | null;
+	/** Portal attribute blob value (`features.heating`), often a short code. */
+	featuresHeating?: string | null;
 	buildingType?: string | null;
 	plotType?: string | null;
 	market?: string | null;
@@ -458,16 +460,13 @@ function materialDelta(material: string | null | undefined): number {
 	return 0;
 }
 
-function heatingDelta(heating: string | null | undefined): number {
-	const value = heating?.toLowerCase() ?? "";
-	if (/pompa|heat[ _-]?pump/u.test(value)) return HEATING_DELTAS.heatPump;
-	if (/(?:c\.?o\.?\s+)?miejsk|sie[ćc]|urban|district|c.o./u.test(value))
-		return HEATING_DELTAS.district;
-	if (/elektr/u.test(value)) return HEATING_DELTAS.electric;
-	if (/gaz|gas/u.test(value)) return HEATING_DELTAS.gas;
-	if (/w[ęe]g|coal|drewno|wood/u.test(value)) return HEATING_DELTAS.coalWood;
-	if (/olej|oil/u.test(value)) return HEATING_DELTAS.oil;
-	return 0;
+function heatingEvidence(input: ScoreListingInput): HeatingEvidence {
+	return resolveHeatingEvidence({
+		heatingType: input.heatingType,
+		featuresHeating: input.featuresHeating,
+		title: input.title,
+		description: input.description,
+	});
 }
 
 function ownershipDelta(ownership: string | null | undefined): number {
@@ -534,12 +533,18 @@ function flatProperty(input: ScoreListingInput): Component {
 	if (input.rooms != null) {
 		score += input.rooms === 1 ? -2 : input.rooms <= 3 ? 5 : 2;
 	}
-	const heating = heatingDelta(input.heatingType);
-	score += heating;
-	if (heating >= HEATING_DELTAS.district) {
-		reasons.push({ label: "district or efficient heating", impact: heating });
-	} else if (heating <= HEATING_DELTAS.gas) {
-		reasons.push({ label: "expensive heating", impact: heating });
+	const heating = heatingEvidence(input);
+	score += heating.delta;
+	if (heating.kind === "district" || heating.kind === "heatPump") {
+		reasons.push({
+			label: "district or efficient heating",
+			impact: heating.delta,
+		});
+	} else if (
+		heating.delta < 0 &&
+		(heating.kind === "gas" || heating.kind === "electric")
+	) {
+		reasons.push({ label: "expensive heating", impact: heating.delta });
 	}
 	const ownership = ownershipDelta(input.ownership);
 	score += ownership;
@@ -569,7 +574,7 @@ function houseProperty(input: ScoreListingInput): Component {
 		reasons.push({ label: "good or very good condition", impact: condition });
 	const material = materialDelta(input.buildingMaterial);
 	if (!materialDelta(input.buildingType)) score += material;
-	score += heatingDelta(input.heatingType);
+	score += heatingEvidence(input).delta;
 	score += ownershipDelta(input.ownership);
 	if (input.hasGarage) score += 6;
 	if (input.hasGarden) score += 8;
@@ -723,24 +728,46 @@ function riskComponent(
 }
 
 function isLargePanelFlat(input: ScoreListingInput): boolean {
-	return flatBuildingStyle(input)?.style === "largePanel";
+	if (flatBuildingStyle(input)?.style === "largePanel") return true;
+	// Detail pages are rate-limited, so most rows carry the building style only
+	// in the prose ("wielka płyta", "w bloku z lat 80.").
+	const prose = `${input.title}\n${input.description ?? ""}`.toLowerCase();
+	return /wielk[aeąy]\s*p[łl]yt|wielkiej\s*p[łl]ycie|p[łl]yt[aey]\s+prefabrykowan|prefabrykat|\bw\s+bloku\b|blok\w*\s+mieszkaln/u.test(
+		prose,
+	);
 }
 
-/** District heating or a heat pump; gas, electric, coal and unknown fail. */
+/**
+ * District heating or a heat pump. Gas, electric, coal, oil and unknown fail:
+ * the kind is resolved from the structured field, the portal attribute blob
+ * or the description, so a seller writing "ogrzewanie miejskie" qualifies.
+ */
 function hasDistrictHeating(input: ScoreListingInput): boolean {
-	return heatingDelta(input.heatingType) >= HEATING_DELTAS.district;
+	const { kind } = heatingEvidence(input);
+	return kind === "district" || kind === "heatPump";
 }
 
 /**
  * A plot only qualifies when the data says a house can be built: an explicit
- * building plot type, a zoning decision (WZ) or a zoning plan. A plot with no
- * such evidence is kept in the table but never alerted.
+ * building plot type or building-land class, a zoning decision (WZ), a zoning
+ * plan, or a description that calls it a building plot. A plot with no such
+ * evidence is kept in the table but never alerted.
  */
 function isBuildingPlot(input: ScoreListingInput): boolean {
 	const type = (input.plotType ?? "").toLowerCase();
 	if (type.includes("budowl") || type.includes("build")) return true;
 	const parcel = input.parcelFeatures;
-	return parcel?.zoningWz === true || (parcel?.zoningPlanCount ?? 0) > 0;
+	if (parcel?.zoningWz === true || (parcel?.zoningPlanCount ?? 0) > 0) {
+		return true;
+	}
+	// EGiB land-use class: "B" (budowlane) and its subclasses are built-up
+	// land; agricultural and forest classes are not treated as evidence.
+	const landUse = (parcel?.landUseClass ?? "").trim().toLowerCase();
+	if (landUse.startsWith("b")) return true;
+	const prose = `${input.title}\n${input.description ?? ""}`.toLowerCase();
+	return /dzia[łl]k[aęi]\s+budowlan|budowlan[aey]\s+dzia[łl]|warunki\s+zabudowy|\bwz\b|plan\s+miejscow|\bmpzp\b/u.test(
+		prose,
+	);
 }
 
 /**
@@ -753,12 +780,10 @@ function amenityBonusReasons(
 	geo: GeoUniqueness | null,
 ): Array<{ label: string; impact: number }> {
 	const reasons: Array<{ label: string; impact: number }> = [];
-	const heating = input.heatingType?.toLowerCase() ?? "";
-	if (heatingDelta(input.heatingType) >= HEATING_DELTAS.district) {
+	const heatingKind = heatingEvidence(input).kind;
+	if (heatingKind === "district" || heatingKind === "heatPump") {
 		reasons.push({
-			label: /pompa|heat[ _-]?pump/u.test(heating)
-				? "heat pump"
-				: "municipal heating",
+			label: heatingKind === "heatPump" ? "heat pump" : "municipal heating",
 			impact: AMENITY_BONUSES.districtHeating,
 		});
 	}

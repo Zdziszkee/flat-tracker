@@ -113,6 +113,14 @@ const SCORE_ROW_COLUMNS = {
 	condition: listings.condition,
 	ownership: listings.ownership,
 	heatingType: listings.heatingType,
+	// The portal attribute blob carries the heating as a short code
+	// ("urban", "gas") on detail-crawled rows; `json_valid` keeps a
+	// malformed blob from aborting the whole scoring query.
+	featuresHeating: sql<
+		string | null
+	>`case when json_valid(${listings.features}) then json_extract(${listings.features}, '$.heating') end`.as(
+		"features_heating",
+	),
 	buildingType: listings.buildingType,
 	plotType: listings.plotType,
 	market: listings.market,
@@ -272,6 +280,7 @@ async function scoreListingRow(
 		condition: row.condition,
 		ownership: row.ownership,
 		heatingType: row.heatingType,
+		featuresHeating: row.featuresHeating,
 		buildingType: row.buildingType,
 		plotType: row.plotType,
 		market: row.market,

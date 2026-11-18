@@ -300,6 +300,12 @@ const PROCESSING_SOURCES: SourceDescriptor[] = [
 		group: "processing",
 	},
 	{
+		id: "listing-facts",
+		name: "Ekstrakcja faktów z opisów (LLM: ogrzewanie, budynek, stan)",
+		kind: "enrich",
+		group: "processing",
+	},
+	{
 		id: "scoring",
 		name: "Alert scoring — top 5% offers (flats, houses, plots)",
 		kind: "scoring",

@@ -149,7 +149,7 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 			district: l.district,
 			address: l.address,
 			description: l.description,
-			heatingType: l.heatingType,
+			heatingType: l.heatingType ?? f.heatingType,
 			propertyType: l.propertyType,
 			features: l.features,
 			market: f.market,

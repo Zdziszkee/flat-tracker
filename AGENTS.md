@@ -100,6 +100,8 @@ bun run validate:powiats  # dataset sanity: counts, city centres, overlaps
 bun run validate:finwire  # finwire page parsing + chain-index math
 bun run validate:upside   # forward-looking upside/risk math
 bun run validate:scoring  # alert-score rules, gates and stored-alert invariants
+bun run extract:facts     # LLM listing facts (heating, building style, condition) from prose
+bun run validate:facts    # extraction prompt, parsing and normalization rules
 bun run build:forecasts   # refresh data/forecasts/models.json (price/rent/STR paths + calibrated bands)
 bun run validate:forecast # deterministic forecast, conformal calibration and IRR math
 bun run validate:tailwind-scan # Tailwind scanner stays out of src/data (timeout-guarded)
@@ -251,6 +253,46 @@ filename) so
 duplicate offers and chunked drain runs never re-query. Pass
 `--local-only` to the script to skip Photon (e.g. while the shared
 instance throttles).
+
+## Listing facts from prose (LLM)
+
+The bulk portals publish almost no physical facts: of ~11.6k visible flats a
+few hundred carry `listings.heating_type`, none of the list feeds carry a
+building style, and the otodom detail attributes (which do) are rate-limited
+to a handful of pages per run. Sellers still describe all of it in the
+listing text ("ogrzewanie miejskie", "kamienica po remoncie", "działka
+budowlana z WZ"), so a model reads the title and description and returns a
+small, fixed vocabulary the scoring layer already understands.
+
+- **Where**: `src/lib/llm/` — `client.ts` (transport), `listing-facts.ts`
+  (prompt, parsing, normalization; pure) and `extract.ts` (DB batching,
+  promotion). Transport is TanStack AI (`chat()` with the
+  `openaiCompatibleText` adapter), not a hand-rolled fetch.
+- **What it fills**: `heating_type`, `building_type`, `plot_type`,
+  `building_material`, `condition`, `ownership`, `build_year`,
+  `plot_area_m2`, `floor`, `floor_count` and the amenity flags. Only empty
+  columns are written (`coalesce(column, value)`), so a portal-published
+  fact always wins. Amenity flags go in as 0/1: better-sqlite3 binds no
+  booleans.
+- **Storage**: `listing_facts` keeps the answer plus provenance (model,
+  prompt version, `source_hash` of the text it read, timestamp). An
+  unchanged title+description is never sent again; `--force` re-reads
+  everything, and `FACT_PROMPT_VERSION` participates in the hash so a better
+  prompt re-visits the corpus.
+- **Rejects**: the model is a data source, not a trusted one. Unknown ids
+  are dropped, values outside the vocabulary become null, numbers outside a
+  plausible range become null, a negated mention stays unknown. `bun run
+  validate:facts` pins those rules.
+- **Runs**: the hourly refresh does a bounded slice (phase `listing-facts`,
+  `LLM_FACTS_PER_REFRESH` = 300, skipped and reported when
+  `OPENCODE_GO_API_KEY` is unset) before scoring, so the gates see the new
+  columns. The backlog is a manual drain: `bun run extract:facts`
+  (`--limit 0` for everything, `--kind plot`, `--dry-run`).
+- **Why it matters for alerts**: the flat gate needs municipal heating and
+  the plot gate needs building evidence, and both live mostly in prose. The
+  regex fallback in `src/lib/scoring/heating.ts` still runs (it costs
+  nothing and covers rows the model has not seen yet), but the extraction is
+  what keeps the leaderboard populated.
 
 ## Scheduled (hourly) refresh
 
@@ -598,6 +640,7 @@ with the build's peak at ~2 GB. If you touch the loader, watch
 | OpenStreetMap (Geofabrik) roads | Public road centre lines for parcel access and frontage | Same Małopolskie + Śląskie PBF extracts as the building index. `osm-roads.ts` builds `osm_roads` |
 | Kraków MSIP ArcGIS | MPZP zones, WZ decisions, building permits | `https://msip3.um.krakow.pl/server/rest/services/Planowanie/BP_MPZP/MapServer`, `.../Architektura/AU_Sos/MapServer`; point queries in EPSG:4326, public |
 | Kraków MSIP flood | Flood hazard polygons | `https://msip3.um.krakow.pl/hosting/rest/services/Mapy_powodziowe/Mapy_ryzyka_powodziowego_hosting/MapServer`; some legacy layers reject queries, skipped |
+| OpenCode Go (Hy4 flash Free) | Listing facts read out of the title and description: heating, building style, plot type, material, condition, ownership, build year, plot area, floor, amenities | OpenAI-compatible `POST {LLM_API_BASE}/chat/completions` through TanStack AI (`chat()` + `openaiCompatibleText`) in `src/lib/llm/client.ts`. The endpoint requires a non-generic User-Agent and an `x-opencode-session` header (Cloudflare 403 `error code: 1010` otherwise). Key `OPENCODE_GO_API_KEY` in `.env.local`, model `LLM_MODEL` (default `hy4-flash-free`), base `LLM_API_BASE` (default `https://opencode.ai/inference/go/v1`). Phase `listing-facts`, drained by `bun run extract:facts` |
 | Copernicus DEM GLO-30 | Elevation and slope | AWS Open Data COG tiles `https://copernicus-dem-30m.s3.amazonaws.com/...`; `terrain.ts` caches the eight tiles covering both voivodeships |
 
 ### Price indices and the external city fallback

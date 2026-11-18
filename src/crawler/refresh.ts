@@ -73,6 +73,15 @@ const BLOCK_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 const SCORE_BATCH_LIMIT = 2000;
 
 /**
+ * How many offers a single refresh may send to the model for fact
+ * extraction. The backlog is the bulk of the corpus (the portals publish no
+ * heating), so the hourly run takes a slice and `bun run extract:facts`
+ * drains the rest; the run rate matches the free tier's patience, not a
+ * deadline.
+ */
+const LLM_FACTS_PER_REFRESH = Number(process.env.LLM_FACTS_PER_REFRESH ?? 300);
+
+/**
  * Label for the GUGiK import scope, mirroring `resolveScope` in
  * `import-rcn-gugik.ts` (that helper is module-private). The scope is an
  * import setting rather than a metric, so it is reported in the run log.
@@ -207,6 +216,9 @@ export async function refreshAll(
 		"listing-derived",
 		"public-investments",
 		"finwire",
+		// Registered only with a key: without one the phase reports itself
+		// as skipped rather than leaving a pending row on /sources.
+		...(process.env.OPENCODE_GO_API_KEY?.trim() ? ["listing-facts"] : []),
 		...(opts.includeAirbnbEnrich !== false ? ["airbnb-enrich"] : []),
 		"scoring",
 	]);
@@ -885,6 +897,72 @@ export async function refreshAll(
 				startedAt: derivedT0,
 				err,
 				context: "listing-derived recompute failed",
+			});
+		}
+
+		// Fill the physical facts the portals omit (heating, building style,
+		// condition) from the prose. Bounded per run and skipped without an
+		// API key: the scoring gates depend on these columns, so this runs
+		// before scoring, and `extract:facts` drains the backlog on demand.
+		setPhase("listing-facts");
+		const factsT0 = Date.now();
+		setSourceProgress("listing-facts", {
+			state: "running",
+			startedAt: new Date(factsT0).toISOString(),
+		});
+		try {
+			const { llmConfigured } = await import("../lib/llm/client.ts");
+			if (!llmConfigured()) {
+				// No key is a valid deployment, not a failure: report it once
+				// instead of leaving the row pending forever.
+				await recordCrawlRun({
+					source: "listing-facts",
+					startedAt: new Date(factsT0),
+					finishedAt: new Date(),
+					pages: 0,
+					newCount: 0,
+					updatedCount: 0,
+					error: "OPENCODE_GO_API_KEY not set — LLM fact extraction disabled",
+				});
+				setSourceProgress("listing-facts", {
+					state: "ok",
+					finishedAt: new Date().toISOString(),
+				});
+			} else {
+				const { extractListingFacts } = await import("../lib/llm/extract.ts");
+				const facts = await extractListingFacts({
+					limit: LLM_FACTS_PER_REFRESH,
+				});
+				console.log(
+					`[refresh] listing-facts: ${facts.stored} stored, ` +
+						`${facts.promoted} promoted, ${facts.errors} errors`,
+				);
+				await recordCrawlRun({
+					source: "listing-facts",
+					startedAt: new Date(factsT0),
+					finishedAt: new Date(),
+					pages: Math.ceil(facts.sent / 10),
+					newCount: facts.stored,
+					updatedCount: facts.promoted,
+					...(facts.errors > 0
+						? {
+								error: facts.firstErrors[0] ?? `${facts.errors} batches failed`,
+							}
+						: {}),
+				});
+				setSourceProgress("listing-facts", {
+					state: "ok",
+					finishedAt: new Date().toISOString(),
+					newCount: facts.stored,
+					updatedCount: facts.promoted,
+				});
+			}
+		} catch (err) {
+			await recordFailure({
+				source: "listing-facts",
+				startedAt: factsT0,
+				err,
+				context: "LLM fact extraction failed",
 			});
 		}
 

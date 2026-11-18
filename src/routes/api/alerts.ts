@@ -1,11 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { json } from "@tanstack/react-start";
-import { and, asc, desc, eq, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 
 import { db } from "#/db/index";
 import { listingAlerts, listingScores, listings } from "#/db/schema";
 import { ALERT_TOP_OFFERS, SCORE_VERSION } from "#/lib/scoring/config";
+import { HEATING_LABELS, resolveHeatingEvidence } from "#/lib/scoring/heating";
 import type {
 	AlertAmenities,
 	AlertDto,
@@ -88,6 +89,10 @@ export const Route = createFileRoute("/api/alerts")({
 						listings: {
 							buildYear: listings.buildYear,
 							heatingType: listings.heatingType,
+							description: listings.description,
+							featuresHeating: sql<
+								string | null
+							>`case when json_valid(${listings.features}) then json_extract(${listings.features}, '$.heating') end`,
 							buildingType: listings.buildingType,
 							buildingMaterial: listings.buildingMaterial,
 							condition: listings.condition,
@@ -326,6 +331,8 @@ function mergeAmenities(
 interface ListingFactColumns {
 	buildYear: number | null;
 	heatingType: string | null;
+	description: string | null;
+	featuresHeating: string | null;
 	buildingType: string | null;
 	buildingMaterial: string | null;
 	condition: string | null;
@@ -344,9 +351,23 @@ interface ListingFactColumns {
 
 /** Nullable columns become plain booleans; absent flags stay false. */
 function toProperties(listing: ListingFactColumns): AlertProperties {
+	// The heating column is mostly empty for the bulk portals, so the card
+	// shows the resolved kind and marks prose-sourced evidence as such.
+	const heating = resolveHeatingEvidence({
+		heatingType: listing.heatingType,
+		featuresHeating: listing.featuresHeating,
+		description: listing.description,
+	});
+	const heatingLabel =
+		heating.kind === "unknown"
+			? null
+			: heating.source === "description"
+				? `${HEATING_LABELS[heating.kind]} (z opisu)`
+				: HEATING_LABELS[heating.kind];
 	return {
 		buildYear: listing.buildYear,
 		heatingType: listing.heatingType,
+		heatingLabel,
 		buildingType: listing.buildingType,
 		buildingMaterial: listing.buildingMaterial,
 		condition: listing.condition,

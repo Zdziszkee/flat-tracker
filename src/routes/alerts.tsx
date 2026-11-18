@@ -115,9 +115,10 @@ function factEntries(
 		{
 			label: "Ogrzewanie",
 			value:
-				properties.heatingType != null
+				properties.heatingLabel ??
+				(properties.heatingType != null
 					? humanizeToken(properties.heatingType)
-					: null,
+					: null),
 		},
 		{
 			label: "Materiał",

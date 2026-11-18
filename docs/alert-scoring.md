@@ -68,9 +68,19 @@ scored and kept in the table, but it can never enter the leaderboard
   district heating or a heat pump. Gas, electric, coal and unknown heating
   are excluded.
 - **Plots**: building evidence only. An explicit building plot type, a
-  zoning decision (WZ) or a zoning plan qualifies; farmland, recreational
-  land and plots with no zoning evidence do not.
+  built-up EGiB land-use class, a zoning decision (WZ) or a zoning plan
+  qualifies; farmland, recreational land and plots with no such evidence do
+  not.
 - **Comparable sample**: fewer than three comps in the estimate.
+
+Heating and building style are read from three places, in order of
+authority: the structured column, the portal attribute blob
+(`features.heating`), and the prose. The prose is covered twice: the cheap
+regular-expression pass in `src/lib/scoring/heating.ts` (runs during
+scoring, so every offer gets it) and the model extraction in
+`src/lib/llm/` (phase `listing-facts`), which fills the columns for the
+corpus. Neither guesses: no evidence means unknown, and unknown fails the
+municipal-heating gate.
 
 ### Plot green/water tiers
 

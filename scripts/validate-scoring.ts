@@ -188,7 +188,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.11",
+		SCORE_VERSION === "2027.12",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -369,14 +369,102 @@ check(
 	tenementFlatGate.eligible,
 	tenementFlatGate.gateReason,
 );
+// The heating column is mostly empty on the bulk portals, so prose and the
+// portal attribute blob carry the evidence.
+const proseDistrict = scoreAlert(
+	{
+		...flat,
+		heatingType: null,
+		description: "Rozkładowe, po remoncie. Ogrzewanie: miejskie, niski czynsz.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"prose saying municipal heating satisfies the flat gate",
+	proseDistrict.eligible,
+	proseDistrict.gateReason,
+);
+const proseGas = scoreAlert(
+	{
+		...flat,
+		heatingType: null,
+		description: "Do mieszkania należy piec gazowy dwufunkcyjny.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"prose saying gas heating is excluded",
+	!proseGas.eligible && proseGas.gateReason === "no_district_heating",
+	proseGas.gateReason,
+);
+const proseNegated = scoreAlert(
+	{
+		...flat,
+		heatingType: null,
+		description: "Brak ogrzewania miejskiego, grzejniki elektryczne.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"a negated municipal mention does not pass the gate",
+	!proseNegated.eligible &&
+		proseNegated.gateReason === "no_district_heating",
+	proseNegated.gateReason,
+);
+const attributeDistrict = scoreAlert(
+	{ ...flat, heatingType: null, featuresHeating: "urban" },
+	estimate(800000),
+	geo(),
+);
+check(
+	"the otodom detail attribute satisfies the flat gate",
+	attributeDistrict.eligible,
+	attributeDistrict.gateReason,
+);
+const heatPumpFlat = scoreAlert(
+	{
+		...flat,
+		heatingType: null,
+		description: "Nowy budynek z pompą ciepła i rekuperacją.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"a heat pump satisfies the flat gate",
+	heatPumpFlat.eligible,
+	heatPumpFlat.gateReason,
+);
+const proseBlock = scoreAlert(
+	{
+		...flat,
+		buildingType: null,
+		description: "Mieszkanie w wielkiej płycie, po termomodernizacji.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"prose saying large-panel construction excludes the flat",
+	!proseBlock.eligible && proseBlock.gateReason === "large_panel_block",
+	proseBlock.gateReason,
+);
 const farmland = scoreAlert(
 	{
 		...plot,
+		// No building evidence anywhere: the shared fixture's own title and
+		// prose say "działka budowlana", which now counts as evidence.
+		title: "Działka rolna 1000 m2",
+		description: "Łąka z dostępem do drogi gminnej.",
 		plotType: "rolna",
 		parcelFeatures: {
 			...plot.parcelFeatures,
 			zoningWz: false,
 			zoningPlanCount: 0,
+			landUseClass: "RIIIa",
 		},
 	},
 	estimate(300000),
@@ -400,6 +488,46 @@ check(
 	"a plot with a zoning decision stays eligible",
 	wzPlot.eligible,
 	wzPlot.gateReason,
+);
+const proseBuildingPlot = scoreAlert(
+	{
+		...plot,
+		plotType: null,
+		description: "Działka budowlana, media w drodze.",
+		parcelFeatures: {
+			...plot.parcelFeatures,
+			zoningWz: false,
+			zoningPlanCount: 0,
+			landUseClass: "RIIIa",
+		},
+	},
+	estimate(300000),
+	geo(),
+);
+check(
+	"a plot described as a building plot stays eligible",
+	proseBuildingPlot.eligible,
+	proseBuildingPlot.gateReason,
+);
+const landUsePlot = scoreAlert(
+	{
+		...plot,
+		plotType: null,
+		description: null,
+		parcelFeatures: {
+			...plot.parcelFeatures,
+			zoningWz: false,
+			zoningPlanCount: 0,
+			landUseClass: "Bp",
+		},
+	},
+	estimate(300000),
+	geo(),
+);
+check(
+	"a built-up EGiB land-use class counts as building evidence",
+	landUsePlot.eligible,
+	landUsePlot.gateReason,
 );
 
 // --- Plot green tiers ---------------------------------------------------

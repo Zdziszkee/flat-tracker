@@ -232,6 +232,13 @@
       "when": 1795009118357,
       "tag": "0032_motionless_punisher",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1795011706735,
+      "tag": "0033_black_vargas",
+      "breakpoints": true
     }
   ]
 }
