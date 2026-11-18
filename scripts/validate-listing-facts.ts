@@ -22,12 +22,15 @@ import { join, relative } from "node:path";
 import {
 	DESCRIPTION_LIMIT,
 	EXPOSURE_TOKENS,
+	FACT_BATCH_CHAR_BUDGET,
 	FACT_BATCH_SIZE,
 	FACT_PROMPT_VERSION,
 	FACT_VALUES,
 	asExposure,
 	extractJsonObject,
+	factBatches,
 	factPrompt,
+	factPromptCost,
 	factRowOutcomes,
 	factTextHash,
 	isEmptyFacts,
@@ -1066,27 +1069,57 @@ check(
 	}),
 );
 
-// --- Prompt size ---------------------------------------------------------
-const longBatch = Array.from({ length: FACT_BATCH_SIZE }, (_, index) => ({
+// --- Batching by payload, not by row count ------------------------------
+// Whole ads can be long, so a request is bounded by characters and sends
+// fewer offers instead of truncated prose. A fact in the last paragraph is
+// exactly what the short window used to lose.
+const longAds = Array.from({ length: FACT_BATCH_SIZE }, (_, index) => ({
 	id: 900 + index,
 	title: `Mieszkanie ${index}`,
 	description: "ogrzewanie miejskie, kamienica, po remoncie. ".repeat(100),
 }));
-const [batchSystem, batchUser] = factPrompt(longBatch);
-const batchChars =
-	(batchSystem?.content.length ?? 0) + (batchUser?.content.length ?? 0);
+const longBatches = factBatches(longAds);
+const promptChars = (batch: typeof longAds): number => {
+	const [system, user] = factPrompt(batch);
+	return (system?.content.length ?? 0) + (user?.content.length ?? 0);
+};
 console.log(
-	`     prompt: ${batchSystem?.content.length ?? 0} system + ${batchUser?.content.length ?? 0} user = ${batchChars} chars for ${FACT_BATCH_SIZE} offers (${DESCRIPTION_LIMIT} chars each)`,
+	`     prompt: ${longBatches.length} request(s) for ${FACT_BATCH_SIZE} long ads, ` +
+		`largest ${Math.max(...longBatches.map(promptChars))} chars ` +
+		`(budget ${FACT_BATCH_CHAR_BUDGET}, ${DESCRIPTION_LIMIT} chars per ad)`,
 );
 check(
-	"a full batch keeps a sane payload (under 40k chars)",
-	batchChars < 40_000,
-	batchChars,
+	"a whole-ad prompt is split by payload, so no request exceeds the budget",
+	longBatches.length > 1 &&
+		longBatches.every(
+			(batch) =>
+				batch.reduce((sum, row) => sum + factPromptCost(row), 0) <=
+				FACT_BATCH_CHAR_BUDGET,
+		),
+	{ batches: longBatches.length, chars: longBatches.map(promptChars) },
 );
 check(
-	"the description window is applied to the prompt",
-	(batchUser?.content.length ?? 0) < FACT_BATCH_SIZE * (DESCRIPTION_LIMIT + 120),
-	batchUser?.content.length,
+	"batching keeps every offer in exactly one batch, in order",
+	longBatches
+		.flat()
+		.map((row) => row.id)
+		.join(",") === longAds.map((row) => row.id).join(","),
+);
+const huge = [
+	{ id: 950, title: "Ad", description: "x".repeat(DESCRIPTION_LIMIT) },
+];
+const hugeBatches = factBatches(huge, 10, 5_000);
+check(
+	"one ad larger than the budget is sent alone, not truncated",
+	hugeBatches.length === 1 &&
+		hugeBatches[0]?.length === 1 &&
+		(factPrompt(hugeBatches[0] ?? [])[1]?.content.includes("x".repeat(500)) ??
+			false),
+);
+check(
+	"the prompt carries the whole stored description",
+	promptDescription("y".repeat(DESCRIPTION_LIMIT + 50)).length ===
+		DESCRIPTION_LIMIT,
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);

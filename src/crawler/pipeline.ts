@@ -1,6 +1,10 @@
 import { Data, Effect, Schedule, Schema } from "effect";
 
 import { briefError } from "#/lib/error-report";
+import {
+	extractFactsForListings,
+	type PreparedListingFacts,
+} from "#/lib/llm/extract";
 import { scoreArrivals } from "#/lib/scoring/run";
 import { crawlSite } from "./crawler.ts";
 import { type SaveReport, saveListings } from "./db-sink.ts";
@@ -115,8 +119,17 @@ const runCrawl = (
 			catch: (cause) => crawlError(adapter.id, cause),
 		});
 
+		// Read the facts of this crawl's own offers before they are stored, so
+		// every stored row already carries heating/building/plot evidence and
+		// the score computed right after the save never runs against a blank
+		// row. A model failure is isolated: the offers are stored without facts
+		// and the refresh's repair phase retries them.
+		const facts = saveToDb
+			? yield* factsEffect(adapter.id, validated)
+			: new Map<string, PreparedListingFacts>();
+
 		const saved = saveToDb
-			? yield* saveEffect(adapter.id, validated)
+			? yield* saveEffect(adapter.id, validated, facts)
 			: { newCount: 0, updatedCount: 0, newIds: [] as number[] };
 
 		// Fresh arrivals are scored the moment they are saved and may be
@@ -140,11 +153,55 @@ const runCrawl = (
 const saveEffect = (
 	site: string,
 	list: readonly import("./types.ts").Listing[],
+	facts: ReadonlyMap<string, PreparedListingFacts>,
 ): Effect.Effect<SaveReport, CrawlError> =>
 	Effect.tryPromise({
-		try: () => saveListings([...list]),
+		try: () => saveListings([...list], facts),
 		catch: (cause) => crawlError(site, cause),
 	});
+
+/**
+ * Read listing facts for the crawl's offers, never failing the crawl.
+ *
+ * The step is the first half of the per-offer flow (scrape -> facts -> store
+ * -> score): it sends this run's title+description to the extractor, which
+ * skips a text it has already read and returns a `source:externalId` map the
+ * sink writes together with the row. A failure here is logged once and turns
+ * into an empty map, because a model outage must not stop a crawl from
+ * storing offers; those rows are picked up by the `listing-facts` repair
+ * phase.
+ */
+const factsEffect = (
+	site: string,
+	list: readonly import("./types.ts").Listing[],
+): Effect.Effect<ReadonlyMap<string, PreparedListingFacts>, never> =>
+	Effect.tryPromise({
+		try: () => extractFactsForListings(list),
+		catch: (cause) => crawlError(site, cause),
+	}).pipe(
+		Effect.tap((summary) =>
+			Effect.sync(() => {
+				if (summary.eligible === 0) return;
+				console.log(
+					`[${site}] facts: ${summary.eligible} offers, ${summary.sent} read, ` +
+						`${summary.stored} with facts, ${summary.empty} empty, ` +
+						`${summary.skipped} cached, ${summary.errors} error(s) ` +
+						`in ${Math.round(summary.durationMs / 100) / 10}s`,
+				);
+				const first = summary.firstErrors[0];
+				if (first) {
+					console.error(`[${site}] facts batch failed: ${first}`);
+				}
+			}),
+		),
+		Effect.map((summary) => summary.prepared),
+		Effect.catchAll((error) =>
+			Effect.sync(() => {
+				console.error(`[${site}] fact extraction failed: ${briefError(error)}`);
+				return new Map<string, PreparedListingFacts>();
+			}),
+		),
+	);
 
 /**
  * Score the offers a crawl just saved. A failure is logged once and

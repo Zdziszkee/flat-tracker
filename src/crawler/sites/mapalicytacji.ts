@@ -399,7 +399,7 @@ function detailToListing(
 		floor,
 		district: cleanText(str(it?.city)) ?? null,
 		address,
-		description: description ? description.slice(0, 2000) : null,
+		description: description ?? null,
 		heatingType: null,
 		propertyType,
 		features: JSON.stringify(features),

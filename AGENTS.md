@@ -267,10 +267,19 @@ listing text ("ogrzewanie miejskie", "kamienica po remoncie", "działka
 budowlana z WZ"), so a model reads the title and description and returns a
 small, fixed vocabulary the scoring layer already understands.
 
+- **Order of a crawl** (every source, every offer): the adapter scrapes the
+  title and the whole description, `runCrawl` sends that text to the model,
+  the sink stores the offer together with the facts it just read, and only
+  then does `scoreArrivals` score it. The pipeline is
+  `crawlSite -> extractFactsForListings -> saveListings -> scoreArrivals`, so
+  a stored row is never scored against a blank heating/building/plot column,
+  and the day's top-25 cut only ever sees enriched offers. A model outage
+  never stops storage: a failed batch leaves the offers saved without facts
+  and the `listing-facts` repair phase retries them.
 - **Where**: `src/lib/llm/` — `client.ts` (transport), `listing-facts.ts`
-  (prompt, parsing, normalization; pure) and `extract.ts` (DB batching,
-  promotion). Transport is TanStack AI (`chat()` with the
-  `openaiCompatibleText` adapter), not a hand-rolled fetch.
+  (prompt, parsing, normalization; pure) and `extract.ts` (batching, the
+  inline pre-store pass, promotion). Transport is TanStack AI (`chat()` with
+  the `openaiCompatibleText` adapter), not a hand-rolled fetch.
 - **What each source can give us**: `docs/llm-extraction.md` records the
   per-source answer (ten sampled offers each plus a column fill-rate count):
   which sources publish full prose (otodom detail, olx, sprzedajemy,
@@ -299,30 +308,39 @@ small, fixed vocabulary the scoring layer already understands.
   everything, and `FACT_PROMPT_VERSION` participates in the hash so a better
   prompt re-visits the corpus once.
 - **One call per offer, ever** (prompt v4): the hash covers the exact payload
-  the model sees (`title` + the 1800-char description slice), so a change
-  past the window is not a reason to call again. An answer that names nothing
-  (`{}`) is stored with its hash too, so a text with no facts is never
-  retried; a row the model omits from an otherwise valid answer is stored the
-  same way, while a failed or unparseable batch writes nothing and stays
-  retryable. Ids are deduped per run, and title-only offers (komornik notices,
-  investmap rows, whose facts live in the title) are part of the input set.
-  `bun run validate:facts` pins the whole contract, including that
+  the model sees (`title` + the stored description), so an unchanged ad is
+  never re-read and a changed description is. The description is stored whole
+  under one 20 000-char cap (`src/lib/listing-text.ts`); adapters no longer
+  slice it at 2 000 chars, because the fact a gate needs (heating, building
+  style, plot media) is often in the last paragraph, and the request size is
+  bounded by a character budget instead (`FACT_BATCH_CHAR_BUDGET` = 24 000,
+  so a batch sends fewer long ads rather than truncated text). An answer that
+  names nothing (`{}`) is stored with its hash too, so a text with no facts is
+  never retried; a row the model omits from an otherwise valid answer is
+  stored the same way, while a failed or unparseable batch writes nothing and
+  stays retryable. Ids are deduped per run, and title-only offers (komornik
+  notices, investmap rows, whose facts live in the title) are part of the
+  input set. `bun run validate:facts` pins the whole contract, including that
   `src/lib/llm/extract.ts` is the only place that calls the model: scoring and
   alerting only read `listing_facts`.
 - **Rejects**: the model is a data source, not a trusted one. Unknown ids
   are dropped, values outside the vocabulary become null, numbers outside a
   plausible range become null, a negated mention stays unknown. `bun run
   validate:facts` pins those rules.
-- **Runs**: the hourly refresh does a bounded slice (phase `listing-facts`,
-  `LLM_FACTS_PER_REFRESH` = 300, skipped and reported when
-  `OPENCODE_GO_API_KEY` is unset) before scoring, so the gates see the new
-  columns. The backlog is a manual drain: `bun run extract:facts`
-  (`--limit 0` for everything, `--kind plot`, `--dry-run`).
+- **Runs**: every site crawl reads its own offers before storing them (the
+  `facts:` line in the crawl log is that pass). The hourly refresh keeps a
+  bounded repair phase (`listing-facts`, `LLM_FACTS_PER_REFRESH` = 300,
+  skipped and reported when `OPENCODE_GO_API_KEY` is unset) for offers a
+  failed batch left without facts, for rows whose text changed and for the
+  legacy backlog; it runs before scoring and re-scores the offers whose gates
+  the new facts can flip. The backlog is a manual drain: `bun run
+  extract:facts` (`--limit 0` for everything, `--kind plot`, `--dry-run`).
 - **Why it matters for alerts**: the flat gate needs municipal heating and
-  the plot gate needs building evidence, and both live mostly in prose. The
-  regex fallback in `src/lib/scoring/heating.ts` still runs (it costs
-  nothing and covers rows the model has not seen yet), but the extraction is
-  what keeps the leaderboard populated.
+  the plot gate needs building evidence, and both live mostly in prose. There
+  is no regex fallback: `src/lib/scoring/heating.ts` resolves the structured
+  column, the portal attribute blob and the stored fact, and nothing else, so
+  an ad whose text the model has not read yet is `unknown` (and can only
+  fill a fallback slot).
 
 ## Scheduled (hourly) refresh
 
@@ -400,7 +418,9 @@ the component breakdown and rationale.
 
 - **New offers are scored on arrival and update the day's list**
   (`scoreArrivals`, called from `src/crawler/pipeline.ts` after `saveListings`
-  returns `newIds`), not only at the end of the refresh. Once the arrivals are
+  returns `newIds`), not only at the end of the refresh. The crawl's own
+  facts are read before the save, so the score sees them; only then is the
+  row scored and the day's cut rebuilt. Once the arrivals are
   scored, `scoreArrivals` rebuilds today's leaderboard immediately (at most
   once per `ALERT_REBUILD_MIN_INTERVAL_MS` = 15 s, because a site can deliver
   hundreds of offers in one burst), so /alerts grows during a crawl instead of
@@ -408,7 +428,8 @@ the component breakdown and rationale.
   rebuild, since a rebuild replaces the day's cut. `/alerts` polls the feed
   every 30 s for the same reason. Scoring is advisory there: a failure is logged
   and swallowed, and the final phase cleans up whatever was missed. Scoring
-  per site means an offer is scored within seconds of being stored.
+  per site means an offer is scored within seconds of being stored, with its
+  heating/building/plot evidence already in the row.
 - **Fresh-arrival alerts compare against the last 24 hours**: a newly
   scored offer that passes the gates is appended to today's list when it
   sits inside the top `ALERT_FRESHNESS.topPercent` (5%, at least one
@@ -772,7 +793,7 @@ with the build's peak at ~2 GB. If you touch the loader, watch
 | OpenStreetMap (Geofabrik) roads | Public road centre lines for parcel access and frontage | Same Małopolskie + Śląskie PBF extracts as the building index. `osm-roads.ts` builds `osm_roads` |
 | Kraków MSIP ArcGIS | MPZP zones, WZ decisions, building permits | `https://msip3.um.krakow.pl/server/rest/services/Planowanie/BP_MPZP/MapServer`, `.../Architektura/AU_Sos/MapServer`; point queries in EPSG:4326, public |
 | Kraków MSIP flood | Flood hazard polygons | `https://msip3.um.krakow.pl/hosting/rest/services/Mapy_powodziowe/Mapy_ryzyka_powodziowego_hosting/MapServer`; some legacy layers reject queries, skipped |
-| OpenCode Go (Hy4 flash Free) | Listing facts read out of the title and description: heating, building style, plot type, material, condition, ownership, build year, plot area, floor, amenities | OpenAI-compatible `POST {LLM_API_BASE}/chat/completions` through TanStack AI (`chat()` + `openaiCompatibleText`) in `src/lib/llm/client.ts`. The endpoint requires a non-generic User-Agent and an `x-opencode-session` header (Cloudflare 403 `error code: 1010` otherwise). Key `OPENCODE_GO_API_KEY` in `.env.local`, model `LLM_MODEL` (default `hy4-flash-free`), base `LLM_API_BASE` (default `https://opencode.ai/inference/go/v1`). Phase `listing-facts`, drained by `bun run extract:facts` |
+| OpenCode Go (Hy4 flash Free) | Listing facts read out of the title and description: heating, building style, plot type, material, condition, ownership, build year, plot area, floor, amenities | OpenAI-compatible `POST {LLM_API_BASE}/chat/completions` through TanStack AI (`chat()` + `openaiCompatibleText`) in `src/lib/llm/client.ts`. The endpoint requires a non-generic User-Agent and an `x-opencode-session` header (Cloudflare 403 `error code: 1010` otherwise). Key `OPENCODE_GO_API_KEY` in `.env.local`, model `LLM_MODEL` (default `hy4-flash-free`), base `LLM_API_BASE` (default `https://opencode.ai/inference/go/v1`). Read inline by every crawl before the offer is stored, repaired by the `listing-facts` phase, drained by `bun run extract:facts` |
 | Copernicus DEM GLO-30 | Elevation and slope | AWS Open Data COG tiles `https://copernicus-dem-30m.s3.amazonaws.com/...`; `terrain.ts` caches the eight tiles covering both voivodeships |
 
 ### Price indices and the external city fallback

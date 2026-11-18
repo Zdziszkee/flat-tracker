@@ -183,7 +183,7 @@ function offerToListing(
 		floor,
 		district,
 		address,
-		description: description ? description.slice(0, 2000) : null,
+		description: description ?? null,
 		heatingType: propertyValue(item.additionalProperty, "Ogrzewanie"),
 		propertyType,
 		features: JSON.stringify(features),

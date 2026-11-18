@@ -770,7 +770,7 @@ export const budujesieAdapter: CheerioAdapter = {
 					opText,
 					replies.map((p) => p.text),
 				),
-				description: opText ? opText.slice(0, 2000) : card.description,
+				description: opText ?? card.description,
 				features: JSON.stringify(features),
 			};
 			const cache = loadTopicCache();

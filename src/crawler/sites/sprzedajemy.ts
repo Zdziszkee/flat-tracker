@@ -311,7 +311,7 @@ function detailToListing(
 		floor,
 		district,
 		address,
-		description: description ? description.slice(0, 2000) : null,
+		description: description ?? null,
 		heatingType: heating,
 		propertyType,
 		features: JSON.stringify({

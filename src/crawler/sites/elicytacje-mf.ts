@@ -270,7 +270,7 @@ export function recordToListing(record: ElicytacjeRecord): Listing | null {
 		floor,
 		district: record.city?.trim() ?? null,
 		address,
-		description: record.description ? record.description.slice(0, 2000) : null,
+		description: record.description ?? null,
 		heatingType: null,
 		propertyType,
 		features: JSON.stringify(features),

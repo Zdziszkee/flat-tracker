@@ -122,8 +122,8 @@ The model is called from exactly one place (`src/lib/llm/extract.ts`) and each
 offer reaches it at most once per text version:
 
 - the stored `source_hash` covers the prompt version, the title and the exact
-  1800-character description slice that was sent, so editing an ad past the
-  window or re-crawling it does not trigger a call;
+  description that was sent (stored whole under one 20 000-char cap), so
+  editing an ad or re-crawling it does not trigger a call;
 - an answer that contains nothing is stored as `{}` with the hash, so a text
   with no extractable facts converges instead of being retried every run;
 - a row the model omits from an otherwise valid answer is stored the same way,
@@ -136,10 +136,17 @@ offer reaches it at most once per text version:
 
 ## How it is wired
 
-- `src/lib/llm/listing-facts.ts` - vocabulary, prompt, parsing, normalisation
-  (pure; `validate:facts` pins it).
-- `src/lib/llm/extract.ts` - batching, text hashing, storage in
-  `listing_facts`, promotion of the subset scoring reads into columns.
+- Every site crawl reads its own offers before the row is stored:
+  `crawlSite -> extractFactsForListings -> saveListings -> scoreArrivals`.
+  The inline pass sends the crawl's title+description to the model, the sink
+  writes the listing and its facts together, and scoring runs on the enriched
+  row. A failed batch saves the offers without facts and the refresh's
+  `listing-facts` phase retries them.
+- `src/lib/llm/listing-facts.ts` - vocabulary, prompt, parsing, normalisation,
+  whole-ad batching (pure; `validate:facts` pins it).
+- `src/lib/llm/extract.ts` - the inline pre-store pass, the database drain,
+  text hashing, storage in `listing_facts`, promotion of the subset scoring
+  reads into columns.
 - `src/lib/llm/fact-access.ts` - the projection scoring consumes
   (`ScoredFacts`).
 - New v3 fields live in `listing_facts.facts_json` and reach the API/card

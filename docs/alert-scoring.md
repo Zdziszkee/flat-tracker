@@ -106,8 +106,9 @@ a modern block, is never a fallback.
 
 Heating and building style are read from three places, in order of
 authority: the structured column, the portal attribute blob
-(`features.heating`), and the LLM facts (`listing_facts`, phase
-`listing-facts`). Prose is read by the extractor only. The regular-expression
+(`features.heating`), and the LLM facts (`listing_facts`, read by every crawl
+before the offer is stored and repaired by the `listing-facts` phase). Prose
+is read by the extractor only. The regular-expression
 pass over the description was removed in 2027.14: it matched negations and
 neighbourhood mentions ("bez ogrzewania miejskiego", "blisko miejskiej
 pływalni"), and the model reads the same sentence with the ad's context. A

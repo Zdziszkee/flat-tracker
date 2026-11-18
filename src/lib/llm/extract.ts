@@ -23,15 +23,19 @@ import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { listingFacts, listings } from "#/db/schema";
-import { chatText, llmModel } from "./client.ts";
+import { chatText, llmConfigured, llmModel } from "./client.ts";
 import {
 	FACT_BATCH_SIZE,
 	FACT_PROMPT_VERSION,
+	type FactInput,
 	type FactKnownRow,
+	factBatches,
 	factPrompt,
 	factRowOutcomes,
+	factTextHash,
 	type ListingFacts,
 	parseFactsAnswer,
+	promptDescription,
 	selectFactCandidates,
 } from "./listing-facts.ts";
 export interface ExtractFactsOptions {
@@ -261,12 +265,9 @@ export async function extractListingFacts(
 	summary.skipped = selection.skipped;
 	const queue = selection.queue;
 
-	const batches: Array<typeof queue> = [];
-	for (let start = 0; start < queue.length; start += FACT_BATCH_SIZE) {
-		batches.push(queue.slice(start, start + FACT_BATCH_SIZE));
-	}
+	const batches = factBatches(queue);
 
-	const runBatch = async (batch: typeof queue): Promise<void> => {
+	const runBatch = async (batch: (typeof queue)[number][]): Promise<void> => {
 		summary.sent += batch.length;
 		const ids = batch.map((row) => row.id);
 		const [system, user] = factPrompt(batch);
@@ -291,35 +292,19 @@ export async function extractListingFacts(
 			const facts = outcomes.get(row.id) ?? null;
 			// An empty answer is stored as `{}` with the text hash, so a text
 			// the model already read is never sent again.
-			const factsJson = facts ? JSON.stringify(facts) : "{}";
-			if (!options.dryRun) {
-				await db
-					.insert(listingFacts)
-					.values({
-						listingId: row.id,
-						model,
-						promptVersion: FACT_PROMPT_VERSION,
-						sourceHash: row.hash,
-						factsJson,
-					})
-					.onConflictDoUpdate({
-						target: listingFacts.listingId,
-						set: {
-							model,
-							promptVersion: FACT_PROMPT_VERSION,
-							sourceHash: row.hash,
-							factsJson,
-							extractedAt: new Date(),
-						},
-					});
-			}
+			await storeListingFacts(row.id, {
+				facts,
+				sourceHash: row.hash,
+				model,
+				promptVersion: FACT_PROMPT_VERSION,
+				dryRun: options.dryRun,
+			});
 			if (!facts) {
 				summary.empty += 1;
 				continue;
 			}
 			summary.stored += 1;
 			if (options.dryRun) continue;
-			await promoteFacts(row.id, facts);
 			summary.promoted += 1;
 			// Every stored fact feeds scoring (gates, condition/defects, plot
 			// buildability, the setting bonus, the quality correction), and the
@@ -372,4 +357,297 @@ export async function countListingsMissingFacts(): Promise<number> {
 			),
 		);
 	return Number(row?.count ?? 0);
+}
+
+// --- Inline extraction (before the row is stored) ------------------------
+
+/**
+ * A crawl-produced offer, before it is stored. The inline extractor reads the
+ * exact title and description the sink is about to write, so the fact set and
+ * the stored row describe the same text. The crawl order is therefore
+ * scrape -> facts -> store -> score, and the alert cut only ever sees offers
+ * whose facts are already in the database.
+ */
+export interface FactSourceListing {
+	source: string;
+	externalId: string;
+	title: string;
+	description: string | null;
+	/** Defaults to "sale"; rentals are stored without facts. */
+	offerType?: string | null;
+}
+
+/** Facts for one offer, ready to be written together with the listing row. */
+export interface PreparedListingFacts {
+	facts: ListingFacts | null;
+	sourceHash: string;
+	model: string;
+	promptVersion: string;
+}
+
+export interface InlineFactsSummary {
+	/** Offers the crawl handed over. */
+	offered: number;
+	/** Distinct sale offers with enough prose to be worth a call. */
+	eligible: number;
+	sent: number;
+	/** Already extracted from this exact text. */
+	skipped: number;
+	/** Answers that carried at least one fact. */
+	stored: number;
+	/** Answers that carried none; they are stored as processed, not pending. */
+	empty: number;
+	errors: number;
+	firstErrors: string[];
+	/** `source:externalId` -> facts, for the sink to write with the row. */
+	prepared: Map<string, PreparedListingFacts>;
+	durationMs: number;
+}
+
+function factKey(source: string, externalId: string): string {
+	return `${source}:${externalId}`;
+}
+
+/**
+ * Write one offer's facts and promote the columns scoring reads. The sink
+ * calls this immediately after the listing upsert (so the FK exists), which is
+ * why it takes a listing id; the batch extractor calls it per row as well.
+ * Promotion only fills empty columns, so a portal-published fact always wins.
+ */
+export async function storeListingFacts(
+	listingId: number,
+	prepared: PreparedListingFacts & { dryRun?: boolean },
+): Promise<void> {
+	if (prepared.dryRun) return;
+	const factsJson = prepared.facts ? JSON.stringify(prepared.facts) : "{}";
+	await db
+		.insert(listingFacts)
+		.values({
+			listingId,
+			model: prepared.model,
+			promptVersion: prepared.promptVersion,
+			sourceHash: prepared.sourceHash,
+			factsJson,
+		})
+		.onConflictDoUpdate({
+			target: listingFacts.listingId,
+			set: {
+				model: prepared.model,
+				promptVersion: prepared.promptVersion,
+				sourceHash: prepared.sourceHash,
+				factsJson,
+				extractedAt: new Date(),
+			},
+		});
+	if (prepared.facts) await promoteFacts(listingId, prepared.facts);
+}
+
+/** Is this ad worth a call: a description with a few sentences, or a long title. */
+function inlineProseEligible(
+	title: string,
+	description: string | null,
+): boolean {
+	return (
+		promptDescription(description).length >= MIN_DESCRIPTION_CHARS ||
+		title.trim().length >= MIN_TITLE_CHARS
+	);
+}
+
+/** Hashes of the offers already read under the current prompt, by `source:id`. */
+async function loadKnownFactHashes(
+	rows: readonly FactSourceListing[],
+): Promise<Map<string, { hash: string; version: string }>> {
+	const bySource = new Map<string, string[]>();
+	for (const row of rows) {
+		const ids = bySource.get(row.source) ?? [];
+		ids.push(row.externalId);
+		bySource.set(row.source, ids);
+	}
+	const out = new Map<string, { hash: string; version: string }>();
+	for (const [source, ids] of bySource) {
+		for (let start = 0; start < ids.length; start += 400) {
+			const chunk = ids.slice(start, start + 400);
+			const known = await db
+				.select({
+					source: listings.source,
+					externalId: listings.externalId,
+					hash: listingFacts.sourceHash,
+					version: listingFacts.promptVersion,
+				})
+				.from(listings)
+				.innerJoin(listingFacts, eq(listingFacts.listingId, listings.id))
+				.where(
+					and(eq(listings.source, source), inArray(listings.externalId, chunk)),
+				);
+			for (const row of known) {
+				out.set(factKey(row.source, row.externalId), {
+					hash: row.hash,
+					version: row.version,
+				});
+			}
+		}
+	}
+	return out;
+}
+
+/**
+ * Read the facts of the offers a crawl just produced, before they are stored.
+ *
+ * This is the same prompt, parser and normalization as the batch drain; only
+ * the queue differs. Instead of scanning the database for offers that still
+ * need facts, it is handed the crawl's own output, so every offer is enriched
+ * in the run that discovered it and scored with its facts already in place.
+ * A text already read under the current prompt (an unchanged re-crawl) is
+ * skipped by hash, so the model is still called at most once per text.
+ *
+ * Failure isolation: a batch that fails stores nothing for its offers, they
+ * are saved without facts, and the refresh's `listing-facts` repair phase
+ * picks them up later. The crawl itself never fails because the model did.
+ */
+export async function extractFactsForListings(
+	list: readonly FactSourceListing[],
+	options: {
+		concurrency?: number;
+		/** Store nothing; used by the API-free checks. */
+		dryRun?: boolean;
+		onProgress?: (progress: {
+			done: number;
+			total: number;
+			stored: number;
+			empty: number;
+			errors: number;
+		}) => void;
+	} = {},
+): Promise<InlineFactsSummary> {
+	const startedAt = Date.now();
+	const concurrency = Math.max(1, options.concurrency ?? 4);
+	const model = llmModel();
+	const summary: InlineFactsSummary = {
+		offered: list.length,
+		eligible: 0,
+		sent: 0,
+		skipped: 0,
+		stored: 0,
+		empty: 0,
+		errors: 0,
+		firstErrors: [],
+		prepared: new Map(),
+		durationMs: 0,
+	};
+	const recordError = (error: unknown) => {
+		summary.errors += 1;
+		if (summary.firstErrors.length < 5)
+			summary.firstErrors.push(oneLine(error));
+	};
+	if (!llmConfigured()) {
+		summary.durationMs = Date.now() - startedAt;
+		return summary;
+	}
+
+	// One entry per offer: a crawl may emit the same ad twice (list card plus
+	// detail page); the richer text wins, and the key is what the sink knows.
+	const deduped = new Map<string, FactSourceListing>();
+	for (const row of list) {
+		if ((row.offerType ?? "sale") !== "sale") continue;
+		if (!inlineProseEligible(row.title, row.description)) continue;
+		const key = factKey(row.source, row.externalId);
+		const previous = deduped.get(key);
+		if (
+			!previous ||
+			(row.description?.length ?? 0) > (previous.description?.length ?? 0)
+		) {
+			deduped.set(key, row);
+		}
+	}
+	summary.eligible = deduped.size;
+	if (deduped.size === 0) {
+		summary.durationMs = Date.now() - startedAt;
+		return summary;
+	}
+
+	const known = await loadKnownFactHashes([...deduped.values()]);
+	// Synthetic ids for the prompt: they only have to be unique inside the run,
+	// and the answer is mapped back to the offer by id.
+	const queue: Array<{
+		id: number;
+		key: string;
+		input: { id: number; title: string; description: string | null };
+		hash: string;
+	}> = [];
+	for (const [key, row] of deduped) {
+		const hash = factTextHash(row.title, row.description);
+		const seen = known.get(key);
+		if (seen && seen.hash === hash && seen.version === FACT_PROMPT_VERSION) {
+			summary.skipped += 1;
+			continue;
+		}
+		const id = queue.length;
+		queue.push({
+			id,
+			key,
+			input: { id, title: row.title, description: row.description },
+			hash,
+		});
+	}
+	if (queue.length === 0) {
+		summary.durationMs = Date.now() - startedAt;
+		return summary;
+	}
+
+	const byId = new Map(queue.map((entry) => [entry.id, entry] as const));
+	const batches = factBatches(queue.map((entry) => entry.input));
+
+	const runBatch = async (batch: FactInput[]): Promise<void> => {
+		summary.sent += batch.length;
+		const ids = batch.map((row) => row.id);
+		const [system, user] = factPrompt(batch);
+		const text = await chatText({
+			model,
+			systemPrompt: system?.content ?? "",
+			messages: [{ role: "user", content: user?.content ?? "" }],
+			threadId: `facts-inline-${batch[0]?.id ?? 0}-${batch.length}`,
+		});
+		const answer = parseFactsAnswer(text, ids);
+		if (!answer) {
+			throw new Error(
+				"model answer was not a JSON results array; nothing stored for this batch",
+			);
+		}
+		const outcomes = factRowOutcomes(answer, ids);
+		for (const row of batch) {
+			const entry = byId.get(row.id);
+			if (!entry) continue;
+			const facts = outcomes.get(row.id) ?? null;
+			summary.prepared.set(entry.key, {
+				facts,
+				sourceHash: entry.hash,
+				model,
+				promptVersion: FACT_PROMPT_VERSION,
+			});
+			if (facts) summary.stored += 1;
+			else summary.empty += 1;
+		}
+	};
+
+	let done = 0;
+	for (let start = 0; start < batches.length; start += concurrency) {
+		const slice = batches.slice(start, start + concurrency);
+		const results = await Promise.allSettled(
+			slice.map((batch) => runBatch(batch)),
+		);
+		for (const result of results) {
+			if (result.status === "rejected") recordError(result.reason);
+		}
+		done += slice.length;
+		options.onProgress?.({
+			done: Math.min(done * FACT_BATCH_SIZE, queue.length),
+			total: queue.length,
+			stored: summary.stored,
+			empty: summary.empty,
+			errors: summary.errors,
+		});
+	}
+
+	summary.durationMs = Date.now() - startedAt;
+	return summary;
 }

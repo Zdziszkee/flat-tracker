@@ -178,7 +178,7 @@ function offerToListing(offer: GhOffer): Listing | null {
 		floor: floor !== null ? String(floor) : null,
 		district,
 		address,
-		description: cleanText(str(offer.description))?.slice(0, 2000) ?? null,
+		description: cleanText(str(offer.description)) ?? null,
 		heatingType: cleanText(str(property.heat)),
 		propertyType,
 		features: JSON.stringify(features),

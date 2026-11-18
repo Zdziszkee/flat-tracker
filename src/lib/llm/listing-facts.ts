@@ -30,6 +30,8 @@
 
 import { createHash } from "node:crypto";
 
+import { clipDescription, DESCRIPTION_MAX_CHARS } from "#/lib/listing-text";
+
 /** The enum vocabulary, one entry per enum-shaped fact. */
 export const FACT_VALUES = {
 	heating: [
@@ -282,31 +284,75 @@ export interface FactInput {
 export const FACT_PROMPT_VERSION = "4";
 
 /**
- * Longest description slice sent per listing. 900 chars missed facts that sit
- * in the second half of a long ad (a developer price list, an auction notice),
- * yet the seller's facts are spread through the prose. 1800 doubles the text a
- * listing contributes and still keeps a 10-offer batch (~27k chars, ~7k tokens
- * with the system prompt) far inside the model's context.
+ * Longest description slice sent per listing. This is the storage cap, not a
+ * summarization window: the extractor reads the whole ad, because the fact a
+ * gate needs (heating, building style, plot media) is often in the last third
+ * of a long listing and a short window silently turned "Ogrzewanie niezależne
+ * elektryczne" at the end of an ad into "no evidence". The per-request size
+ * is bounded by `FACT_BATCH_CHAR_BUDGET` instead, so a batch of long ads sends
+ * fewer offers rather than truncated text.
  */
-export const DESCRIPTION_LIMIT = 1800;
+export const DESCRIPTION_LIMIT = DESCRIPTION_MAX_CHARS;
 
 /**
  * The description exactly as the model sees it: whitespace collapsed, trimmed
- * and cut at `DESCRIPTION_LIMIT`. The prompt and the text hash both use this,
- * so a change past the window neither changes the request nor triggers a
- * pointless re-send.
+ * and capped at `DESCRIPTION_LIMIT`. The prompt and the text hash both use
+ * this, so the stored text, the hashed text and the payload the model reads
+ * are the same string.
  */
 export function promptDescription(
 	description: string | null | undefined,
 ): string {
-	return (description ?? "")
-		.replace(/\s+/gu, " ")
-		.trim()
-		.slice(0, DESCRIPTION_LIMIT);
+	return clipDescription(description) ?? "";
 }
 
 /** Listings per request: one bad answer then costs one batch, not one offer. */
 export const FACT_BATCH_SIZE = 10;
+
+/**
+ * Character budget for one request (titles + descriptions + separators).
+ * Whole ads can be long, so the row count alone cannot bound the payload: a
+ * batch is filled until the budget is reached, and a single ad larger than the
+ * budget is sent alone. ~24k chars is roughly 7k tokens for the offers plus
+ * the system prompt, well inside the model's context.
+ */
+export const FACT_BATCH_CHAR_BUDGET = 24_000;
+
+/** What one offer costs in the prompt, before the system instructions. */
+export function factPromptCost(input: FactInput): number {
+	return input.title.length + promptDescription(input.description).length + 40;
+}
+
+/**
+ * Split a send queue into requests: at most `maxRows` offers and at most
+ * `maxChars` of ad text each. One offer that alone exceeds the budget still
+ * gets its own batch (truncating it would hide the fact it was queued for).
+ * Order is preserved so the run's newest-first queue stays newest-first.
+ */
+export function factBatches<T extends FactInput>(
+	rows: readonly T[],
+	maxRows: number = FACT_BATCH_SIZE,
+	maxChars: number = FACT_BATCH_CHAR_BUDGET,
+): T[][] {
+	const batches: T[][] = [];
+	let current: T[] = [];
+	let chars = 0;
+	for (const row of rows) {
+		const cost = factPromptCost(row);
+		if (
+			current.length > 0 &&
+			(current.length >= maxRows || chars + cost > maxChars)
+		) {
+			batches.push(current);
+			current = [];
+			chars = 0;
+		}
+		current.push(row);
+		chars += cost;
+	}
+	if (current.length > 0) batches.push(current);
+	return batches;
+}
 
 const ENUM_HINTS: Record<FactEnumField, string[]> = {
 	heating: [

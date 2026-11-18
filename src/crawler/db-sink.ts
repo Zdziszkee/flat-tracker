@@ -8,7 +8,11 @@ import {
 	listingMonthlyPrice,
 	listings,
 } from "#/db/schema";
-
+import { clipDescription } from "#/lib/listing-text";
+import {
+	type PreparedListingFacts,
+	storeListingFacts,
+} from "#/lib/llm/extract.ts";
 import { normalizeListingAttributes } from "./attributes.ts";
 import type { Listing } from "./types.ts";
 
@@ -91,7 +95,10 @@ function extractFeatureFields(features: string | null) {
  * crawls idempotent and self-refining. A price/area change also appends a
  * `listing_history` snapshot for time-series analytics.
  */
-export async function saveListings(list: Listing[]): Promise<SaveReport> {
+export async function saveListings(
+	list: Listing[],
+	facts?: ReadonlyMap<string, PreparedListingFacts>,
+): Promise<SaveReport> {
 	if (list.length === 0) return { newCount: 0, updatedCount: 0, newIds: [] };
 
 	// A crawl run is single-source, but keep it safe for multi-source batches.
@@ -148,7 +155,7 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 			floor: l.floor,
 			district: l.district,
 			address: l.address,
-			description: l.description,
+			description: clipDescription(l.description),
 			heatingType: l.heatingType ?? f.heatingType,
 			propertyType: l.propertyType,
 			features: l.features,
@@ -359,6 +366,22 @@ export async function saveListings(list: Listing[]): Promise<SaveReport> {
 		}
 		if (history.length > 0) {
 			await db.insert(listingHistory).values(history);
+		}
+
+		// Facts were read from this crawl's own title/description before the
+		// upsert, so they are written with the row they describe. The insert is
+		// idempotent by text hash upstream (an unchanged offer is not queued),
+		// and promotion only fills columns the portal left empty. Storage never
+		// waits on this: an offer whose batch failed is saved without facts and
+		// the repair phase retries it.
+		if (facts && facts.size > 0) {
+			for (const row of chunk) {
+				const key: `${string}:${string}` = `${row.source}:${row.externalId}`;
+				const prepared = facts.get(key);
+				const id = idByKey.get(key);
+				if (!prepared || id == null) continue;
+				await storeListingFacts(id, prepared);
+			}
 		}
 	}
 
