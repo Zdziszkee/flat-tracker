@@ -51,6 +51,16 @@ interface CachedDetail {
 	rooms: number | null;
 	floor: string | null;
 	propertyType: string | null;
+	/**
+	 * The detail page's own attribute set (build year, material, zabudowa,
+	 * ogrzewanie, ownership, market, admin fee). They are written to the
+	 * listing as `features` and promoted to columns by the sink, so a cache
+	 * hit has to carry the blob: refilling only coordinates and the
+	 * description left `build_year`/`building_material`/`building_type` empty
+	 * for every cached offer the list page revisited.
+	 */
+	features: string | null;
+	heatingType: string | null;
 }
 
 const detailCache = createDetailCache<CachedDetail>({
@@ -67,6 +77,9 @@ const detailCache = createDetailCache<CachedDetail>({
 		floor: typeof entry.floor === "string" ? entry.floor : null,
 		propertyType:
 			typeof entry.propertyType === "string" ? entry.propertyType : null,
+		features: typeof entry.features === "string" ? entry.features : null,
+		heatingType:
+			typeof entry.heatingType === "string" ? entry.heatingType : null,
 	}),
 });
 
@@ -339,6 +352,8 @@ function detailToListing(
 		rooms: listing.rooms,
 		floor: listing.floor,
 		propertyType: listing.propertyType,
+		features: listing.features,
+		heatingType: listing.heatingType,
 	});
 
 	return listing;
@@ -373,6 +388,10 @@ export const sprzedajemyAdapter: CheerioAdapter = {
 
 		const detailUrls = enqueueDetailPass(listings, detailCache.load(), {
 			budget: DETAIL_BUDGET_PER_PAGE,
+			// An entry stored before the attribute blob was cached has nothing to
+			// re-apply but coordinates, so it is refetched once (inside the same
+			// per-page budget) instead of pinning a starved row forever.
+			usable: (entry) => entry.features != null,
 			apply: (listing, cached) => {
 				listing.lat = cached.lat ?? listing.lat;
 				listing.lng = cached.lng ?? listing.lng;
@@ -382,6 +401,8 @@ export const sprzedajemyAdapter: CheerioAdapter = {
 				listing.rooms = cached.rooms ?? listing.rooms;
 				listing.floor = cached.floor ?? listing.floor;
 				listing.propertyType = cached.propertyType ?? listing.propertyType;
+				listing.features = cached.features ?? listing.features;
+				listing.heatingType = cached.heatingType ?? listing.heatingType;
 			},
 		});
 		if (detailUrls.length > 0) await enqueue(detailUrls);
