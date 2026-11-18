@@ -20,6 +20,7 @@
  *
  *   bun run rescore:candidates
  *   bun run rescore:candidates --all --limit 500
+ *   bun run rescore:candidates --force
  *   bun run rescore:candidates --stale
  *   bun run rescore:candidates --dry-run
  */
@@ -38,6 +39,8 @@ import { runAlertScoring } from "#/lib/scoring/run";
 const args = process.argv.slice(2);
 const all = args.includes("--all");
 const stale = args.includes("--stale");
+/** Re-score the candidates even when they already carry a current-version score. */
+const force = args.includes("--force");
 const dryRun = args.includes("--dry-run");
 const limitArg = args.indexOf("--limit");
 const limit = limitArg >= 0 ? Number(args[limitArg + 1]) : null;
@@ -165,10 +168,10 @@ const alreadyScored = await db
 	.from(listingScores)
 	.where(eq(listingScores.scoreVersion, SCORE_VERSION));
 const fresh = new Set(alreadyScored.map((row) => row.id));
-const todo = target.filter((id) => !fresh.has(id));
+const todo = force ? target : target.filter((id) => !fresh.has(id));
 
 process.stderr.write(
-	`rescore: ${todo.length} offers (${target.length} candidates, ${fresh.size} already at ${SCORE_VERSION})${dryRun ? " [dry run]" : ""}\n`,
+	`rescore: ${todo.length} offers (${target.length} candidates, ${fresh.size} already at ${SCORE_VERSION})${force ? " [force]" : ""}${dryRun ? " [dry run]" : ""}\n`,
 );
 
 const started = Date.now();
