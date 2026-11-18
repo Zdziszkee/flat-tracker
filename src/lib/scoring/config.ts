@@ -50,9 +50,9 @@ export const ALERT_GATES = {
 	 * wide on purpose: it catches broken series only, not price growth.
 	 */
 	minIndexFactor: 0.9,
-	maxIndexFactor: 2,
+	maxIndexFactor: 1.6,
 	/** Above this the factor is suspicious but not yet disqualifying. */
-	highIndexFactor: 1.6,
+	highIndexFactor: 1.35,
 } as const;
 
 /**

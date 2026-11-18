@@ -558,6 +558,45 @@ export async function scoreArrivals(
  * same meaning it has in the full-pool rule, so /alerts can read it
  * unchanged.
  */
+/**
+ * True while today's list holds fewer than `ALERT_MAX_PER_INVESTMENT` units of
+ * the arriving offer's investment. Offers without an investment key (no id, no
+ * announced title, no street) are always allowed: there is nothing to group.
+ */
+async function underInvestmentCap(entry: ScoredListing): Promise<boolean> {
+	const [listing] = await db
+		.select({
+			city: listings.city,
+			street: listings.street,
+			investmentId: listings.investmentId,
+			investmentTitle: listings.investmentTitle,
+		})
+		.from(listings)
+		.where(eq(listings.id, entry.id))
+		.limit(1);
+	if (!listing) return false;
+	const key = investmentKey(listing);
+	if (key == null) return true;
+	const todayRows = await db
+		.select({
+			city: listings.city,
+			street: listings.street,
+			investmentId: listings.investmentId,
+			investmentTitle: listings.investmentTitle,
+		})
+		.from(listingAlerts)
+		.innerJoin(listings, eq(listingAlerts.listingId, listings.id))
+		.where(
+			and(
+				eq(listingAlerts.alertDate, sql`date('now')`),
+				eq(listingAlerts.segment, entry.segment),
+			),
+		);
+	let count = 0;
+	for (const row of todayRows) if (investmentKey(row) === key) count++;
+	return count < ALERT_MAX_PER_INVESTMENT;
+}
+
 async function alertFreshArrival(
 	entry: ScoredListing,
 	windowStart: Date,
@@ -585,6 +624,12 @@ async function alertFreshArrival(
 	if (!shouldAlertFreshArrival(entry.score.totalScore, cohortScores)) {
 		return false;
 	}
+
+	// The leaderboard caps how many units of one investment it shows, and a
+	// fresh arrival must respect the same promise: a developer releasing ten
+	// units in one morning would otherwise fill today's list through this path
+	// alone.
+	if (!(await underInvestmentCap(entry))) return false;
 
 	const inserted = await db
 		.insert(listingAlerts)
@@ -725,7 +770,7 @@ function streetKey(street: string | null): string {
  * Bielsko-Biała 140 m² house twice and a Janczowa plot twice (morizon and
  * gratka share one feed), which halves the value of a 25-slot list.
  */
-function duplicateKey(row: {
+export function duplicateKey(row: {
 	city: string | null;
 	street: string | null;
 	areaM2: number | null;
@@ -749,7 +794,7 @@ function duplicateKey(row: {
  * Which investment a row belongs to, for the per-investment cap: an identified
  * investment id, else the announced investment title, else the street.
  */
-function investmentKey(row: {
+export function investmentKey(row: {
 	city: string | null;
 	street: string | null;
 	investmentId: string | null;
@@ -772,7 +817,7 @@ function investmentKey(row: {
  * stop at the cap: the next distinct offers take the freed slots, which keeps
  * the list at 25 as long as the pool allows it. Selection only, never a score.
  */
-function selectLeaders<
+export function selectLeaders<
 	T extends Parameters<typeof duplicateKey>[0] &
 		Parameters<typeof investmentKey>[0],
 >(group: readonly T[]): T[] {

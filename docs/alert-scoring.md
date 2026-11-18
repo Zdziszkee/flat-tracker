@@ -306,7 +306,7 @@ An offer enters the alert list only when:
 - the discount is credible: below 35% always, 35-55% only on a broad
   (`>= 15` comps) and tight (`spread <= 25%`) sample, never past 55%
 - the median index factor that carries the comps to today is inside
-  `0.9-2.0` (`broken_index_factor`); `1.6-2.0` costs `high_index_factor`
+  `0.9-1.6` (`broken_index_factor`); `1.35-1.6` costs `high_index_factor`
   risk points without rejecting the offer
 
 The plausibility gates exist because a "discount" is only as good as its

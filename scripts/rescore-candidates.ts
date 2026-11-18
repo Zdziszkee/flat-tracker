@@ -9,10 +9,18 @@
  * subset: every house and plot (both segments are thin) and the flats inside
  * the centre zone, which is a hard gate for them.
  *
+ * `--stale` is the follow-up pass after a rule change lands mid-run: it
+ * re-scores the stored scores that the current rules would now reject (a
+ * placeholder point, an index factor outside the band, a discount inside the
+ * plausibility gates) instead of the whole candidate set. Without it a run
+ * that started before the last edit leaves those rows eligible until the next
+ * full pass.
+ *
  * Progress goes to stderr so the summary stays pipeable:
  *
  *   bun run rescore:candidates
  *   bun run rescore:candidates --all --limit 500
+ *   bun run rescore:candidates --stale
  *   bun run rescore:candidates --dry-run
  */
 import { and, eq, isNotNull, sql } from "drizzle-orm";
@@ -20,11 +28,16 @@ import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "#/db/index";
 import { listingScores, listings } from "#/db/schema";
 import { nearestCentreAnchor } from "#/lib/scoring/centre-zone";
-import { CENTRE_ZONE, SCORE_VERSION } from "#/lib/scoring/config";
+import { ALERT_GATES, CENTRE_ZONE, SCORE_VERSION } from "#/lib/scoring/config";
+import {
+	isPlaceholderListing,
+	loadPlaceholderPoints,
+} from "#/lib/scoring/placeholder-points";
 import { runAlertScoring } from "#/lib/scoring/run";
 
 const args = process.argv.slice(2);
 const all = args.includes("--all");
+const stale = args.includes("--stale");
 const dryRun = args.includes("--dry-run");
 const limitArg = args.indexOf("--limit");
 const limit = limitArg >= 0 ? Number(args[limitArg + 1]) : null;
@@ -68,7 +81,85 @@ for (const row of rows) {
 	if (zone != null && zone.distanceM <= CENTRE_ZONE.radiusM) ids.push(row.id);
 }
 
-const target = limit != null && limit > 0 ? ids.slice(0, limit) : ids;
+/**
+ * Stored current-version scores that the rules now reject, judged from the
+ * values already in the row: the index factor lives in `valuation_json`, the
+ * discount and the sample in their columns, and the placeholder flag needs
+ * one query over the listing's own coordinates.
+ */
+async function staleIds(): Promise<number[]> {
+	const index = await loadPlaceholderPoints();
+	const rows = await db
+		.select({
+			id: listings.id,
+			lat: listings.lat,
+			lng: listings.lng,
+			street: listings.street,
+			buildingId: listings.buildingId,
+			investmentId: listings.investmentId,
+			discountPct: listingScores.discountPct,
+			compCount: listingScores.compCount,
+			timeFactor: sql<
+				number | null
+			>`json_extract(${listingScores.valuationJson}, '$.timeFactorMedian')`,
+		})
+		.from(listingScores)
+		.innerJoin(listings, eq(listingScores.listingId, listings.id))
+		.where(
+			and(
+				eq(listingScores.scoreVersion, SCORE_VERSION),
+				eq(listingScores.eligible, true),
+			),
+		);
+	const out: number[] = [];
+	for (const row of rows) {
+		if (
+			isPlaceholderListing(index, {
+				id: row.id,
+				lat: row.lat,
+				lng: row.lng,
+				street: row.street,
+				buildingId: row.buildingId,
+				investmentId: row.investmentId,
+			})
+		) {
+			out.push(row.id);
+			continue;
+		}
+		if (
+			row.timeFactor != null &&
+			(row.timeFactor > ALERT_GATES.maxIndexFactor ||
+				row.timeFactor < ALERT_GATES.minIndexFactor)
+		) {
+			out.push(row.id);
+			continue;
+		}
+		if (
+			row.discountPct != null &&
+			row.discountPct >= ALERT_GATES.maxDiscountPct
+		) {
+			out.push(row.id);
+			continue;
+		}
+		// The bandwidth of the comp sample is not stored with the score, so the
+		// stale pass re-scores every offer in the unverified band: the re-run
+		// applies the real rule. Over-inclusion costs a second per offer, a
+		// stale eligible score costs the leaderboard a false alert.
+		if (
+			row.discountPct != null &&
+			row.discountPct >= ALERT_GATES.unverifiedDiscountPct
+		) {
+			out.push(row.id);
+		}
+	}
+	return out;
+}
+
+const target = stale
+	? await staleIds()
+	: limit != null && limit > 0
+		? ids.slice(0, limit)
+		: ids;
 const alreadyScored = await db
 	.select({ id: listingScores.listingId })
 	.from(listingScores)

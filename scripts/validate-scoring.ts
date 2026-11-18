@@ -33,6 +33,7 @@ import {
 	valueCurveScore,
 } from "#/lib/scoring/config";
 import { scoredFactsOf } from "#/lib/llm/fact-access";
+import { duplicateKey, investmentKey, selectLeaders } from "#/lib/scoring/run";
 import type { GeoUniqueness } from "#/lib/valuation/uniqueness-geo";
 import type { ValuationEstimate } from "#/types/listing";
 
@@ -1767,7 +1768,7 @@ check(
 
 const highIndex = scoreAlert(
 	flat,
-	estimate(900000, 20, { timeFactorMedian: 1.7 }),
+	estimate(900000, 20, { timeFactorMedian: 1.45 }),
 	geo(),
 );
 const normalIndex = scoreAlert(
@@ -1785,6 +1786,109 @@ check(
 		high: highIndex.totalScore,
 		normal: normalIndex.totalScore,
 		flags: highIndex.flags,
+	},
+);
+
+// --- Leaderboard selection (dedupe + investment cap) --------------------
+// Selection rules, not scoring rules, but they decide what the page shows, so
+// they are pinned here: today's live list carried the same Sobieskiego flat
+// twice, a Bielsko house twice, a Janczowa plot twice, five units of one
+// osiedle and six of another.
+interface Leader {
+	scoreId: number;
+	listingId: number;
+	segment: string;
+	region: string;
+	totalScore: number;
+	discountPct: number | null;
+	confidence: number;
+	valueScore: number;
+	eligible: boolean;
+	city: string | null;
+	street: string | null;
+	areaM2: number | null;
+	price: number | null;
+	investmentId: string | null;
+	investmentTitle: string | null;
+}
+function leader(overrides: Partial<Leader>): Leader {
+	return {
+		scoreId: 1,
+		listingId: 1,
+		segment: "flat",
+		region: "malopolskie",
+		totalScore: 90,
+		discountPct: 20,
+		confidence: 0.8,
+		valueScore: 80,
+		eligible: true,
+		city: "Kraków",
+		street: "Jana Sobieskiego",
+		areaM2: 56,
+		price: 929000,
+		investmentId: null,
+		investmentTitle: null,
+		...overrides,
+	};
+}
+
+const sameOfferTwice = selectLeaders([
+	leader({ listingId: 1, scoreId: 1, street: "Jana Sobieskiego" }),
+	leader({ listingId: 2, scoreId: 2, street: "ul. Jana Sobieskiego" }),
+]);
+check(
+	"the same offer from two portals keeps one row",
+	sameOfferTwice.length === 1 && sameOfferTwice[0]?.listingId === 1,
+	{
+		kept: sameOfferTwice.map((row) => row.listingId),
+		keys: [
+			duplicateKey(leader({ street: "Jana Sobieskiego" })),
+			duplicateKey(leader({ street: "ul. Jana Sobieskiego" })),
+		],
+	},
+);
+
+const oneInvestment = selectLeaders([
+	leader({ listingId: 10, areaM2: 41, price: 700000, investmentId: "inv-1" }),
+	leader({ listingId: 11, areaM2: 52, price: 880000, investmentId: "inv-1" }),
+	leader({ listingId: 12, areaM2: 63, price: 1050000, investmentId: "inv-1" }),
+	leader({ listingId: 13, areaM2: 70, price: 1200000, investmentTitle: "Inny" }),
+]);
+check(
+	"one investment fills at most two slots and the freed slot goes on",
+	oneInvestment.length === 3 &&
+		oneInvestment.filter((row) => row.investmentId === "inv-1").length === 2 &&
+		oneInvestment.some((row) => row.listingId === 13),
+	oneInvestment.map((row) => row.listingId),
+);
+
+const distinctFlats = selectLeaders(
+	Array.from({ length: 30 }, (_, index) =>
+		leader({
+			listingId: 100 + index,
+			areaM2: 40 + index,
+			price: 500000 + index * 10000,
+			street: `Ulica ${index}`,
+			investmentId: `inv-${index}`,
+		}),
+	),
+);
+check(
+	"a pool of distinct offers still fills the 25 slots",
+	distinctFlats.length === 25,
+	{ kept: distinctFlats.length, top: ALERT_TOP_OFFERS },
+);
+check(
+	"an investment key prefers the id, then the title, then the street",
+	investmentKey(leader({ investmentId: "inv-9", investmentTitle: "X" })) ===
+		"id:inv-9" &&
+		investmentKey(leader({ investmentTitle: " Osiedle X " })) ===
+			"title:osiedle x" &&
+		investmentKey(leader({ street: "Lipowa" })) === "street:kraków:lipowa",
+	{
+		id: investmentKey(leader({ investmentId: "inv-9" })),
+		title: investmentKey(leader({ investmentTitle: " Osiedle X " })),
+		street: investmentKey(leader({ street: "Lipowa" })),
 	},
 );
 

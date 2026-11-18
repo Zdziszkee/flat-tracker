@@ -75,7 +75,8 @@
     "validate:planned-stations": "tsx scripts/validate-planned-stations.ts",
     "validate:quality": "tsx scripts/validate-quality.ts",
     "measure:asking-ratio": "tsx scripts/measure-asking-ratio.ts",
-    "rescore:candidates": "tsx scripts/rescore-candidates.ts"
+    "rescore:candidates": "tsx scripts/rescore-candidates.ts",
+    "check:alerts": "tsx scripts/check-alerts.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",
