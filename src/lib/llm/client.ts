@@ -24,8 +24,42 @@ const DEFAULT_BASE = "https://opencode.ai/inference/go/v1";
 const DEFAULT_MODEL = "hy4-flash-free";
 const USER_AGENT = "flat-tracker/1.0";
 
-/** One session id per process keeps routing and prompt caching warm. */
+/** A session id per process keeps routing and prompt caching warm. */
 const SESSION_ID = crypto.randomUUID();
+
+/**
+ * Deadline for one model request.
+ *
+ * Fact extraction now sits on the crawl's critical path (facts are read before
+ * the offer is stored), so a provider that accepts a connection and never
+ * answers must not hold a site's crawl open. The adapter takes a custom
+ * `fetch`, which is where the signal is attached: the abort surfaces as a
+ * normal request error, the batch fails, the offers are stored without facts
+ * and the repair phase retries them later.
+ */
+const REQUEST_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 120_000);
+
+/** `fetch` with a hard deadline, composed with any caller signal. */
+const fetchWithTimeout: typeof fetch = (input, init) => {
+	const controller = new AbortController();
+	const timer = setTimeout(() => {
+		controller.abort(
+			new Error(`LLM request timed out after ${REQUEST_TIMEOUT_MS} ms`),
+		);
+	}, REQUEST_TIMEOUT_MS);
+	const caller = init?.signal;
+	if (caller) {
+		if (caller.aborted) controller.abort(caller.reason);
+		else {
+			caller.addEventListener("abort", () => controller.abort(caller.reason), {
+				once: true,
+			});
+		}
+	}
+	return fetch(input, { ...init, signal: controller.signal }).finally(() =>
+		clearTimeout(timer),
+	);
+};
 
 export interface ChatMessage {
 	role: "user" | "assistant";
@@ -109,6 +143,7 @@ export async function chatText(options: ChatTextOptions): Promise<string> {
 	const adapter = openaiCompatibleText(model, {
 		baseURL: apiBase(),
 		apiKey: key,
+		fetch: fetchWithTimeout,
 		defaultHeaders: {
 			"User-Agent": USER_AGENT,
 			"x-opencode-session": SESSION_ID,
