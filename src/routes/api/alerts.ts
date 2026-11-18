@@ -482,32 +482,33 @@ function parseValuation(value: string | null): AlertValuation | null {
 	if (value == null) return null;
 	const parsed = parseJson<Record<string, unknown> | null>(value, null);
 	if (parsed == null || typeof parsed !== "object") return null;
-	if (parsed.qualityPct == null && parsed.statistics == null) return null;
-	const stats = (parsed.statistics ?? {}) as Record<string, unknown>;
+	if (parsed.qualityPct == null) return null;
+	const record = parsed as Record<string, unknown>;
+	const span = record.indexSpan as { from?: unknown; to?: unknown } | null;
 	return {
-		qualityPct: Number(parsed.qualityPct ?? 0),
-		qualityKnown: parsed.qualityKnown === true,
-		qualityReasons: Array.isArray(parsed.qualityReasons)
-			? (parsed.qualityReasons as AlertValuation["qualityReasons"])
+		qualityPct: Number(record.qualityPct ?? 0),
+		qualityKnown: record.qualityKnown === true,
+		qualityReasons: Array.isArray(record.qualityReasons)
+			? (record.qualityReasons as AlertValuation["qualityReasons"])
 			: [],
 		timeFactorMedian:
-			typeof stats.timeFactorMedian === "number"
-				? stats.timeFactorMedian
+			typeof record.timeFactorMedian === "number"
+				? record.timeFactorMedian
 				: null,
 		indexSpan:
-			stats.indexSpan != null
-				? (stats.indexSpan as AlertValuation["indexSpan"])
+			typeof span?.from === "string" && typeof span?.to === "string"
+				? { from: span.from, to: span.to }
 				: null,
 		askingRatio:
-			typeof stats.askingRatio === "number" ? stats.askingRatio : null,
+			typeof record.askingRatio === "number" ? record.askingRatio : null,
 		askingRatioSource:
-			stats.askingRatioSource === "measured" ||
-			stats.askingRatioSource === "fallback"
-				? stats.askingRatioSource
+			record.askingRatioSource === "measured" ||
+			record.askingRatioSource === "fallback"
+				? record.askingRatioSource
 				: null,
 		compAgeMedianYears:
-			typeof stats.compAgeMedianYears === "number"
-				? stats.compAgeMedianYears
+			typeof record.compAgeMedianYears === "number"
+				? record.compAgeMedianYears
 				: null,
 	};
 }
