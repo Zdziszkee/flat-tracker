@@ -188,25 +188,22 @@ const house: ScoreListingInput = {
 	buildingType: "detached",
 	hasGarden: true,
 	hasGarage: true,
-	// A house alerts only when something can still be built on its parcel, so
-	// the fixture carries residential zoning and utilities.
+	// The holiday-house profile: wooden, retro, on a big plot, alone.
+	buildingMaterial: "wood",
+	buildYear: 1968,
 	facts: scoredFactsOf({
-		heating: "gas",
+		heating: "coalWood",
 		buildingType: "house",
-		plotType: "budowlana",
-		utilities: { power: true, water: true, gas: true, sewer: true },
-		roadAccess: "public",
+		buildYear: 1968,
+		buildingMaterial: "wood",
+		context: { lake: true, forest: true, river: false, mountains: false },
 	}),
-	parcelFeatures: {
-		roadDistanceM: 15,
-		roadClass: "asphalt",
-		landUseClass: "MN",
-		zoningWz: false,
-		zoningPlanCount: 1,
-		buildingCoverage: 0.2,
-		floodRisk: false,
-		slopeDeg: 2,
+	neighbours: {
+		nearestBuildingM: 320,
+		buildingsWithin150m: 0,
+		sampledBuildings: 0,
 	},
+	str: { nightlyMedian: 620, sampleCount: 24, nightlyLow: 250, nightlyHigh: 1400 },
 };
 
 function total(
@@ -236,7 +233,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.14",
+		SCORE_VERSION === "2027.15",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -1189,26 +1186,63 @@ check(
 		outsideRailPlot.gateReason === "outside_fast_rail",
 	outsideRailPlot.gateReason,
 );
-const houseNearRail = scoreAlert(
-	{ ...house, lat: 50.0525, lng: 19.935 },
+const holidayHouse = scoreAlert(
+	{ ...house, lat: 49.45, lng: 20.2 },
 	estimate(900000),
-	geo(),
+	geo({ waterM: 200, lakeM: 180, forestM: 120 }),
 );
-const houseFarFromRail = scoreAlert(
-	{ ...house, lat: 50.0385, lng: 19.9351 },
+const suburbanHouse = scoreAlert(
+	{
+		...house,
+		buildYear: 2015,
+		buildingMaterial: "brick",
+		plotAreaM2: 400,
+		facts: scoredFactsOf({ heating: "gas", buildingType: "house" }),
+		neighbours: {
+			nearestBuildingM: 12,
+			buildingsWithin150m: 22,
+			sampledBuildings: 40,
+		},
+		str: null,
+	},
 	estimate(900000),
-	geo(),
+	// Nature is fine (a river 900 m away); the character is what is missing.
+	geo({ waterM: 900, lakeM: null, forestM: 6000, forestShare500m: 0 }),
 );
 check(
-	"a house inside the gate with buildable land is eligible",
-	houseNearRail.eligible,
-	houseNearRail.gateReason,
+	"a wooden house alone by the water is eligible without a station",
+	holidayHouse.eligible,
+	holidayHouse.gateReason,
 );
 check(
-	"a house outside the gate fails with outside_fast_rail",
-	!houseFarFromRail.eligible &&
-		houseFarFromRail.gateReason === "outside_fast_rail",
-	houseFarFromRail.gateReason,
+	"an ordinary suburban house fails the character gate",
+	!suburbanHouse.eligible &&
+		suburbanHouse.gateReason === "no_house_character",
+	suburbanHouse.gateReason,
+);
+check(
+	"the house score rewards solitude and the STR market",
+	holidayHouse.totalScore > suburbanHouse.totalScore &&
+		holidayHouse.propertyScore > suburbanHouse.propertyScore &&
+		holidayHouse.reasons.some((reason) => reason.label.includes("Airbnb")),
+	{
+		holiday: holidayHouse.totalScore,
+		suburban: suburbanHouse.totalScore,
+		holidayReasons: holidayHouse.reasons.map((reason) => reason.label),
+	},
+);
+const houseNoNature = scoreAlert(
+	{
+		...house,
+		facts: scoredFactsOf({ heating: "coalWood", buildingType: "house" }),
+	},
+	estimate(900000),
+	geo({ waterM: 9000, lakeM: null, riverM: 8000, forestM: 6000 }),
+);
+check(
+	"a house with no water, forest or mountains fails the nature gate",
+	!houseNoNature.eligible && houseNoNature.gateReason === "no_nature_setting",
+	houseNoNature.gateReason,
 );
 const closerRailPlot = scoreAlert(
 	{ ...plot, lat: 50.062, lng: 19.9405 },
@@ -1230,64 +1264,26 @@ check(
 	},
 );
 
-// --- Buildable parcel gate (plots and houses) ---------------------------
-const houseUnbuildable = scoreAlert(
+// --- Buildable parcel gate (plots only) ---------------------------------
+// Houses are no longer gated on buildable land: the house target is a unique
+// holiday property, gated on nature and character instead.
+const farmlandHouse = scoreAlert(
 	{
 		...house,
-		lat: 50.0525,
-		lng: 19.935,
 		parcelFeatures: {
 			roadDistanceM: 20,
 			landUseClass: "RIIIa",
 			zoningWz: false,
 			zoningPlanCount: 0,
 		},
-		facts: scoredFactsOf({ plotType: "rolna" }),
 	},
 	estimate(900000),
-	geo(),
+	geo({ waterM: 200, lakeM: 180, forestM: 120 }),
 );
 check(
-	"a house without buildable-land evidence is excluded",
-	!houseUnbuildable.eligible &&
-		houseUnbuildable.gateReason === "not_buildable_parcel",
-	houseUnbuildable.gateReason,
-);
-const houseNoParcelData = scoreAlert(
-	{
-		...house,
-		lat: 50.0525,
-		lng: 19.935,
-		parcelFeatures: null,
-		facts: scoredFactsOf({ heating: "gas", buildingType: "house" }),
-	},
-	estimate(900000),
-	geo(),
-);
-check(
-	"a house with no parcel record is a marked fallback, not a rejection",
-	!houseNoParcelData.eligible &&
-		houseNoParcelData.gateReason === "no_buildable_evidence" &&
-		houseNoParcelData.fallbackEligible,
-	{
-		gate: houseNoParcelData.gateReason,
-		fallback: houseNoParcelData.fallbackEligible,
-	},
-);
-const houseOverbuilt = scoreAlert(
-	{
-		...house,
-		lat: 50.0525,
-		lng: 19.935,
-		parcelFeatures: { ...plot.parcelFeatures, buildingCoverage: 0.75 },
-	},
-	estimate(900000),
-	geo(),
-);
-check(
-	"a house on an almost fully built parcel is excluded",
-	!houseOverbuilt.eligible && houseOverbuilt.gateReason === "parcel_overbuilt",
-	houseOverbuilt.gateReason,
+	"farmland does not disqualify a house any more",
+	farmlandHouse.eligible,
+	farmlandHouse.gateReason,
 );
 
 // --- Centre-zone and tenement gates (flats) -----------------------------

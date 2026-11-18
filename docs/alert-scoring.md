@@ -1,4 +1,4 @@
-# Alert scoring 2027.14
+# Alert scoring 2027.15
 
 Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
 model participates in the score. The job stores every component, reason
@@ -51,15 +51,17 @@ Segment weights:
 | Segment | Value | Transit | Green | Property | Risk |
 |---|---:|---:|---:|---:|---:|
 | flat | 0.30 | 0.20 | 0.20 | 0.25 | 0.05 |
-| house | 0.30 | 0.20 | 0.25 | 0.20 | 0.05 |
+| house | 0.30 | 0.10 | 0.30 | 0.25 | 0.05 |
 | plot | 0.25 | 0.15 | 0.28 | 0.27 | 0.05 |
 
 Value carries less than a third of the flat score because a 30% swing in
 asking price is common; location, building quality and risk decide more of the
 ranking than the discount alone. In 2027.14 the flat property weight rose to
 0.25 (a tenement in the centre zone is the target, and its building style and
-condition are the evidence) and houses and plots moved weight into transit
-because fast-rail access is the reason those offers are on the list at all.
+condition are the evidence) and plots moved weight into transit because
+fast-rail access is the reason a plot is on the list. In 2027.15 houses moved
+weight to green and property: the holiday-house target ranks a wooden cottage
+alone by a lake above a suburban house with a station next door.
 
 ### Eligibility
 
@@ -76,15 +78,20 @@ scored and kept in the table, but it can never enter the leaderboard
   building that is proved modern fails as `not_tenement`; missing evidence
   fails as `no_heating_evidence` / `no_tenement_evidence`, and those two are
   the only failures a short section may fill from (see below).
-- **Plots and houses**: buildable land only, and inside 3 km of a fast-rail
-  station. Building evidence is the portal plot type (budowlana /
-  inwestycyjna), an EGiB land-use class in B*, MN, MW or RM, a WZ decision, a
-  zoning plan, or the same evidence read out of the ad by the extractor
-  (WZ, MPZP symbol or purpose, declared plot type). A plot fails as
-  `not_building_plot`; a house fails as `not_buildable_parcel`, and a house
-  whose parcel coverage is 60% or more fails as `parcel_overbuilt`.
-- **Fast rail**: plots and houses must sit within `FAST_RAIL.gateRadiusM`
-  (3 km) of a `FAST_RAIL_STATIONS` entry, otherwise `outside_fast_rail`.
+- **Plots**: buildable land only, inside 3 km of a fast-rail station.
+  Building evidence is the portal plot type (budowlana / inwestycyjna), an
+  EGiB land-use class in B*, MN, MW or RM, a WZ decision, a zoning plan, or
+  the same evidence read out of the ad by the extractor (WZ, MPZP symbol or
+  purpose, declared plot type). A plot fails as `not_building_plot`, and as
+  `outside_fast_rail` when no `FAST_RAIL_STATIONS` entry is within
+  `FAST_RAIL.gateRadiusM` (3 km).
+- **Houses** are a different product with different gates: a unique holiday
+  property for short-term rental, not spare land. A house needs a nature
+  setting (`no_nature_setting`: water within 1 km, forest within 800 m, or a
+  lake/river/forest/mountains setting the extractor read) and character
+  (`no_house_character`: wood, pre-1980, a 1500 m²+ plot, or real solitude).
+  Buildability and the fast-rail radius do not apply to houses; see
+  "Holiday houses".
 - **Comparable sample**: fewer than three comps in the estimate.
 
 Gates are evaluated independently, so a score records every failure rather
@@ -123,6 +130,35 @@ Two curated datasets, both listed on /sources as static layers
   target neighbourhoods, because only about a third of the Kraków rows carry a
   district name and "Podgórze" spans 15 km of the city. Distances are measured
   to the nearest anchor in the listing's own city.
+
+### Holiday houses
+
+A house alert is a bet on something a short-term renter cannot get in a city:
+wood, age, space, and nobody next door, with water, forest or mountains
+around it. The signals come from data the project already holds, not from
+adjectives in the ad:
+
+- **Character** (`houseCharacter` in `alert-score.ts`, deltas on the property
+  component): wood / log / timber-frame construction +12, `technology =
+  framed` +6, built before `HOUSE_UNIQUENESS.retroBuiltBefore` (1980) +6, a
+  plot of 1500 m² or more +6, a neighbour 250 m+ away +14 (100 m+ +10), at
+  most four buildings within 150 m +4, and a neighbour closer than 25 m -12.
+  The gate needs at least one positive entry.
+- **Isolation** (`src/lib/scoring/house-nature.ts`) is measured, not claimed:
+  the nearest other building and the count within 150 m come from the local
+  `osm_buildings` index (3.2M footprints), with the house's own footprint
+  (anything within 20 m) ignored. The query rides the bbox index and is cached
+  per 250 m cell, so a street of offers costs one query.
+- **Nature**: water within 1 km, forest within 800 m, or a forest/water share
+  of the 500 m/1 km disc; the extractor's `context` adds what geometry cannot
+  see (a lake across the road, a mountain view).
+- **Short-term-rental market**: the median nightly price of the airbnb and
+  booking rows within 2 km, from the same crawler that already stores 11.6k
+  short-term offers. `STR_MARKET` turns it into +2/+4/+6 points above
+  250/400/600 zł per night and refuses a sample under five offers.
+- **Bonuses** on top of the weighted score: water within 300 m +8, forest
+  within 300 m +6, mountains +4, solitude +6. The card shows the isolation
+  distance and the local nightly median so the number can be checked.
 
 ### Plot green/water tiers
 
@@ -353,16 +389,17 @@ condition deck, the clamp, monotonicity and the asking-ratio rules, and
 - heating cost order: district > gas > electric
 - heating and building style come from the extracted facts: a description
   that names municipal heating no longer satisfies the gate on its own
-- fast rail: a plot or house inside 3 km is eligible, 3.4 km fails as
-  `outside_fast_rail`, a closer station scores higher, and a house without
-  buildability proof fills a short section as a marked fallback
+- fast rail: a plot inside 3 km is eligible, 3.4 km fails as
+  `outside_fast_rail`, and a closer station scores higher
 - centre zone: a flat in Nowa Huta fails as `outside_centre_zone`, Wola
   Justowska passes, a proved modern block fails as `not_tenement`, a flat
   with no tenement evidence is a fallback, and a gas-heated modern block is
   never a fallback
-- buildability: a house on agricultural/forest land fails, a house with no
-  parcel record is a fallback, and a parcel at 75% coverage fails as
-  `parcel_overbuilt`
+- holiday house: a wooden house alone by the water is eligible without any
+  station, an ordinary suburban house fails the character gate, a house with
+  no water/forest/mountains fails the nature gate, farmland no longer
+  disqualifies a house, and solitude plus a strong STR market raise the score
+- buildability (plots): a plot on agricultural land with no plan or WZ fails
 - gates reject missing comps, thin comps and near-fair offers
 - fresh arrivals: above the cohort cut alerts, below does not, the boundary
   holds for 5-of-100 and 1-of-20 cohorts, a lone arrival alerts, ties are

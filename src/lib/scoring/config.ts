@@ -9,7 +9,7 @@
 
 import { clamp } from "#/lib/stats";
 
-export const SCORE_VERSION = "2027.14";
+export const SCORE_VERSION = "2027.15";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -55,6 +55,11 @@ export const AMENITY_BONUSES = {
 	water: 2,
 	elevator: 2,
 	parking: 2,
+	/** House-only holiday bonuses: lake/river, forest, mountains, solitude. */
+	holidayWater: 8,
+	holidayForest: 6,
+	holidayMountains: 4,
+	holidayIsolation: 6,
 } as const;
 
 /** Distance ceilings for the additive amenities, in metres. */
@@ -96,14 +101,61 @@ export const SEGMENT_ELIGIBILITY = {
 	/** Plots must show building-plot evidence: plot type, WZ or a zoning plan. */
 	plotRequiresBuildingEvidence: true,
 	/**
-	 * Houses carry the same requirement: the point of a house alert is that
-	 * something can still be built on that parcel, so a house whose land use,
-	 * zoning or utilities never prove buildability is not alerted.
+	 * Houses are a different target: a unique holiday property that earns from
+	 * short-term rentals, not spare building land. They need nature around them
+	 * and character (wood, age, isolation), never a buildable-parcel proof.
 	 */
-	houseRequiresBuildingEvidence: true,
-	/** Plots and houses must sit inside `FAST_RAIL.gateRadiusM` of a fast-rail station. */
+	houseRequiresNature: true,
+	houseRequiresCharacter: true,
+	/** Plots must sit inside `FAST_RAIL.gateRadiusM` of a fast-rail station. */
 	plotRequiresFastRail: true,
-	houseRequiresFastRail: true,
+	/**
+	 * Houses are NOT fast-rail gated: a wooden cottage by a lake 40 km from a
+	 * station is exactly the target, and a suburban house next to one is not.
+	 */
+	houseRequiresFastRail: false,
+} as const;
+
+/**
+ * The holiday-house target: an old or wooden house, alone, with water, forest
+ * or mountains around it, that short-term renters pay for.
+ *
+ * These values feed two places: the nature/character gates (an offer that
+ * shows no such evidence is kept in the table but never alerted) and the house
+ * property component plus its amenity bonuses, so the ranking prefers the
+ * unique property over the ordinary one.
+ */
+export const HOUSE_UNIQUENESS = {
+	/** Water this close counts as "by the lake/river" for the gate. */
+	natureWaterM: 1000,
+	/** Forest this close counts as "in the woods" for the gate. */
+	natureForestM: 800,
+	/** A building closer than this means neighbours next door. */
+	closeNeighbourM: 100,
+	/** Buildings within this many metres that still count as a hamlet. */
+	hamletNeighbours: 4,
+	/** Plot size that alone makes a property stand out, m². */
+	bigPlotM2: 1500,
+	/** A building older than this is "retro" on its own, year. */
+	retroBuiltBefore: 1980,
+	/** Awarded when the nearest other building is at least this far away. */
+	isolatedM: 100,
+	/** Awarded when nothing else stands within `closeNeighbourM` x 2. */
+	veryIsolatedM: 250,
+} as const;
+
+/**
+ * Short-term-rental market bonus. Nightly medians come from the stored
+ * airbnb/booking rows within 2 km (`house-nature.ts`); a sample under
+ * `minSample` earns nothing, so one optimistic listing cannot lift a house.
+ */
+export const STR_MARKET = {
+	minSample: 5,
+	bands: [
+		[600, 6],
+		[400, 4],
+		[250, 2],
+	] as ReadonlyArray<readonly [number, number]>,
 } as const;
 
 /**
@@ -263,9 +315,10 @@ export const SEGMENT_WEIGHTS: Record<AlertSegment, SegmentWeights> = {
 	// heating, so the property component (building style, condition) and the
 	// transit component (tram, centre zone) outrank the discount.
 	flat: { value: 0.3, transit: 0.2, green: 0.2, property: 0.25, risk: 0.05 },
-	// Houses and plots: fast-rail access is the reason the offer exists, so the
-	// transit component carries real weight for both.
-	house: { value: 0.3, transit: 0.2, green: 0.25, property: 0.2, risk: 0.05 },
+	// Houses: the property itself (character, solitude) and its surroundings are
+	// the product, so green and property carry the ranking and transit drops to
+	// a secondary signal (a holiday house is not bought for a tram).
+	house: { value: 0.3, transit: 0.1, green: 0.3, property: 0.25, risk: 0.05 },
 	plot: { value: 0.25, transit: 0.15, green: 0.28, property: 0.27, risk: 0.05 },
 };
 

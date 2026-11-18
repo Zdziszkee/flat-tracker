@@ -55,6 +55,18 @@ export interface GeoUniqueness {
 	busName: string | null;
 	city: string | null;
 	centerM: number | null;
+	/**
+	 * Distance to the nearest other building, metres. Houses get this from the
+	 * OSM footprint index (a holiday house is bought for its solitude); other
+	 * segments leave it null.
+	 */
+	neighbourM?: number | null;
+	/** Other buildings within 150 m. */
+	neighbours150m?: number | null;
+	/** Median nightly price of the short-term rentals within 2 km, PLN. */
+	strNightly?: number | null;
+	/** Priced short-term rentals behind `strNightly`. */
+	strSample?: number | null;
 	source: "osm-ways";
 }
 

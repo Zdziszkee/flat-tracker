@@ -25,6 +25,7 @@ import {
 	ESTIMATE_CONFIDENCE,
 	FAST_RAIL,
 	FLAT_BUILDING_DELTAS,
+	HOUSE_UNIQUENESS,
 	PLOT_GREEN,
 	PLOT_LISTING_BASE_CONFIDENCE,
 	PLOT_LISTING_RCN_FACTOR,
@@ -32,6 +33,7 @@ import {
 	SCORE_VERSION,
 	SEGMENT_ELIGIBILITY,
 	SEGMENT_WEIGHTS,
+	STR_MARKET,
 	TRAIN_FALLBACK,
 	TRAIN_PREFERRED_M,
 	TRAIN_STATION_BANDS,
@@ -44,6 +46,7 @@ import {
 } from "./config";
 import { fastRailLabel, nearestFastRail } from "./fast-rail";
 import { type HeatingEvidence, resolveHeatingEvidence } from "./heating";
+import type { Neighbourhood, StrMarket } from "./house-nature";
 
 export interface ScoreParcelFeatures {
 	areaM2?: number | null;
@@ -105,6 +108,10 @@ export interface ScoreListingInput {
 	 * regexes over the ad text.
 	 */
 	facts?: ScoredFacts | null;
+	/** Other buildings around a house, from the OSM footprint index. */
+	neighbours?: Neighbourhood | null;
+	/** Short-term-rental market around a house (airbnb/booking rows). */
+	str?: StrMarket | null;
 }
 
 export interface ScoreReason {
@@ -147,6 +154,9 @@ export interface AlertScore {
 	valuation: ScoreValuation | null;
 }
 
+/** Comparables kept with a score: enough to audit, small enough for the feed. */
+const COMPARABLES_STORED = 30;
+
 /** The estimate evidence a stored score keeps for the card. */
 export interface ScoreValuation {
 	/** Condition/quality correction applied to the comp median, percent. */
@@ -154,6 +164,24 @@ export interface ScoreValuation {
 	/** False when no facts were available, so the correction is neutral. */
 	qualityKnown: boolean;
 	qualityReasons: Array<{ code: string; label: string; pct: number }>;
+	/**
+	 * The comparables the median was built from, strongest first. Stored with
+	 * the score so the alert card can expand "Wycena z N ofert" into the list
+	 * instead of re-running the valuation.
+	 */
+	comparables: Array<{
+		id: string;
+		source: "rcn" | "listing";
+		date: string | null;
+		distanceM: number | null;
+		areaM2: number | null;
+		rooms: number | null;
+		address: string | null;
+		priceM2: number;
+		adjustedPriceM2: number;
+		timeFactor: number;
+		askingRatio: number | null;
+	}>;
 	/** Median index factor that brought the comps to today. */
 	timeFactorMedian: number | null;
 	indexSpan: { from: string; to: string } | null;
@@ -174,6 +202,21 @@ function scoreValuation(
 			label: reason.label,
 			pct: reason.pct,
 		})),
+		comparables: estimate.comparables
+			.slice(0, COMPARABLES_STORED)
+			.map((comp) => ({
+				id: comp.id,
+				source: comp.source,
+				date: comp.date,
+				distanceM: comp.distanceM == null ? null : Math.round(comp.distanceM),
+				areaM2: comp.areaM2,
+				rooms: comp.rooms,
+				address: comp.address,
+				priceM2: Math.round(comp.originalPriceM2),
+				adjustedPriceM2: Math.round(comp.adjustedPriceM2),
+				timeFactor: Math.round(comp.timeFactor * 1000) / 1000,
+				askingRatio: comp.askingRatio ?? null,
+			})),
 		timeFactorMedian: estimate.statistics.timeFactorMedian,
 		indexSpan: estimate.statistics.indexSpan,
 		askingRatio: estimate.statistics.askingRatio,
@@ -674,6 +717,12 @@ function houseProperty(input: ScoreListingInput): Component {
 	if (input.hasBasement) score += 3;
 	if (plot != null && plot >= 500)
 		reasons.push({ label: "large plot", impact: 6 });
+	// Character is what makes a holiday house worth renting: wood, age, plot
+	// size and solitude, each with its own named reason.
+	for (const signal of houseCharacter(input)) {
+		score += signal.delta;
+		reasons.push({ label: signal.label, impact: signal.delta });
+	}
 	return { score: clamp(score, 0, 100), confidence: 0.6, reasons };
 }
 
@@ -906,58 +955,74 @@ function hasBuildableEvidence(input: ScoreListingInput): boolean {
 }
 
 /**
- * Buildability backed by three states instead of a boolean. A house ad rarely
- * discusses zoning (the house already stands), and most parcels are not in the
- * local `parcels` index yet, so "no data" must not read the same as "the
- * register says farmland":
- *
- * - `proved`      someone's data says a house may stand there
- * - `contradicted` the register or the ad says agricultural, forest or
- *                 recreational land, with no WZ/plan to override it
- * - `unknown`     nothing on file
- *
- * Plots require `proved` (the whole point of a plot alert). Houses alert on
- * `proved`, fail on `contradicted`, and fill a short section on `unknown`,
- * marked on the card like the heating fallback.
+ * Character evidence for the holiday-house target: wood, age, size, solitude.
+ * Each entry is a delta with the label the card shows; the gate needs at least
+ * one positive entry, so an ordinary suburban house never alerts while a
+ * "neighbour behind the fence" penalty still lowers the score of one that does.
  */
-function buildabilityEvidence(
+function houseCharacter(
 	input: ScoreListingInput,
-): "proved" | "contradicted" | "unknown" {
-	if (hasBuildableEvidence(input)) return "proved";
-	const landUse = (input.parcelFeatures?.landUseClass ?? "")
-		.trim()
-		.toLowerCase();
-	if (landUse.length > 0 && /^(r|z|ls|lsr|lz|w|wr|n|ps)/u.test(landUse)) {
-		return "contradicted";
+): Array<{ label: string; delta: number }> {
+	const out: Array<{ label: string; delta: number }> = [];
+	const material = `${input.buildingMaterial ?? ""}`.toLowerCase();
+	if (/drewn|wood|bal|log|szkielet/iu.test(material)) {
+		out.push({ label: "drewniany / szkieletowy", delta: 12 });
 	}
-	const factType = (input.facts?.plot?.type ?? "").toLowerCase();
+	if (input.facts?.technology === "framed") {
+		out.push({ label: "technologia szkieletowa", delta: 6 });
+	}
+	const year = input.buildYear ?? input.facts?.buildYear ?? null;
+	if (year != null && year <= HOUSE_UNIQUENESS.retroBuiltBefore) {
+		out.push({ label: `retro (${year})`, delta: 6 });
+	}
+	const plot = input.plotAreaM2 ?? input.facts?.plotAreaM2 ?? null;
+	if (plot != null && plot >= HOUSE_UNIQUENESS.bigPlotM2) {
+		out.push({ label: `duża działka (${Math.round(plot)} m²)`, delta: 6 });
+	}
+	const nearest = input.neighbours?.nearestBuildingM ?? null;
+	if (nearest != null && nearest >= HOUSE_UNIQUENESS.veryIsolatedM) {
+		out.push({ label: `bez sąsiadów (${Math.round(nearest)} m)`, delta: 14 });
+	} else if (nearest != null && nearest >= HOUSE_UNIQUENESS.isolatedM) {
+		out.push({ label: `osobno (${Math.round(nearest)} m)`, delta: 10 });
+	}
+	if (nearest != null && nearest < 25) {
+		out.push({ label: "sąsiad za płotem", delta: -12 });
+	}
 	if (
-		factType.includes("roln") ||
-		factType.includes("le[śs]") ||
-		factType.includes("rekreac")
+		input.neighbours != null &&
+		input.neighbours.buildingsWithin150m <= HOUSE_UNIQUENESS.hamletNeighbours
 	) {
-		return "contradicted";
+		out.push({ label: "spokojna okolica", delta: 4 });
 	}
-	const listedType = (input.plotType ?? "").toLowerCase();
-	if (
-		listedType.includes("roln") ||
-		listedType.includes("les") ||
-		listedType.includes("rekreac")
-	) {
-		return "contradicted";
-	}
-	return "unknown";
+	return out;
 }
 
 /**
- * A standing house can leave too little room for anything else. The parcel
- * record carries the building coverage, so a parcel that is almost entirely
- * built over fails the "can I build here" question even though its zoning is
- * residential.
+ * Nature around a house: water, forest or mountains, from the OSM proximity
+ * layer plus the setting the extractor read out of the ad. This replaces the
+ * buildable-land gate: a holiday house is bought for what surrounds it.
  */
-function isOverbuilt(input: ScoreListingInput): boolean {
-	const coverage = input.parcelFeatures?.buildingCoverage;
-	return coverage != null && coverage >= 0.6;
+function houseHasNature(
+	input: ScoreListingInput,
+	geo: GeoUniqueness | null,
+): boolean {
+	const context = input.facts?.context ?? null;
+	if (
+		context?.lake ||
+		context?.river ||
+		context?.forest ||
+		context?.mountains
+	) {
+		return true;
+	}
+	if (geo == null) return false;
+	if (geo.waterM != null && geo.waterM <= HOUSE_UNIQUENESS.natureWaterM) {
+		return true;
+	}
+	if (geo.forestM != null && geo.forestM <= HOUSE_UNIQUENESS.natureForestM) {
+		return true;
+	}
+	return geo.forestShare500m >= 0.3 || geo.waterShare1000m >= 0.2;
 }
 
 /**
@@ -985,7 +1050,7 @@ function amenityBonusReasons(
 				impact: CENTRE_ZONE.bonus,
 			});
 		}
-	} else {
+	} else if (input.segment === "plot") {
 		const rail = nearestFastRail(input.lat, input.lng);
 		if (rail != null && rail.distanceM <= FAST_RAIL.gateRadiusM) {
 			reasons.push({
@@ -999,6 +1064,51 @@ function amenityBonusReasons(
 					label: `KDP train service from ${rail.station.kdpYear ?? 2035}`,
 					impact: FAST_RAIL.kdpBonus,
 				});
+			}
+		}
+	} else {
+		// Holiday house: the surroundings are the product, and the local
+		// short-term-rental market is the business case.
+		const water = Math.min(
+			geo?.lakeM ?? Number.POSITIVE_INFINITY,
+			geo?.riverM ?? Number.POSITIVE_INFINITY,
+			geo?.waterM ?? Number.POSITIVE_INFINITY,
+		);
+		if (Number.isFinite(water) && water <= 300) {
+			reasons.push({
+				label: `woda ${Math.round(water)} m`,
+				impact: AMENITY_BONUSES.holidayWater,
+			});
+		}
+		if (geo?.forestM != null && geo.forestM <= 300) {
+			reasons.push({
+				label: `las ${Math.round(geo.forestM)} m`,
+				impact: AMENITY_BONUSES.holidayForest,
+			});
+		}
+		if (input.facts?.context?.mountains === true) {
+			reasons.push({
+				label: "góry w otoczeniu",
+				impact: AMENITY_BONUSES.holidayMountains,
+			});
+		}
+		const nearest = input.neighbours?.nearestBuildingM ?? null;
+		if (nearest != null && nearest >= HOUSE_UNIQUENESS.isolatedM) {
+			reasons.push({
+				label: `najbliższy budynek ${Math.round(nearest)} m`,
+				impact: AMENITY_BONUSES.holidayIsolation,
+			});
+		}
+		const str = input.str ?? null;
+		if (str?.nightlyMedian != null && str.sampleCount >= STR_MARKET.minSample) {
+			for (const [threshold, points] of STR_MARKET.bands) {
+				if (str.nightlyMedian >= threshold) {
+					reasons.push({
+						label: `rynek Airbnb ok. ${Math.round(str.nightlyMedian)} zł/noc (${str.sampleCount} ofert)`,
+						impact: points,
+					});
+					break;
+				}
 			}
 		}
 	}
@@ -1209,34 +1319,21 @@ export function scoreAlert(
 		gateFailures.push("not_building_plot");
 	}
 	if (input.segment === "house") {
-		if (SEGMENT_ELIGIBILITY.houseRequiresBuildingEvidence) {
-			const buildability = buildabilityEvidence(input);
-			// A parcel that already carries a building is built-up land in
-			// practice, which is also what EGiB would class as B*; the register
-			// class is frequently missing for house parcels, so a standing
-			// building plus room left over is accepted as proof that something
-			// can be built there. Coverage alone (isOverbuilt) still stops a
-			// parcel that is filled up.
-			const hasStructure =
-				(input.parcelFeatures?.buildingCount ?? 0) >= 1 ||
-				(input.parcelFeatures?.buildingCoverage ?? 0) > 0;
-			if (buildability === "contradicted") {
-				gateFailures.push("not_buildable_parcel");
-			} else if (buildability === "unknown" && !hasStructure) {
-				gateFailures.push("no_buildable_evidence");
-			}
-		}
-		if (isOverbuilt(input)) gateFailures.push("parcel_overbuilt");
-	}
-	if (input.segment !== "flat") {
-		const requiresRail =
-			input.segment === "plot"
-				? SEGMENT_ELIGIBILITY.plotRequiresFastRail
-				: SEGMENT_ELIGIBILITY.houseRequiresFastRail;
 		if (
-			requiresRail &&
-			(rail == null || rail.distanceM > FAST_RAIL.gateRadiusM)
+			SEGMENT_ELIGIBILITY.houseRequiresNature &&
+			!houseHasNature(input, geo)
 		) {
+			gateFailures.push("no_nature_setting");
+		}
+		if (
+			SEGMENT_ELIGIBILITY.houseRequiresCharacter &&
+			!houseCharacter(input).some((signal) => signal.delta > 0)
+		) {
+			gateFailures.push("no_house_character");
+		}
+	}
+	if (input.segment === "plot" && SEGMENT_ELIGIBILITY.plotRequiresFastRail) {
+		if (rail == null || rail.distanceM > FAST_RAIL.gateRadiusM) {
 			gateFailures.push("outside_fast_rail");
 		}
 	}

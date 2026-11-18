@@ -45,6 +45,7 @@ import {
 	SCORE_VERSION,
 	shouldAlertFreshArrival,
 } from "#/lib/scoring/config";
+import { neighbourhoodAt, strMarketAt } from "#/lib/scoring/house-nature";
 import { estimateSaleValue } from "#/lib/valuation/offer-model";
 import { geoUniqueness } from "#/lib/valuation/uniqueness-geo";
 
@@ -236,10 +237,30 @@ async function scoreListingRow(
 		(row.lat != null && row.lng != null ? regionOf(row.lat, row.lng) : null);
 	if (!region) return null;
 
-	const geo =
+	const baseGeo =
 		row.lat != null && row.lng != null
 			? await geoUniqueness(row.lat, row.lng)
 			: null;
+	// A house is scored on its solitude and its rental market, both read from
+	// the DB and carried in the stored amenities blob so the card can show them.
+	const houseExtras =
+		segment === "house"
+			? {
+					neighbourhood: await neighbourhoodAt(row.lat, row.lng),
+					str: await strMarketAt(row.lat, row.lng),
+				}
+			: null;
+	const geo =
+		baseGeo == null
+			? null
+			: {
+					...baseGeo,
+					neighbourM: houseExtras?.neighbourhood.nearestBuildingM ?? null,
+					neighbours150m:
+						houseExtras?.neighbourhood.buildingsWithin150m ?? null,
+					strNightly: houseExtras?.str.nightlyMedian ?? null,
+					strSample: houseExtras?.str.sampleCount ?? null,
+				};
 
 	const rowFacts = facts.get(row.id) ?? null;
 	const estimateResult = await estimateSaleValue(
@@ -290,6 +311,8 @@ async function scoreListingRow(
 		title: row.title,
 		description: row.description,
 		facts: rowFacts,
+		neighbours: houseExtras?.neighbourhood ?? null,
+		str: houseExtras?.str ?? null,
 		price: row.price,
 		pricePerM2: row.pricePerM2,
 		areaM2: row.areaM2,
