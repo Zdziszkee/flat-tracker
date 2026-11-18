@@ -57,9 +57,10 @@ export interface ExtractFactsSummary {
 	stored: number;
 	promoted: number;
 	/**
-	 * Listings whose gate-relevant columns (heating, building style, plot type)
-	 * were filled by this run. Their stored score predates the facts, so the
-	 * refresh re-scores them before rebuilding the leaderboard.
+	 * Listings whose stored facts changed in a way scoring reads (gate
+	 * evidence, condition/defects, plot media/access, setting). Their stored
+	 * score predates the facts, so the refresh re-scores them before
+	 * rebuilding the leaderboard.
 	 */
 	gateIds: number[];
 	skipped: number;
@@ -115,6 +116,9 @@ async function promoteFacts(
 			? "pustak"
 			: facts.buildingMaterial;
 	const floor = facts.floor == null ? null : String(facts.floor);
+	// v2 quotes the monthly rent; the existing admin_fee column is where
+	// scoring looks for the true cost of a flat.
+	const adminFee = facts.monthlyCosts?.rent ?? null;
 	await db.run(sql`
 		update ${listings} set
 			heating_type = coalesce(heating_type, ${facts.heating}),
@@ -127,6 +131,7 @@ async function promoteFacts(
 			plot_area_m2 = coalesce(plot_area_m2, ${plotArea(facts)}),
 			floor = coalesce(floor, ${floor}),
 			floor_count = coalesce(floor_count, ${facts.floorCount}),
+			admin_fee = coalesce(admin_fee, ${adminFee}),
 			has_balcony = coalesce(has_balcony, ${flag(facts.hasBalcony)}),
 			has_terrace = coalesce(has_terrace, ${flag(facts.hasTerrace)}),
 			has_garden = coalesce(has_garden, ${flag(facts.hasGarden)}),
@@ -284,9 +289,10 @@ export async function extractListingFacts(
 			summary.stored += 1;
 			await promoteFacts(row.id, facts);
 			summary.promoted += 1;
-			if (facts.heating || facts.buildingType || facts.plotType) {
-				summary.gateIds.push(row.id);
-			}
+			// Every stored fact feeds scoring (gates, condition/defects, plot
+			// buildability, the setting bonus, the quality correction), and the
+			// score predates it. Empty answers never reach this point.
+			summary.gateIds.push(row.id);
 		}
 	};
 
