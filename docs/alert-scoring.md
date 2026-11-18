@@ -50,13 +50,16 @@ Segment weights:
 
 | Segment | Value | Transit | Green | Property | Risk |
 |---|---:|---:|---:|---:|---:|
-| flat | 0.35 | 0.22 | 0.18 | 0.20 | 0.05 |
-| house | 0.35 | 0.10 | 0.25 | 0.25 | 0.05 |
-| plot | 0.30 | 0.05 | 0.30 | 0.30 | 0.05 |
+| flat | 0.30 | 0.20 | 0.20 | 0.25 | 0.05 |
+| house | 0.30 | 0.20 | 0.25 | 0.20 | 0.05 |
+| plot | 0.25 | 0.15 | 0.28 | 0.27 | 0.05 |
 
-Value carries less than half the flat score because a 30% swing in asking
-price is common; location, building quality and risk decide more of the
-ranking than the discount alone.
+Value carries less than a third of the flat score because a 30% swing in
+asking price is common; location, building quality and risk decide more of the
+ranking than the discount alone. In 2027.14 the flat property weight rose to
+0.25 (a tenement in the centre zone is the target, and its building style and
+condition are the evidence) and houses and plots moved weight into transit
+because fast-rail access is the reason those offers are on the list at all.
 
 ### Eligibility
 
