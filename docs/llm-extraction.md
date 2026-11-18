@@ -66,7 +66,8 @@ source of heating, age, condition, costs and amenities.
 
 ## Fields worth extracting that we do not extract yet
 
-Grouped by how the value is used. `v3` marks what prompt v3 adds.
+Grouped by how the value is used. `v3` marks what prompt v3 added (v4 adds
+`market` and the once-per-offer contract below).
 
 **Building (any segment)**
 - `renovationYear` (v3) - "dach wymieniony w 2019", "po remoncie w 2020".
@@ -114,6 +115,24 @@ windows, technology, insulation, floor heating, heat pump, recuperation, air
 conditioning, photovoltaics, parking spots, balcony/terrace/garden/garage
 areas, legal status, encumbrances, defects, context (lake/river/forest/
 mountains/view), tenanted, urgency, monthly costs.
+
+## One call per offer
+
+The model is called from exactly one place (`src/lib/llm/extract.ts`) and each
+offer reaches it at most once per text version:
+
+- the stored `source_hash` covers the prompt version, the title and the exact
+  1800-character description slice that was sent, so editing an ad past the
+  window or re-crawling it does not trigger a call;
+- an answer that contains nothing is stored as `{}` with the hash, so a text
+  with no extractable facts converges instead of being retried every run;
+- a row the model omits from an otherwise valid answer is stored the same way,
+  while a failed or unparseable batch writes nothing and is retried;
+- title-only offers (komornik notices, investmap rows) are sent too, because
+  their facts live in the title;
+- scoring and alerting never call the model: they read `listing_facts`
+  through `ScoredFacts`, and `validate:facts` fails if any other module
+  imports the client.
 
 ## How it is wired
 

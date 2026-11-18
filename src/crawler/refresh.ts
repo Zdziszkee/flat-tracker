@@ -956,7 +956,8 @@ export async function refreshAll(
 				});
 				console.log(
 					`[refresh] listing-facts: ${facts.stored} stored, ` +
-						`${facts.promoted} promoted, ${facts.errors} errors`,
+						`${facts.promoted} promoted, ${facts.empty} empty, ` +
+						`${facts.errors} errors`,
 				);
 				await recordCrawlRun({
 					source: "listing-facts",

@@ -6,17 +6,20 @@
  * the listing columns scoring reads. Only empty columns are filled:
  * a portal-published fact always wins over an interpreted one.
  *
- * Re-runs are cheap and idempotent. Each stored row keeps a hash of the text
- * it came from, so an unchanged listing is never sent again; a changed price
- * or description is (the hash covers both). The prompt version participates
- * too, so a better prompt re-visits the whole corpus.
+ * Re-runs are cheap and idempotent, and an offer is sent to the model at most
+ * once per (text, prompt version). Each stored row keeps a hash of the text it
+ * came from, so an unchanged listing is never sent again; a changed title or
+ * description is (the hash covers both). An answer that carried no fact is
+ * stored as `{}` with the same hash: "the model read this and found nothing"
+ * is a result, not a pending row, otherwise a 300/run budget could never drain
+ * a backlog of ads that simply state nothing. A batch that fails (transport,
+ * unparseable answer) stores nothing and is retried next run.
  *
  * Failure isolation matches the rest of the pipeline: one bad batch is
  * counted and reported, the run continues, and the caller gets the first few
  * error messages with their causes intact.
  */
-import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { listingFacts, listings } from "#/db/schema";
@@ -24,11 +27,12 @@ import { chatText, llmModel } from "./client.ts";
 import {
 	FACT_BATCH_SIZE,
 	FACT_PROMPT_VERSION,
-	type FactInput,
+	type FactKnownRow,
 	factPrompt,
-	isEmptyFacts,
+	factRowOutcomes,
 	type ListingFacts,
-	parseFactsResponse,
+	parseFactsAnswer,
+	selectFactCandidates,
 } from "./listing-facts.ts";
 export interface ExtractFactsOptions {
 	/** Hard cap for one run. */
@@ -45,6 +49,7 @@ export interface ExtractFactsOptions {
 		done: number;
 		total: number;
 		stored: number;
+		empty: number;
 		errors: number;
 	}) => void;
 }
@@ -54,7 +59,14 @@ export interface ExtractFactsSummary {
 	promptVersion: string;
 	scanned: number;
 	sent: number;
+	/** Rows persisted with at least one fact. */
 	stored: number;
+	/**
+	 * Rows persisted with no fact at all (the model answered nothing, or the
+	 * row was missing from the answer). They carry the text hash, so the offer
+	 * counts as processed and is never sent again for that text.
+	 */
+	empty: number;
 	promoted: number;
 	/**
 	 * Listings whose stored facts changed in a way scoring reads (gate
@@ -71,14 +83,29 @@ export interface ExtractFactsSummary {
 
 /** Longest text a listing needs for the model to have anything to read. */
 const MIN_DESCRIPTION_CHARS = 60;
+/**
+ * A title is prose too. Court-auction notices (licytacje-komornik) and several
+ * new-development rows carry no description at all and state the area, rooms,
+ * address, land register and share in the title, so a title-only offer is sent
+ * when the title itself is long enough to carry those facts. The prompt already
+ * renders such a row as "OPIS: (brak opisu)".
+ */
+const MIN_TITLE_CHARS = 25;
+
+/**
+ * Which offers are worth a call: a description with a few sentences, or a long
+ * enough title. One predicate for the price scan of a run and for the pending
+ * counter, so the /sources number matches what the extractor actually sends.
+ */
+function hasProse() {
+	return or(
+		sql`length(coalesce(${listings.description}, '')) >= ${MIN_DESCRIPTION_CHARS}`,
+		sql`length(trim(coalesce(${listings.title}, ''))) >= ${MIN_TITLE_CHARS}`,
+	);
+}
+
 /** Rows inspected per run to find `limit` still-unprocessed listings. */
 const SCAN_FACTOR = 6;
-
-function textHash(title: string, description: string | null): string {
-	return createHash("sha256")
-		.update(`${FACT_PROMPT_VERSION}\u0000${title}\u0000${description ?? ""}`)
-		.digest("hex");
-}
 
 function oneLine(error: unknown): string {
 	if (error instanceof Error) {
@@ -127,6 +154,7 @@ async function promoteFacts(
 			building_material = coalesce(building_material, ${material}),
 			condition = coalesce(condition, ${facts.condition}),
 			ownership = coalesce(ownership, ${facts.ownership}),
+			market = coalesce(market, ${facts.market}),
 			build_year = coalesce(build_year, ${facts.buildYear}),
 			plot_area_m2 = coalesce(plot_area_m2, ${plotArea(facts)}),
 			floor = coalesce(floor, ${floor}),
@@ -160,6 +188,7 @@ export async function extractListingFacts(
 		scanned: 0,
 		sent: 0,
 		stored: 0,
+		empty: 0,
 		promoted: 0,
 		gateIds: [],
 		skipped: 0,
@@ -188,7 +217,7 @@ export async function extractListingFacts(
 				eq(listings.offerType, "sale"),
 				eq(listings.isActive, true),
 				eq(listings.isVisible, true),
-				sql`length(coalesce(${listings.description}, '')) >= ${MIN_DESCRIPTION_CHARS}`,
+				hasProse(),
 				kindFilter,
 			),
 		)
@@ -201,7 +230,7 @@ export async function extractListingFacts(
 		return summary;
 	}
 
-	const existing = new Map<string, { hash: string; version: string }>();
+	const existing = new Map<number, FactKnownRow>();
 	if (!options.force) {
 		const ids = rows.map((row) => row.id);
 		for (let start = 0; start < ids.length; start += 500) {
@@ -215,7 +244,7 @@ export async function extractListingFacts(
 				.from(listingFacts)
 				.where(inArray(listingFacts.listingId, chunk));
 			for (const fact of known) {
-				existing.set(String(fact.listingId), {
+				existing.set(fact.listingId, {
 					hash: fact.sourceHash,
 					version: fact.promptVersion,
 				});
@@ -223,32 +252,23 @@ export async function extractListingFacts(
 		}
 	}
 
-	const queue: Array<FactInput & { hash: string }> = [];
-	for (const row of rows) {
-		if (queue.length >= limit) break;
-		const hash = textHash(row.title, row.description);
-		const known = existing.get(String(row.id));
-		if (known && known.hash === hash && known.version === FACT_PROMPT_VERSION) {
-			summary.skipped += 1;
-			continue;
-		}
-		queue.push({
-			id: row.id,
-			title: row.title,
-			description: row.description,
-			hash,
-		});
-	}
+	// The only place a send queue is built: deduped ids, hash match skipped.
+	const selection = selectFactCandidates(rows, {
+		limit,
+		known: existing,
+		force: options.force,
+	});
+	summary.skipped = selection.skipped;
+	const queue = selection.queue;
 
-	const batches: Array<Array<FactInput & { hash: string }>> = [];
+	const batches: Array<typeof queue> = [];
 	for (let start = 0; start < queue.length; start += FACT_BATCH_SIZE) {
 		batches.push(queue.slice(start, start + FACT_BATCH_SIZE));
 	}
 
-	const runBatch = async (
-		batch: Array<FactInput & { hash: string }>,
-	): Promise<void> => {
+	const runBatch = async (batch: typeof queue): Promise<void> => {
 		summary.sent += batch.length;
+		const ids = batch.map((row) => row.id);
 		const [system, user] = factPrompt(batch);
 		const text = await chatText({
 			model,
@@ -256,37 +276,49 @@ export async function extractListingFacts(
 			messages: [{ role: "user", content: user?.content ?? "" }],
 			threadId: `facts-${batch[0]?.id ?? 0}-${batch.length}`,
 		});
-		const parsed = parseFactsResponse(
-			text,
-			batch.map((row) => row.id),
-		);
+		// A null answer is a failed batch: nothing is stored, so the same rows
+		// are retried on the next run. Only a cleanly parsed batch reaches
+		// `factRowOutcomes`, and only then may an omitted row be stored as an
+		// empty answer; a failed batch never writes anything.
+		const answer = parseFactsAnswer(text, ids);
+		if (!answer) {
+			throw new Error(
+				"model answer was not a JSON results array; nothing stored for this batch",
+			);
+		}
+		const outcomes = factRowOutcomes(answer, ids);
 		for (const row of batch) {
-			const facts = parsed.get(row.id);
-			if (!facts || isEmptyFacts(facts)) continue;
-			if (options.dryRun) {
-				summary.stored += 1;
-				continue;
-			}
-			await db
-				.insert(listingFacts)
-				.values({
-					listingId: row.id,
-					model,
-					promptVersion: FACT_PROMPT_VERSION,
-					sourceHash: row.hash,
-					factsJson: JSON.stringify(facts),
-				})
-				.onConflictDoUpdate({
-					target: listingFacts.listingId,
-					set: {
+			const facts = outcomes.get(row.id) ?? null;
+			// An empty answer is stored as `{}` with the text hash, so a text
+			// the model already read is never sent again.
+			const factsJson = facts ? JSON.stringify(facts) : "{}";
+			if (!options.dryRun) {
+				await db
+					.insert(listingFacts)
+					.values({
+						listingId: row.id,
 						model,
 						promptVersion: FACT_PROMPT_VERSION,
 						sourceHash: row.hash,
-						factsJson: JSON.stringify(facts),
-						extractedAt: new Date(),
-					},
-				});
+						factsJson,
+					})
+					.onConflictDoUpdate({
+						target: listingFacts.listingId,
+						set: {
+							model,
+							promptVersion: FACT_PROMPT_VERSION,
+							sourceHash: row.hash,
+							factsJson,
+							extractedAt: new Date(),
+						},
+					});
+			}
+			if (!facts) {
+				summary.empty += 1;
+				continue;
+			}
 			summary.stored += 1;
+			if (options.dryRun) continue;
 			await promoteFacts(row.id, facts);
 			summary.promoted += 1;
 			// Every stored fact feeds scoring (gates, condition/defects, plot
@@ -310,6 +342,7 @@ export async function extractListingFacts(
 			done: Math.min(done * FACT_BATCH_SIZE, queue.length),
 			total: queue.length,
 			stored: summary.stored,
+			empty: summary.empty,
 			errors: summary.errors,
 		});
 	}
@@ -329,8 +362,13 @@ export async function countListingsMissingFacts(): Promise<number> {
 				eq(listings.offerType, "sale"),
 				eq(listings.isActive, true),
 				eq(listings.isVisible, true),
-				sql`length(coalesce(${listings.description}, '')) >= ${MIN_DESCRIPTION_CHARS}`,
-				sql`${listingFacts.listingId} is null`,
+				hasProse(),
+				// A row stored under an older prompt version is pending again: its
+				// hash no longer describes what the current prompt reads.
+				or(
+					sql`${listingFacts.listingId} is null`,
+					ne(listingFacts.promptVersion, FACT_PROMPT_VERSION),
+				),
 			),
 		);
 	return Number(row?.count ?? 0);

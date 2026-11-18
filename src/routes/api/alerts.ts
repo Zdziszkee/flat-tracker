@@ -199,7 +199,10 @@ export const Route = createFileRoute("/api/alerts")({
 						reasons: parseJson(row.reasonsJson, []),
 						flags: parseJson(row.flagsJson, []),
 						amenities,
-						properties: toProperties(row.listings),
+						properties: toProperties(
+							row.listings,
+							factsById.get(row.listingId) ?? null,
+						),
 						compCount: preferEvidence(row.latestCompCount, row.compCount),
 						compRcnCount: preferEvidence(
 							row.latestCompRcnCount,
@@ -441,12 +444,18 @@ interface ListingFactColumns {
 }
 
 /** Nullable columns become plain booleans; absent flags stay false. */
-function toProperties(listing: ListingFactColumns): AlertProperties {
+function toProperties(
+	listing: ListingFactColumns,
+	facts: ScoredFacts | null,
+): AlertProperties {
 	// The heating column is mostly empty for the bulk portals, so the card
-	// shows the resolved kind and marks prose-sourced evidence as such.
+	// shows the resolved kind and marks prose-sourced evidence as such. The
+	// extracted fact is passed too: a row the model read but whose column was
+	// promoted earlier still deserves the "(z opisu)" label.
 	const heating = resolveHeatingEvidence({
 		heatingType: listing.heatingType,
 		featuresHeating: listing.featuresHeating,
+		factsHeating: facts?.heating ?? null,
 	});
 	const heatingLabel =
 		heating.kind === "unknown"

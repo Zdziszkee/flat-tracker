@@ -297,7 +297,18 @@ small, fixed vocabulary the scoring layer already understands.
   prompt version, `source_hash` of the text it read, timestamp). An
   unchanged title+description is never sent again; `--force` re-reads
   everything, and `FACT_PROMPT_VERSION` participates in the hash so a better
-  prompt re-visits the corpus.
+  prompt re-visits the corpus once.
+- **One call per offer, ever** (prompt v4): the hash covers the exact payload
+  the model sees (`title` + the 1800-char description slice), so a change
+  past the window is not a reason to call again. An answer that names nothing
+  (`{}`) is stored with its hash too, so a text with no facts is never
+  retried; a row the model omits from an otherwise valid answer is stored the
+  same way, while a failed or unparseable batch writes nothing and stays
+  retryable. Ids are deduped per run, and title-only offers (komornik notices,
+  investmap rows, whose facts live in the title) are part of the input set.
+  `bun run validate:facts` pins the whole contract, including that
+  `src/lib/llm/extract.ts` is the only place that calls the model: scoring and
+  alerting only read `listing_facts`.
 - **Rejects**: the model is a data source, not a trusted one. Unknown ids
   are dropped, values outside the vocabulary become null, numbers outside a
   plausible range become null, a negated mention stays unknown. `bun run
@@ -507,7 +518,7 @@ the component breakdown and rationale.
   never a fallback.
 - **Prose is read by the LLM, not by regexes**: the description-derived
   heating, building style, tenement age, plot zoning/media and defect
-  evidence all come from `listing_facts` (`src/lib/llm/`, prompt v2). The
+  evidence all come from `listing_facts` (`src/lib/llm/`, prompt v4). The
   old regular expressions were removed in 2027.14 (they matched negations and
   neighbourhood mentions), and `validate:scoring` now pins that a
   description alone cannot satisfy the heating gate.

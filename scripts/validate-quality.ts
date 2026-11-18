@@ -27,6 +27,7 @@ function facts(overrides: Partial<ScoredFacts> = {}): ScoredFacts {
 		heating: null,
 		buildingStyle: null,
 		condition: null,
+		market: null,
 		buildYear: null,
 		floor: null,
 		floorCount: null,

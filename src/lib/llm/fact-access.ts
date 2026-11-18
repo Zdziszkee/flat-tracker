@@ -69,6 +69,8 @@ export interface ScoredFacts {
 	heating: FactsHeating | null;
 	buildingStyle: FactsBuildingStyle | null;
 	condition: "excellent" | "veryGood" | "good" | "toRenovation" | null;
+	/** Primary (developer/first sale) or secondary market, when the ad says. */
+	market: "primary" | "secondary" | null;
 	buildYear: number | null;
 	floor: number | null;
 	floorCount: number | null;
@@ -151,6 +153,94 @@ const SLOPES: readonly NonNullable<FactsPlot["slope"]>[] = [
 	"gentle",
 	"steep",
 ];
+
+const MARKETS: readonly NonNullable<ScoredFacts["market"]>[] = [
+	"primary",
+	"secondary",
+];
+
+/**
+ * The single-pass contract, made mechanical: every field the projection
+ * exposes, and the prompt keys it is derived from. `validate:facts` rejects a
+ * projection key missing here and a prompt key missing from the schema, so a
+ * consumer can never need a field the model was not asked for.
+ */
+export const SCORED_FACT_SOURCES: Record<keyof ScoredFacts, readonly string[]> =
+	{
+		heating: ["heating"],
+		buildingStyle: ["buildingType", "largePanel", "technology"],
+		condition: ["condition"],
+		market: ["market"],
+		buildYear: ["buildYear"],
+		floor: ["floor"],
+		floorCount: ["floorCount"],
+		technology: ["technology"],
+		insulation: ["insulation"],
+		floorHeating: ["floorHeating"],
+		heatPump: ["heatPump"],
+		recuperation: ["recuperation"],
+		airConditioning: ["airConditioning"],
+		photovoltaics: ["photovoltaics"],
+		parkingSpots: ["parkingSpots"],
+		plotAreaM2: ["plotAreaM2"],
+		gardenM2: ["gardenM2"],
+		legalStatus: ["legalStatus"],
+		encumbrances: ["encumbrances"],
+		defects: ["defects"],
+		tenanted: ["tenanted"],
+		plot: [
+			"plotType",
+			"roadAccess",
+			"mpzpSymbol",
+			"mpzpPurpose",
+			"buildingPermitWz",
+			"plotShape",
+			"plotDimensions",
+			"plotSlope",
+			"fencing",
+			"utilities",
+		],
+		context: ["context"],
+		monthlyCosts: ["monthlyCosts"],
+	};
+
+/** Every top-level key `ScoredFacts` exposes, for the coverage check. */
+export const SCORED_FACTS_KEYS = Object.keys(
+	SCORED_FACT_SOURCES,
+) as readonly (keyof ScoredFacts)[];
+
+/** Nested keys of the projection, pinned the same way. */
+export const FACTS_PLOT_KEYS = [
+	"type",
+	"media",
+	"mediaCount",
+	"roadAccess",
+	"wz",
+	"mpzpPurpose",
+	"mpzpSymbol",
+	"shape",
+	"dimensions",
+	"slope",
+] as const satisfies readonly (keyof FactsPlot)[];
+
+export const FACTS_CONTEXT_KEYS = [
+	"lake",
+	"river",
+	"forest",
+	"mountains",
+	"view",
+] as const satisfies readonly (keyof FactsContext)[];
+
+export const FACTS_MONTHLY_COST_KEYS = [
+	"rent",
+	"funduszRemontowy",
+	"advance",
+	"mediaIncluded",
+	"agencyFeePct",
+] as const satisfies readonly (
+	| keyof NonNullable<ScoredFacts["monthlyCosts"]>
+	| "deposit"
+)[];
 
 function pick<T extends string>(
 	value: string | null | undefined,
@@ -241,6 +331,7 @@ function hasContent(facts: ScoredFacts): boolean {
 		facts.heating,
 		facts.buildingStyle,
 		facts.condition,
+		facts.market,
 		facts.buildYear,
 		facts.floor,
 		facts.floorCount,
@@ -278,6 +369,7 @@ export function scoredFactsOf(
 		heating: heatingOf(facts),
 		buildingStyle: styleOf(facts),
 		condition: conditionOf(facts),
+		market: pick(facts.market, MARKETS),
 		buildYear: facts.buildYear,
 		floor: facts.floor,
 		floorCount: facts.floorCount,

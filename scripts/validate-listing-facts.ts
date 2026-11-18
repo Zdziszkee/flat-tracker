@@ -9,19 +9,43 @@
  * range checks, unknown ids, code fences, nested v2 objects (utilities,
  * monthly costs, context), code lists, exposure, the `ScoredFacts`
  * projection the scoring layer imports, and the prompt contract.
+ *
+ * It also pins the once-per-offer contract: an offer reaches the model at most
+ * once per (text, prompt version), an answer with no facts is stored as
+ * processed, a failed batch is not stored at all, and no scoring/alerting/
+ * valuation consumer calls the model or reads a fact the prompt does not ask
+ * for.
  */
+import { readFileSync, readdirSync } from "node:fs";
+import { join, relative } from "node:path";
+
 import {
+	DESCRIPTION_LIMIT,
 	EXPOSURE_TOKENS,
+	FACT_BATCH_SIZE,
 	FACT_PROMPT_VERSION,
 	FACT_VALUES,
 	asExposure,
 	extractJsonObject,
 	factPrompt,
+	factRowOutcomes,
+	factTextHash,
 	isEmptyFacts,
 	normalizeFacts,
+	parseFactsAnswer,
 	parseFactsResponse,
+	promptDescription,
+	selectFactCandidates,
 } from "#/lib/llm/listing-facts.ts";
-import { loadScoredFacts, scoredFactsOf } from "#/lib/llm/fact-access.ts";
+import {
+	FACTS_CONTEXT_KEYS,
+	FACTS_MONTHLY_COST_KEYS,
+	FACTS_PLOT_KEYS,
+	SCORED_FACTS_KEYS,
+	SCORED_FACT_SOURCES,
+	loadScoredFacts,
+	scoredFactsOf,
+} from "#/lib/llm/fact-access.ts";
 
 let passed = 0;
 let failed = 0;
@@ -48,8 +72,8 @@ const prompt = factPrompt([
 const system = prompt[0]?.content ?? "";
 const user = prompt[1]?.content ?? "";
 check(
-	"the prompt version is 3",
-	FACT_PROMPT_VERSION === "3",
+	"the prompt version is 4",
+	FACT_PROMPT_VERSION === "4",
 	FACT_PROMPT_VERSION,
 );
 for (const [field, values] of Object.entries(FACT_VALUES)) {
@@ -78,6 +102,7 @@ const schemaKeys = [
 	"buildingMaterial",
 	"condition",
 	"ownership",
+	"market",
 	"buildYear",
 	"plotAreaM2",
 	"floor",
@@ -741,6 +766,327 @@ check(
 		v3Costs?.monthlyCosts?.funduszRemontowy === 120 &&
 		v3Costs?.monthlyCosts?.deposit === 3000,
 	v3Costs?.monthlyCosts,
+);
+
+// --- Once per offer ------------------------------------------------------
+// `selectFactCandidates` is the only place the send queue is built, so these
+// checks are the run-level and cross-run guarantee.
+const candidates = [
+	{ id: 201, title: "Mieszkanie A", description: "x".repeat(200) },
+	{ id: 201, title: "Mieszkanie A", description: "x".repeat(200) },
+	{ id: 202, title: "Mieszkanie B", description: "y".repeat(200) },
+];
+const firstRun = selectFactCandidates(candidates, { limit: 10 });
+check(
+	"a run sends each offer at most once (ids are deduped)",
+	firstRun.queue.length === 2 && firstRun.duplicates === 1,
+	{ queued: firstRun.queue.map((row) => row.id), duplicates: firstRun.duplicates },
+);
+const hashA = factTextHash("Mieszkanie A", "x".repeat(200));
+check(
+	"the queue carries the hash of the text the model will read",
+	firstRun.queue[0]?.hash === hashA,
+	firstRun.queue[0]?.hash,
+);
+check(
+	"the run limit caps the queue",
+	selectFactCandidates(candidates, { limit: 1 }).queue.length === 1,
+);
+const knownA = new Map([
+	[201, { hash: hashA, version: FACT_PROMPT_VERSION }],
+]);
+const secondRun = selectFactCandidates(candidates, {
+	limit: 10,
+	known: knownA,
+});
+check(
+	"across runs an unchanged text is never sent again",
+	!secondRun.queue.some((row) => row.id === 201) && secondRun.skipped === 1,
+	{ queued: secondRun.queue.map((row) => row.id), skipped: secondRun.skipped },
+);
+check(
+	"a changed description is sent again",
+	selectFactCandidates(
+		[{ id: 201, title: "Mieszkanie A", description: "nowy opis" }],
+		{ limit: 10, known: knownA },
+	).queue.length === 1,
+);
+check(
+	"a prompt bump re-reads the corpus",
+	selectFactCandidates(candidates, {
+		limit: 10,
+		known: knownA,
+		version: "999",
+	}).queue.some((row) => row.id === 201),
+);
+check(
+	"--force re-reads everything",
+	selectFactCandidates(candidates, {
+		limit: 10,
+		known: knownA,
+		force: true,
+	}).queue.length === 2,
+);
+check(
+	"the text hash covers the title, the description and the version",
+	factTextHash("a", "b") !== factTextHash("a", "c") &&
+		factTextHash("a", "b") !== factTextHash("b", "b") &&
+		factTextHash("a", "b") !== factTextHash("a", "b", "999"),
+);
+check(
+	"the description window is exactly what the prompt sends",
+	promptDescription("a  b\n\nc") === "a b c" &&
+		promptDescription("x".repeat(DESCRIPTION_LIMIT + 50)).length ===
+			DESCRIPTION_LIMIT &&
+		promptDescription(null) === "",
+);
+const pastWindowA = `${"a".repeat(DESCRIPTION_LIMIT)}AAA`;
+const pastWindowB = `${"a".repeat(DESCRIPTION_LIMIT)}BBB`;
+check(
+	"a description changed only past the window keeps the hash (same request)",
+	factTextHash("t", pastWindowA) === factTextHash("t", pastWindowB),
+);
+check(
+	"a description changed inside the window changes the hash",
+	factTextHash("t", `${"a".repeat(DESCRIPTION_LIMIT - 1)}X`) !==
+		factTextHash("t", `${"a".repeat(DESCRIPTION_LIMIT - 1)}Y`),
+);
+check(
+	"whitespace the prompt collapses does not change the hash",
+	factTextHash("t", "a  b") === factTextHash("t", "a b"),
+);
+const titleOnly = factPrompt([
+	{
+		id: 301,
+		title:
+			"Licytacja komornicza: Kraków, ul. Szkolna 5, 52 m², KW KR1P/00012345/6",
+		description: null,
+	},
+]);
+check(
+	"a title-only offer is sent with an explicit empty description",
+	(titleOnly[1]?.content ?? "").includes("OPIS: (brak opisu)") &&
+		(titleOnly[1]?.content ?? "").includes("Szkolna"),
+);
+
+// --- Empty answers are processed, failed batches are not ----------------
+const emptyAnswer = parseFactsAnswer('{"results":[{"id":201}]}', [201, 202]);
+check("an all-unknown row is still an answer", emptyAnswer !== null);
+const emptyOutcomes = emptyAnswer
+	? factRowOutcomes(emptyAnswer, [201, 202])
+	: new Map<number, unknown>();
+check(
+	"an answer with no facts stores an empty result",
+	emptyAnswer !== null && emptyOutcomes.get(201) === null,
+);
+check(
+	"a row the model omitted stores an empty result too",
+	emptyAnswer !== null && emptyOutcomes.get(202) === null,
+);
+const storedEmpty = new Map([
+	[201, { hash: factTextHash("Mieszkanie A", "x".repeat(200)), version: FACT_PROMPT_VERSION }],
+]);
+check(
+	"a stored empty answer is not re-sent on the next run",
+	selectFactCandidates([candidates[0]!], { limit: 10, known: storedEmpty })
+		.skipped === 1,
+);
+const mixedAnswer = parseFactsAnswer(
+	'{"results":[{"id":202,"heating":"district"}]}',
+	[201, 202],
+);
+const mixedOutcomes = mixedAnswer
+	? factRowOutcomes(mixedAnswer, [201, 202])
+	: new Map();
+check(
+	"a real answer is kept while the omitted row stays empty",
+	mixedOutcomes.get(202)?.heating === "district" &&
+		mixedOutcomes.get(201) === null,
+);
+check(
+	"an unparseable answer is a failed batch (nothing stored)",
+	parseFactsAnswer("no json here", ids) === null &&
+		parseFactsAnswer("", ids) === null,
+);
+check(
+	"an answer without a results array is a failed batch",
+	parseFactsAnswer('{"error":"rate limited"}', ids) === null &&
+		parseFactsAnswer("{}", ids) === null,
+);
+check(
+	"an empty results array is a failed batch, not 10 processed offers",
+	parseFactsAnswer('{"results":[]}', ids) === null,
+);
+// The distinction the rules turn on: an omitted row becomes an empty result
+// only after the batch itself parsed; a failed batch exposes no outcomes.
+const cleanBatch = parseFactsAnswer(
+	'{"results":[{"id":202,"heating":"gas"}]}',
+	[201, 202],
+);
+check(
+	"an omitted row is stored as empty only after a cleanly parsed batch",
+	cleanBatch !== null &&
+		factRowOutcomes(cleanBatch, [201, 202]).get(201) === null &&
+		factRowOutcomes(cleanBatch, [201, 202]).get(202)?.heating === "gas",
+);
+check(
+	"a failed batch exposes no outcomes to store",
+	parseFactsAnswer("<<garbage>>", [201, 202]) === null,
+);
+
+// --- Consumer coverage: facts asked for vs facts read -------------------
+const promptSchemaKeys = new Set(
+	[
+		...(system.match(/Schemat odpowiedzi:.*$/mu)?.[0] ?? "").matchAll(
+			/"(\w+)":/gu,
+		),
+	].map((match) => match[1] ?? ""),
+);
+promptSchemaKeys.delete("id");
+promptSchemaKeys.delete("results");
+const promptSources = new Set(Object.values(SCORED_FACT_SOURCES).flat());
+check(
+	"every prompt key a consumer's fact is derived from is in the schema",
+	[...promptSources].every((key) => promptSchemaKeys.has(key)),
+	[...promptSources].filter((key) => !promptSchemaKeys.has(key)),
+);
+const normalizedKeys = new Set(
+	Object.keys(normalizeFacts({ id: 0 }) ?? {}),
+);
+check(
+	"every schema key has a normalizer field",
+	[...promptSchemaKeys].every((key) => normalizedKeys.has(key)),
+	[...promptSchemaKeys].filter((key) => !normalizedKeys.has(key)),
+);
+check(
+	"every normalizer field is in the prompt schema",
+	[...normalizedKeys].every((key) => promptSchemaKeys.has(key)),
+	[...normalizedKeys].filter((key) => !promptSchemaKeys.has(key)),
+);
+
+const consumerFiles = [
+	"src/lib/scoring/alert-score.ts",
+	"src/lib/scoring/run.ts",
+	"src/lib/valuation/offer-model.ts",
+	"src/lib/valuation/quality-factor.ts",
+	"src/routes/api/alerts.ts",
+];
+const readSource = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
+const collected = (pattern: RegExp, source: string) =>
+	new Set([...source.matchAll(pattern)].map((match) => match[1] ?? ""));
+const factReads = new Set<string>();
+const plotReads = new Set<string>();
+const contextReads = new Set<string>();
+const costReads = new Set<string>();
+for (const file of consumerFiles) {
+	const source = readSource(file);
+	for (const key of collected(/facts\??\.([A-Za-z]\w*)(?![\w(])/gu, source))
+		factReads.add(key);
+	for (const key of collected(/\bplot\??\.([A-Za-z]\w*)(?![\w(])/gu, source))
+		plotReads.add(key);
+	for (const key of collected(/\bcontext\??\.([A-Za-z]\w*)(?![\w(])/gu, source))
+		contextReads.add(key);
+	for (const key of collected(
+		/\bmonthlyCosts\??\.([A-Za-z]\w*)(?![\w(])/gu,
+		source,
+	))
+		costReads.add(key);
+}
+const unknown = (reads: Set<string>, allowed: readonly string[]) =>
+	[...reads].filter((key) => !allowed.includes(key));
+check(
+	"every fact a consumer reads is in the ScoredFacts projection",
+	unknown(factReads, SCORED_FACTS_KEYS).length === 0,
+	unknown(factReads, SCORED_FACTS_KEYS),
+);
+check(
+	"every plot field a consumer reads is projected",
+	unknown(plotReads, FACTS_PLOT_KEYS).length === 0,
+	unknown(plotReads, FACTS_PLOT_KEYS),
+);
+check(
+	"every context field a consumer reads is projected",
+	unknown(contextReads, FACTS_CONTEXT_KEYS).length === 0,
+	unknown(contextReads, FACTS_CONTEXT_KEYS),
+);
+check(
+	"every cost field a consumer reads is projected",
+	unknown(costReads, FACTS_MONTHLY_COST_KEYS).length === 0,
+	unknown(costReads, FACTS_MONTHLY_COST_KEYS),
+);
+const projection = scoredFactsOf({
+	heating: "district",
+	buildingType: "tenement",
+	condition: "good",
+	market: "secondary",
+	utilities: { power: true },
+	context: { lake: true },
+	monthlyCosts: { rent: 500 },
+	defects: ["damp"],
+});
+check(
+	"the projection exposes exactly the declared keys",
+	projection != null &&
+		Object.keys(projection).sort().join(",") ===
+			[...SCORED_FACTS_KEYS].sort().join(","),
+	projection == null ? null : Object.keys(projection).sort(),
+);
+for (const field of ["buildingStyle", "market", "condition"] as const) {
+	check(
+		`the projection maps ${field}`,
+		projection?.[field] != null,
+		projection?.[field],
+	);
+}
+
+// No consumer may call the model: exactly one module in src/ does.
+const srcFiles = (readdirSync(join(process.cwd(), "src"), {
+	recursive: true,
+	withFileTypes: true,
+}) as unknown as Array<{ name: string; parentPath?: string; path?: string }>)
+	.map((entry) => {
+		const dir = entry.parentPath ?? entry.path ?? "";
+		return relative(process.cwd(), join(dir, entry.name));
+	})
+	.filter((path) => /\.(ts|tsx)$/u.test(path));
+const modelCallers = srcFiles
+	// client.ts defines the transport; every other match must be a call site.
+	.filter((path) => path !== "src/lib/llm/client.ts")
+	.filter((path) => /chatText\s*\(/u.test(readSource(path)));
+check(
+	"the model is called from extract.ts only (scoring/alerting never)",
+	modelCallers.length === 1 && modelCallers[0] === "src/lib/llm/extract.ts",
+	modelCallers,
+);
+check(
+	"no consumer file imports the LLM client",
+	consumerFiles.every((file) => {
+		const source = readSource(file);
+		return !/llm\/client|chatText|openaiCompatibleText/u.test(source);
+	}),
+);
+
+// --- Prompt size ---------------------------------------------------------
+const longBatch = Array.from({ length: FACT_BATCH_SIZE }, (_, index) => ({
+	id: 900 + index,
+	title: `Mieszkanie ${index}`,
+	description: "ogrzewanie miejskie, kamienica, po remoncie. ".repeat(100),
+}));
+const [batchSystem, batchUser] = factPrompt(longBatch);
+const batchChars =
+	(batchSystem?.content.length ?? 0) + (batchUser?.content.length ?? 0);
+console.log(
+	`     prompt: ${batchSystem?.content.length ?? 0} system + ${batchUser?.content.length ?? 0} user = ${batchChars} chars for ${FACT_BATCH_SIZE} offers (${DESCRIPTION_LIMIT} chars each)`,
+);
+check(
+	"a full batch keeps a sane payload (under 40k chars)",
+	batchChars < 40_000,
+	batchChars,
+);
+check(
+	"the description window is applied to the prompt",
+	(batchUser?.content.length ?? 0) < FACT_BATCH_SIZE * (DESCRIPTION_LIMIT + 120),
+	batchUser?.content.length,
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);

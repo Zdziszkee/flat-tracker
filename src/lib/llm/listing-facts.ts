@@ -11,16 +11,24 @@
  * costs, kitchen/exposure/windows, building technology and the setting
  * around a plot or house.
  *
- * Everything here is pure: prompt construction, response parsing and
- * normalization. Writing to the database lives in `extract.ts`, reading it
- * back in `fact-access.ts`, so this module stays testable without a network
- * or a DB (`validate:facts`).
+ * Everything here is pure: prompt construction, response parsing, the
+ * once-per-offer selection and normalization. Writing to the database lives in
+ * `extract.ts`, reading it back in `fact-access.ts`, so this module stays
+ * testable without a network or a DB (`validate:facts`).
+ *
+ * One offer, one call: `selectFactCandidates` builds the run's send queue from
+ * the text hash (deduped, prompt-version aware) and `factRowOutcomes` marks an
+ * answer with no facts as processed, so nothing is re-sent until the text or
+ * the prompt changes. Every fact a consumer reads is in the schema below; no
+ * consumer may trigger a second model call.
  *
  * The model is a data source, not a trusted one: unknown ids are dropped,
  * values outside the allowed sets become null, numbers outside a plausible
  * range become null, free text and code lists are bounded, and a fact the
  * text does not state must be "unknown"/null rather than a guess.
  */
+
+import { createHash } from "node:crypto";
 
 /** The enum vocabulary, one entry per enum-shaped fact. */
 export const FACT_VALUES = {
@@ -108,6 +116,11 @@ export const FACT_VALUES = {
 	finishStandard: ["developer", "turnkey", "to_finish", "unknown"],
 	/** Court-auction round: the second starts at two thirds of the appraisal. */
 	auctionRound: ["first", "second", "third", "unknown"],
+	/**
+	 * Primary (developer/first sale) or secondary market. The column decides
+	 * which comparable set a valuation uses, and the bulk feeds omit it.
+	 */
+	market: ["primary", "secondary", "unknown"],
 } as const;
 
 export type FactEnumField = keyof typeof FACT_VALUES;
@@ -160,6 +173,7 @@ export interface ListingFacts {
 	buildingMaterial: string | null;
 	condition: string | null;
 	ownership: string | null;
+	market: string | null;
 	buildYear: number | null;
 	plotAreaM2: number | null;
 	floor: number | null;
@@ -265,10 +279,31 @@ export interface FactInput {
 
 /** Bumped whenever the prompt or the stored schema changes: the version is
  * part of the text hash, so a new prompt re-reads the whole corpus. */
-export const FACT_PROMPT_VERSION = "3";
+export const FACT_PROMPT_VERSION = "4";
 
-/** Longest description slice sent per listing; ~900 chars covers the facts. */
-const DESCRIPTION_LIMIT = 900;
+/**
+ * Longest description slice sent per listing. 900 chars missed facts that sit
+ * in the second half of a long ad (a developer price list, an auction notice),
+ * yet the seller's facts are spread through the prose. 1800 doubles the text a
+ * listing contributes and still keeps a 10-offer batch (~27k chars, ~7k tokens
+ * with the system prompt) far inside the model's context.
+ */
+export const DESCRIPTION_LIMIT = 1800;
+
+/**
+ * The description exactly as the model sees it: whitespace collapsed, trimmed
+ * and cut at `DESCRIPTION_LIMIT`. The prompt and the text hash both use this,
+ * so a change past the window neither changes the request nor triggers a
+ * pointless re-send.
+ */
+export function promptDescription(
+	description: string | null | undefined,
+): string {
+	return (description ?? "")
+		.replace(/\s+/gu, " ")
+		.trim()
+		.slice(0, DESCRIPTION_LIMIT);
+}
 
 /** Listings per request: one bad answer then costs one batch, not one offer. */
 export const FACT_BATCH_SIZE = 10;
@@ -292,6 +327,10 @@ const ENUM_HINTS: Record<FactEnumField, string[]> = {
 	],
 	ownership: [
 		"leasehold = użytkowanie wieczyste; share = udział, współwłasność",
+	],
+	market: [
+		"primary = rynek pierwotny, od dewelopera, nowa inwestycja, pierwsza sprzedaż",
+		"secondary = rynek wtórny, od właściciela, z drugiej ręki, po poprzednim właścicielu",
 	],
 	roadAccess: [
 		"public = droga publiczna, gminna; private = droga prywatna, wewnętrzna, służebność; none = brak dojazdu",
@@ -400,16 +439,13 @@ export function factPrompt(listings: FactInput[]): Array<{
 		"unitsCount (mieszkań w inwestycji), buildingsCount (budynków), constructionStage, finishStandard,",
 		'siteAmenities: krótkie kody udogodnień inwestycji, np. "playground", "gym", "concierge", "coworking", "pool", "sauna", "parking_underground".',
 		"",
-		'Schemat odpowiedzi: {"results":[{"id":0,"heating":null,"buildingType":null,"largePanel":null,"plotType":null,"buildingMaterial":null,"condition":null,"ownership":null,"buildYear":null,"plotAreaM2":null,"floor":null,"floorCount":null,"hasBalcony":null,"hasTerrace":null,"hasGarden":null,"hasElevator":null,"hasParking":null,"hasGarage":null,"hasBasement":null,"utilities":null,"roadAccess":null,"mpzpSymbol":null,"mpzpPurpose":null,"buildingPermitWz":null,"plotShape":null,"plotDimensions":null,"plotSlope":null,"fencing":null,"kitchen":null,"exposure":null,"windows":null,"technology":null,"insulation":null,"floorHeating":null,"heatPump":null,"recuperation":null,"airConditioning":null,"photovoltaics":null,"parkingSpots":null,"balconyM2":null,"terraceM2":null,"gardenM2":null,"garageM2":null,"legalStatus":null,"encumbrances":null,"defects":null,"context":null,"tenanted":null,"urgency":null,"monthlyCosts":null,"renovationYear":null,"energyClass":null,"elevationState":null,"roofType":null,"roofYear":null,"garret":null,"storageM2":null,"parkingType":null,"balconyGlazed":null,"topFloor":null,"outbuildings":null,"waterSource":null,"sewage":null,"pool":null,"sauna":null,"jacuzzi":null,"strEvidence":null,"plotSubdividable":null,"maxCoveragePct":null,"maxFloors":null,"existingBuilding":null,"appraisedValue":null,"auctionRound":null,"caseNumber":null,"court":null,"landRegister":null,"shareFraction":null,"unitsCount":null,"buildingsCount":null,"constructionStage":null,"finishStandard":null,"siteAmenities":null}]}',
+		'Schemat odpowiedzi: {"results":[{"id":0,"heating":null,"buildingType":null,"largePanel":null,"plotType":null,"buildingMaterial":null,"condition":null,"ownership":null,"market":null,"buildYear":null,"plotAreaM2":null,"floor":null,"floorCount":null,"hasBalcony":null,"hasTerrace":null,"hasGarden":null,"hasElevator":null,"hasParking":null,"hasGarage":null,"hasBasement":null,"utilities":null,"roadAccess":null,"mpzpSymbol":null,"mpzpPurpose":null,"buildingPermitWz":null,"plotShape":null,"plotDimensions":null,"plotSlope":null,"fencing":null,"kitchen":null,"exposure":null,"windows":null,"technology":null,"insulation":null,"floorHeating":null,"heatPump":null,"recuperation":null,"airConditioning":null,"photovoltaics":null,"parkingSpots":null,"balconyM2":null,"terraceM2":null,"gardenM2":null,"garageM2":null,"legalStatus":null,"encumbrances":null,"defects":null,"context":null,"tenanted":null,"urgency":null,"monthlyCosts":null,"renovationYear":null,"energyClass":null,"elevationState":null,"roofType":null,"roofYear":null,"garret":null,"storageM2":null,"parkingType":null,"balconyGlazed":null,"topFloor":null,"outbuildings":null,"waterSource":null,"sewage":null,"pool":null,"sauna":null,"jacuzzi":null,"strEvidence":null,"plotSubdividable":null,"maxCoveragePct":null,"maxFloors":null,"existingBuilding":null,"appraisedValue":null,"auctionRound":null,"caseNumber":null,"court":null,"landRegister":null,"shareFraction":null,"unitsCount":null,"buildingsCount":null,"constructionStage":null,"finishStandard":null,"siteAmenities":null}]}',
 		"",
 		'Jeden obiekt na ogłoszenie, w tej samej kolejności, każdy z polem "id".',
 	].join("\n");
 	const body = listings
 		.map((listing) => {
-			const description = (listing.description ?? "")
-				.replace(/\s+/gu, " ")
-				.trim()
-				.slice(0, DESCRIPTION_LIMIT);
+			const description = promptDescription(listing.description);
 			return `[${listing.id}]\nTYTUŁ: ${listing.title}\nOPIS: ${description || "(brak opisu)"}`;
 		})
 		.join("\n\n");
@@ -483,6 +519,14 @@ const ENUM_ALIASES: Record<string, string> = {
 	"do remontu": "to_renovation",
 	własność: "full_ownership",
 	"pełna własność": "full_ownership",
+	// market (distinct keys from finishStandard's "deweloperski" = developer)
+	pierwotny: "primary",
+	"rynek pierwotny": "primary",
+	"od dewelopera": "primary",
+	"pierwsza sprzedaż": "primary",
+	wtórny: "secondary",
+	"rynek wtórny": "secondary",
+	"z drugiej ręki": "secondary",
 	// ("użytkowanie wieczyste" maps to legalStatus.perpetual_usufruct; the
 	// ownership enum takes the model's own leasehold answer.)
 	udział: "share",
@@ -817,6 +861,7 @@ export function normalizeFacts(raw: unknown): ListingFacts | null {
 		),
 		condition: asEnum(row.condition, FACT_VALUES.condition),
 		ownership: asEnum(row.ownership, FACT_VALUES.ownership),
+		market: asEnum(row.market, FACT_VALUES.market),
 		buildYear: asNumber(row.buildYear, 1800, 2035),
 		plotAreaM2: asNumber(row.plotAreaM2, 1, 500_000),
 		floor: asNumber(row.floor, -3, 60),
@@ -921,23 +966,141 @@ export function parseFactsResponse(
 	text: string,
 	requested: readonly number[],
 ): Map<number, ListingFacts> {
+	return parseFactsAnswer(text, requested)?.facts ?? new Map();
+}
+
+export interface FactsAnswer {
+	/** Every normalized facts object the answer carried, keyed by listing id. */
+	facts: Map<number, ListingFacts>;
+}
+
+/**
+ * Parse one model answer. `null` means the batch failed as a whole (not JSON,
+ * not an answer object, no results array): nothing for it may be stored, so the
+ * rows stay unprocessed and are retried on the next run. A result row the model
+ * omitted is NOT a batch failure; the caller stores it as an empty answer.
+ */
+export function parseFactsAnswer(
+	text: string,
+	requested: readonly number[],
+): FactsAnswer | null {
 	const parsed = extractJsonObject(text);
 	const rows = Array.isArray(parsed)
 		? parsed
 		: parsed && typeof parsed === "object"
-			? ((parsed as { results?: unknown }).results ?? [])
-			: [];
-	if (!Array.isArray(rows)) return new Map();
+			? (parsed as { results?: unknown }).results
+			: undefined;
+	if (!Array.isArray(rows)) return null;
+	// An empty results array is a truncated or confused answer, not a batch of
+	// ads with no facts: fail the batch so the rows are retried instead of
+	// being marked processed forever.
+	if (rows.length === 0) return null;
 	const allowed = new Set(requested);
-	const out = new Map<number, ListingFacts>();
+	const facts = new Map<number, ListingFacts>();
 	for (const row of rows) {
 		const id = Number(
 			(row as { id?: unknown } | null)?.id ??
 				(row as { listingId?: unknown } | null)?.listingId,
 		);
 		if (!Number.isFinite(id) || !allowed.has(id)) continue;
-		const facts = normalizeFacts(row);
-		if (facts) out.set(id, facts);
+		const normalized = normalizeFacts(row);
+		if (normalized) facts.set(id, normalized);
+	}
+	return { facts };
+}
+
+/**
+ * One outcome per requested id, in the request order:
+ * - a `ListingFacts` object when the model read something,
+ * - `null` when the offer was answered with nothing usable, i.e. the batch
+ *   parsed cleanly but this row was omitted or carried no fact.
+ *
+ * Call this ONLY with a non-null `FactsAnswer` (a cleanly parsed batch); a
+ * failed batch must throw before any write, so its rows stay unprocessed and
+ * are retried. Both outcomes below are persisted with the payload hash: an
+ * offer whose ad carries no fact is *processed*, not pending.
+ */
+export function factRowOutcomes(
+	answer: FactsAnswer,
+	requested: readonly number[],
+): Map<number, ListingFacts | null> {
+	const out = new Map<number, ListingFacts | null>();
+	for (const id of requested) {
+		const facts = answer.facts.get(id) ?? null;
+		out.set(id, facts && !isEmptyFacts(facts) ? facts : null);
 	}
 	return out;
+}
+
+/**
+ * Hash of exactly what the model is asked about: the title, the sliced
+ * description the prompt sends, and the prompt version. One stored row per
+ * (payload, version) is what makes a re-run idempotent: a matching hash means
+ * the offer is never sent again, and a description that only changed past the
+ * 1800-char window keeps the hash (the request is byte-identical).
+ */
+export function factTextHash(
+	title: string,
+	description: string | null,
+	version: string = FACT_PROMPT_VERSION,
+): string {
+	return createHash("sha256")
+		.update(`${version}\u0000${title}\u0000${promptDescription(description)}`)
+		.digest("hex");
+}
+
+/** The stored-facts row a listing already has, as the selection needs it. */
+export interface FactKnownRow {
+	hash: string;
+	version: string;
+}
+
+export interface FactCandidate extends FactInput {
+	hash: string;
+}
+
+/**
+ * Build the send queue for one run. This is the single gate that guarantees an
+ * offer reaches the model at most once per (text, prompt version):
+ * - ids are deduplicated, so a run never sends the same listing twice,
+ * - a stored row with the same hash and version is skipped,
+ * - `force` re-reads everything (the explicit re-extraction path).
+ * Batches are then cut from this queue, so no other path can re-send a row.
+ */
+export function selectFactCandidates(
+	rows: readonly FactInput[],
+	options: {
+		limit: number;
+		known?: ReadonlyMap<number, FactKnownRow>;
+		force?: boolean;
+		version?: string;
+	},
+): { queue: FactCandidate[]; skipped: number; duplicates: number } {
+	const version = options.version ?? FACT_PROMPT_VERSION;
+	const known = options.known ?? new Map<number, FactKnownRow>();
+	const queue: FactCandidate[] = [];
+	const seen = new Set<number>();
+	let skipped = 0;
+	let duplicates = 0;
+	for (const row of rows) {
+		if (seen.has(row.id)) {
+			duplicates += 1;
+			continue;
+		}
+		seen.add(row.id);
+		const hash = factTextHash(row.title, row.description, version);
+		const stored = options.force ? undefined : known.get(row.id);
+		if (stored && stored.hash === hash && stored.version === version) {
+			skipped += 1;
+			continue;
+		}
+		if (queue.length >= options.limit) continue;
+		queue.push({
+			id: row.id,
+			title: row.title,
+			description: row.description,
+			hash,
+		});
+	}
+	return { queue, skipped, duplicates };
 }
