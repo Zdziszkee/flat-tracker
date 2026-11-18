@@ -398,9 +398,15 @@ are isolated and never abort the refresh. The engine is deterministic
 rules over the valuation comps, no ML model; `docs/alert-scoring.md` has
 the component breakdown and rationale.
 
-- **New offers are scored on arrival** (`scoreArrivals`, called from
-  `src/crawler/pipeline.ts` after `saveListings` returns `newIds`), not only
-  at the end of the refresh. Scoring is advisory there: a failure is logged
+- **New offers are scored on arrival and update the day's list**
+  (`scoreArrivals`, called from `src/crawler/pipeline.ts` after `saveListings`
+  returns `newIds`), not only at the end of the refresh. Once the arrivals are
+  scored, `scoreArrivals` rebuilds today's leaderboard immediately (at most
+  once per `ALERT_REBUILD_MIN_INTERVAL_MS` = 15 s, because a site can deliver
+  hundreds of offers in one burst), so /alerts grows during a crawl instead of
+  waiting for the scoring phase; the fresh-arrival appends run after the
+  rebuild, since a rebuild replaces the day's cut. `/alerts` polls the feed
+  every 30 s for the same reason. Scoring is advisory there: a failure is logged
   and swallowed, and the final phase cleans up whatever was missed. Scoring
   per site means an offer is scored within seconds of being stored.
 - **Fresh-arrival alerts compare against the last 24 hours**: a newly

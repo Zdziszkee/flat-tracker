@@ -511,9 +511,32 @@ export interface ArrivalScoreSummary {
 	scored: number;
 	/** Fresh-arrival alerts inserted into today's list. */
 	alerts: number;
+	/** Today's leaderboard was rebuilt by this call (debounced). */
+	rebuilt: boolean;
 	/** Per-listing or batch failures, already collected for the caller. */
 	errors: string[];
 }
+
+/**
+ * Shortest gap between two leaderboard rebuilds while a crawl is running.
+ *
+ * The list is the day's top 25 per segment, so it has to move when offers
+ * arrive, not only at the end of a refresh. Rebuilding it is one ranked query
+ * plus up to 75 row writes, which is cheap but not free: a site can deliver
+ * hundreds of new offers in a burst, so bursts are coalesced into one rebuild
+ * per interval instead of one per batch.
+ */
+export const ALERT_REBUILD_MIN_INTERVAL_MS = 15_000;
+
+/** Whether a rebuild is due, given the last one and the current clock. */
+export function shouldRebuildAlerts(
+	nowMs: number,
+	lastRebuildMs: number,
+): boolean {
+	return nowMs - lastRebuildMs >= ALERT_REBUILD_MIN_INTERVAL_MS;
+}
+
+let lastAlertRebuildMs = 0;
 
 /**
  * Score the offers a crawl just saved and alert the ones that beat their
@@ -540,7 +563,12 @@ export async function scoreArrivals(
 	listingIds: readonly number[],
 	now: Date = new Date(),
 ): Promise<ArrivalScoreSummary> {
-	const summary: ArrivalScoreSummary = { scored: 0, alerts: 0, errors: [] };
+	const summary: ArrivalScoreSummary = {
+		scored: 0,
+		alerts: 0,
+		rebuilt: false,
+		errors: [],
+	};
 	const ids = [...new Set(listingIds)].filter(
 		(id) => Number.isInteger(id) && id > 0,
 	);
@@ -561,19 +589,45 @@ export async function scoreArrivals(
 		]);
 		const facts = await loadScoredFacts(rows.map((row) => row.id));
 		const placeholders = await loadPlaceholderPoints();
+		const scoredEntries: ScoredListing[] = [];
 		for (const row of rows) {
 			try {
 				const entry = await scoreListingRow(row, now, facts, placeholders);
 				if (!entry) continue;
 				summary.scored++;
-				// ALERT_GATES live inside the score: an ineligible offer is
-				// stored but never competes for an alert.
-				if (!entry.score.eligible) continue;
+				scoredEntries.push(entry);
+			} catch (error) {
+				summary.errors.push(`listing ${row.id}: ${errorMessage(error)}`);
+			}
+		}
+		// The new scores are stored, so the day's leaderboard can be rebuilt
+		// right away: /alerts then shows the arrivals without waiting for the
+		// end of the refresh. Rebuilt BEFORE the fresh-arrival appends, because
+		// a rebuild replaces the day's cut and would drop them.
+		if (
+			scoredEntries.length > 0 &&
+			shouldRebuildAlerts(Date.now(), lastAlertRebuildMs)
+		) {
+			lastAlertRebuildMs = Date.now();
+			const failure = await rebuildTodayAlerts(now).catch(
+				(error: unknown) => error,
+			);
+			if (failure instanceof Error) {
+				summary.errors.push(`leaderboard: ${errorMessage(failure)}`);
+			} else {
+				summary.rebuilt = true;
+			}
+		}
+		// ALERT_GATES live inside the score: an ineligible offer is stored but
+		// never competes for an alert.
+		for (const entry of scoredEntries) {
+			if (!entry.score.eligible) continue;
+			try {
 				if (await alertFreshArrival(entry, windowStart, now, day)) {
 					summary.alerts++;
 				}
 			} catch (error) {
-				summary.errors.push(`listing ${row.id}: ${errorMessage(error)}`);
+				summary.errors.push(`alert ${entry.id}: ${errorMessage(error)}`);
 			}
 		}
 	} catch (error) {

@@ -160,6 +160,12 @@ const arrivalScoringEffect = (
 	}).pipe(
 		Effect.tap((summary) =>
 			Effect.sync(() => {
+				if (summary.rebuilt) {
+					console.log(
+						`[${site}] arrival scoring: ${summary.scored} scored, ` +
+							`${summary.alerts} fresh alerts, day list rebuilt`,
+					);
+				}
 				const first = summary.errors[0];
 				if (first) {
 					console.error(

@@ -33,7 +33,13 @@ import {
 	valueCurveScore,
 } from "#/lib/scoring/config";
 import { scoredFactsOf } from "#/lib/llm/fact-access";
-import { duplicateKey, investmentKey, selectLeaders } from "#/lib/scoring/run";
+import {
+	ALERT_REBUILD_MIN_INTERVAL_MS,
+	duplicateKey,
+	investmentKey,
+	selectLeaders,
+	shouldRebuildAlerts,
+} from "#/lib/scoring/run";
 import type { GeoUniqueness } from "#/lib/valuation/uniqueness-geo";
 import type { ValuationEstimate } from "#/types/listing";
 
@@ -1890,6 +1896,20 @@ check(
 		title: investmentKey(leader({ investmentTitle: " Osiedle X " })),
 		street: investmentKey(leader({ street: "Lipowa" })),
 	},
+);
+
+// --- Day list rebuild on arrivals ---------------------------------------
+// The list is the day's top cut, so it must move while a crawl runs. The
+// rebuild is debounced because a site can deliver hundreds of offers in a
+// burst: one rebuild per interval, never one per batch.
+check(
+	"the leaderboard rebuild is debounced to one per interval",
+	shouldRebuildAlerts(ALERT_REBUILD_MIN_INTERVAL_MS, 0) &&
+		!shouldRebuildAlerts(ALERT_REBUILD_MIN_INTERVAL_MS - 1, 0) &&
+		!shouldRebuildAlerts(1_000, Date.now()) &&
+		!shouldRebuildAlerts(Date.now(), Date.now()) &&
+		ALERT_REBUILD_MIN_INTERVAL_MS <= 30_000,
+	{ interval: ALERT_REBUILD_MIN_INTERVAL_MS },
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);

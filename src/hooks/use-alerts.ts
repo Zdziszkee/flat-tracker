@@ -15,6 +15,9 @@ export function useAlerts(filters: {
 		queryKey: ["alerts", filters],
 		queryFn: () =>
 			fetch(`/api/alerts?${params.toString()}`).then((r) => r.json()),
-		staleTime: 60_000,
+		// The list is rebuilt while a crawl runs (every arrival batch, debounced
+		// in the engine), so the page polls instead of showing a frozen day.
+		staleTime: 15_000,
+		refetchInterval: 30_000,
 	});
 }
