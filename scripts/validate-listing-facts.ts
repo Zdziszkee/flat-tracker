@@ -48,8 +48,8 @@ const prompt = factPrompt([
 const system = prompt[0]?.content ?? "";
 const user = prompt[1]?.content ?? "";
 check(
-	"the prompt version is 2",
-	FACT_PROMPT_VERSION === "2",
+	"the prompt version is 3",
+	FACT_PROMPT_VERSION === "3",
 	FACT_PROMPT_VERSION,
 );
 for (const [field, values] of Object.entries(FACT_VALUES)) {
@@ -560,6 +560,187 @@ check(
 				ids,
 			).get(101),
 		),
+);
+
+// --- v3 fields ----------------------------------------------------------
+// Prompt v3 widens the vocabulary to what the 2026-11 source sample showed
+// is stated in prose and not published structurally: building age/renovation
+// evidence, energy class, roof and facade state, parking type, storage,
+// water/sewage for houses, holiday amenities, MPZP parameters, and the
+// auction/investment metadata.
+const v3Keys = [
+	"renovationYear",
+	"energyClass",
+	"elevationState",
+	"roofType",
+	"roofYear",
+	"garret",
+	"storageM2",
+	"parkingType",
+	"balconyGlazed",
+	"topFloor",
+	"outbuildings",
+	"waterSource",
+	"sewage",
+	"pool",
+	"sauna",
+	"jacuzzi",
+	"strEvidence",
+	"plotSubdividable",
+	"maxCoveragePct",
+	"maxFloors",
+	"existingBuilding",
+	"appraisedValue",
+	"auctionRound",
+	"caseNumber",
+	"court",
+	"landRegister",
+	"shareFraction",
+	"unitsCount",
+	"buildingsCount",
+	"constructionStage",
+	"finishStandard",
+	"siteAmenities",
+];
+check(
+	"the prompt schema carries every v3 key",
+	v3Keys.every((key) => system.includes(`"${key}"`)),
+	v3Keys.filter((key) => !system.includes(`"${key}"`)),
+);
+
+const v3 = normalizeFacts({
+	id: 101,
+	renovationYear: 2019,
+	energyClass: "c",
+	elevationState: "elewacja ocieplona",
+	roofType: "dachówka",
+	roofYear: 2015,
+	garret: true,
+	storageM2: "4,5",
+	parkingType: "hala garażowa",
+	balconyGlazed: true,
+	topFloor: true,
+	outbuildings: true,
+	waterSource: "studnia",
+	sewage: "szambo",
+	pool: true,
+	sauna: true,
+	jacuzzi: null,
+	strEvidence: true,
+	plotSubdividable: true,
+	maxCoveragePct: 35,
+	maxFloors: 1.5,
+	existingBuilding: true,
+	appraisedValue: 450000,
+	auctionRound: "druga licytacja",
+	caseNumber: "KM 123/24",
+	court: "SR dla Krakowa-Krowodrzy",
+	landRegister: "KR1P/00012345/6",
+	shareFraction: "1/2",
+	unitsCount: 120,
+	buildingsCount: 3,
+	constructionStage: "stan surowy zamknięty",
+	finishStandard: "pod klucz",
+	siteAmenities: ["plac zabaw", "siłownia", "Concierge", "plac zabaw"],
+});
+check(
+	"v3 enums accept Polish aliases",
+	v3?.energyClass === "C" &&
+		v3?.elevationState === "after_insulation" &&
+		v3?.roofType === "tile" &&
+		v3?.parkingType === "hall" &&
+		v3?.waterSource === "well" &&
+		v3?.sewage === "septic" &&
+		v3?.auctionRound === "second" &&
+		v3?.constructionStage === "closed_shell" &&
+		v3?.finishStandard === "turnkey",
+	{
+		energyClass: v3?.energyClass,
+		elevationState: v3?.elevationState,
+		roofType: v3?.roofType,
+		parkingType: v3?.parkingType,
+		waterSource: v3?.waterSource,
+		sewage: v3?.sewage,
+		auctionRound: v3?.auctionRound,
+		constructionStage: v3?.constructionStage,
+		finishStandard: v3?.finishStandard,
+	},
+);
+check(
+	"v3 numbers are parsed and bounded",
+	v3?.renovationYear === 2019 &&
+		v3?.roofYear === 2015 &&
+		v3?.storageM2 === 4.5 &&
+		v3?.maxCoveragePct === 35 &&
+		v3?.maxFloors === 1.5 &&
+		v3?.appraisedValue === 450000 &&
+		v3?.unitsCount === 120 &&
+		v3?.buildingsCount === 3,
+	{
+		renovationYear: v3?.renovationYear,
+		storageM2: v3?.storageM2,
+		maxCoveragePct: v3?.maxCoveragePct,
+		appraisedValue: v3?.appraisedValue,
+	},
+);
+check(
+	"v3 booleans and text are kept, the amenity list is deduped to codes",
+	v3?.garret === true &&
+		v3?.balconyGlazed === true &&
+		v3?.topFloor === true &&
+		v3?.outbuildings === true &&
+		v3?.pool === true &&
+		v3?.sauna === true &&
+		v3?.strEvidence === true &&
+		v3?.plotSubdividable === true &&
+		v3?.existingBuilding === true &&
+		v3?.caseNumber === "KM 123/24" &&
+		v3?.shareFraction === "1/2" &&
+		v3?.siteAmenities?.length === 3 &&
+		v3?.siteAmenities?.includes("plac_zabaw") === true,
+	{ siteAmenities: v3?.siteAmenities, caseNumber: v3?.caseNumber },
+);
+
+const v3Bad = normalizeFacts({
+	id: 102,
+	renovationYear: 1200,
+	energyClass: "Z",
+	maxCoveragePct: 150,
+	maxFloors: 40,
+	storageM2: -5,
+	unitsCount: 99999,
+	parkingType: "na dachu",
+	siteAmenities: [42, ""],
+	auctionRound: "czwarta",
+});
+check(
+	"v3 rejects out-of-range and unknown values instead of guessing",
+	v3Bad?.renovationYear === null &&
+		v3Bad?.energyClass === null &&
+		v3Bad?.maxCoveragePct === null &&
+		v3Bad?.maxFloors === null &&
+		v3Bad?.storageM2 === null &&
+		v3Bad?.unitsCount === null &&
+		v3Bad?.parkingType === null &&
+		v3Bad?.auctionRound === null &&
+		v3Bad?.siteAmenities === null,
+	{
+		energyClass: v3Bad?.energyClass,
+		parkingType: v3Bad?.parkingType,
+		siteAmenities: v3Bad?.siteAmenities,
+	},
+);
+
+const v3Costs = normalizeFacts({
+	id: 103,
+	monthlyCosts: { rent: 650, funduszRemontowy: 120, deposit: 3000 },
+});
+check(
+	"the deposit joins the monthly cost block",
+	v3Costs?.monthlyCosts?.rent === 650 &&
+		v3Costs?.monthlyCosts?.funduszRemontowy === 120 &&
+		v3Costs?.monthlyCosts?.deposit === 3000,
+	v3Costs?.monthlyCosts,
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);

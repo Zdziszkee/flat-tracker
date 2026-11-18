@@ -271,6 +271,22 @@ small, fixed vocabulary the scoring layer already understands.
   (prompt, parsing, normalization; pure) and `extract.ts` (DB batching,
   promotion). Transport is TanStack AI (`chat()` with the
   `openaiCompatibleText` adapter), not a hand-rolled fetch.
+- **What each source can give us**: `docs/llm-extraction.md` records the
+  per-source answer (ten sampled offers each plus a column fill-rate count):
+  which sources publish full prose (otodom detail, olx, sprzedajemy,
+  adresowo, nieruchomosci-online, gethome, tabelaofert, eLicytacje), which
+  publish only a teaser ending in "..." (morizon, gratka, domiporta), and
+  which publish none at all (investmap, rynekpierwotny) or fold the notice
+  into the title (licytacje-komornik). Prompt v3 adds what that sample showed
+  is stated in prose but never published structurally: renovation/roof year,
+  energy class, facade and roof state, parking type, storage area, top-floor
+  flag, water source and sewage for houses, pool/sauna/jacuzzi, short-term
+  rental evidence, plot subdivision and MPZP parameters, and the auction
+  metadata (appraisal, round, case number, court, land register, share) plus
+  the investment metadata (stage, finish standard, unit and building counts,
+  site amenities). New fields live in `listing_facts.facts_json`; only those
+  a score reads are promoted to a column, so the vocabulary can grow without
+  a migration.
 - **What it fills**: `heating_type`, `building_type`, `plot_type`,
   `building_material`, `condition`, `ownership`, `build_year`,
   `plot_area_m2`, `floor`, `floor_count` and the amenity flags. Only empty

@@ -85,6 +85,29 @@ export const FACT_VALUES = {
 	/** Mortgage-ability of the title, independent of the ownership enum. */
 	legalStatus: ["own", "cooperative", "perpetual_usufruct", "share", "unknown"],
 	urgency: ["urgent", "none", "unknown"],
+	// --- v3 ---------------------------------------------------------------
+	/** Energy performance certificate class, when the ad names one. */
+	energyClass: ["A", "B", "C", "D", "E", "F", "G", "unknown"],
+	/** Facade state: insulated, still to do, or nothing said. */
+	elevationState: ["after_insulation", "to_renovation", "ok", "unknown"],
+	roofType: ["tile", "metal", "felt", "thatch", "unknown"],
+	/** Where a car stands: underground, own garage, shared hall, street. */
+	parkingType: ["underground", "garage", "hall", "street", "none", "unknown"],
+	waterSource: ["mains", "well", "unknown"],
+	sewage: ["mains", "septic", "treatment", "unknown"],
+	/** Construction stage of a unit sold off-plan. */
+	constructionStage: [
+		"planned",
+		"foundations",
+		"shell",
+		"closed_shell",
+		"finishing",
+		"completed",
+		"unknown",
+	],
+	finishStandard: ["developer", "turnkey", "to_finish", "unknown"],
+	/** Court-auction round: the second starts at two thirds of the appraisal. */
+	auctionRound: ["first", "second", "third", "unknown"],
 } as const;
 
 export type FactEnumField = keyof typeof FACT_VALUES;
@@ -111,6 +134,8 @@ export interface MonthlyCosts {
 	advance: number | null;
 	/** Whether media are part of the rent. */
 	mediaIncluded: boolean | null;
+	/** Kaucja, PLN. */
+	deposit: number | null;
 	/** Agency commission, percent of the price. */
 	agencyFeePct: number | null;
 }
@@ -178,6 +203,56 @@ export interface ListingFacts {
 	tenanted: boolean | null;
 	urgency: string | null;
 	monthlyCosts: MonthlyCosts | null;
+	// --- v3 ---------------------------------------------------------------
+	/** Year of the last renovation the ad states ("dach wymieniony 2019"). */
+	renovationYear: number | null;
+	energyClass: string | null;
+	elevationState: string | null;
+	roofType: string | null;
+	roofYear: number | null;
+	/** Poddasze/strych, usable or not ("poddasze do adaptacji"). */
+	garret: boolean | null;
+	/** Komórka lokatorska, in m². */
+	storageM2: number | null;
+	parkingType: string | null;
+	/** Balkon zabudowany / loggia. */
+	balconyGlazed: boolean | null;
+	/** Ostatnie piętro. */
+	topFloor: boolean | null;
+	/** Budynki gospodarcze, stodoła, warsztat on the parcel. */
+	outbuildings: boolean | null;
+	waterSource: string | null;
+	sewage: string | null;
+	pool: boolean | null;
+	sauna: boolean | null;
+	jacuzzi: boolean | null;
+	/** The ad claims tourist/short-term rental use or occupancy. */
+	strEvidence: boolean | null;
+	/** The parcel can be divided into more building plots. */
+	plotSubdividable: boolean | null;
+	/** MPZP parameters quoted in prose, percent of the parcel. */
+	maxCoveragePct: number | null;
+	/** MPZP height limit, number of storeys. */
+	maxFloors: number | null;
+	/** A building already stands on the parcel. */
+	existingBuilding: boolean | null;
+	/** Oszacowanie quoted in an auction notice, PLN. */
+	appraisedValue: number | null;
+	auctionRound: string | null;
+	caseNumber: string | null;
+	court: string | null;
+	/** Land register number (KW). */
+	landRegister: string | null;
+	/** Share being sold ("1/2", "3/4"). */
+	shareFraction: string | null;
+	/** Units and buildings in a development. */
+	unitsCount: number | null;
+	buildingsCount: number | null;
+	/** How far the construction is, for a unit sold off-plan. */
+	constructionStage: string | null;
+	finishStandard: string | null;
+	/** On-site amenities of a development, short codes. */
+	siteAmenities: string[] | null;
 }
 
 /** One offer as the prompt sees it. Descriptions are trimmed: the header and
@@ -190,7 +265,7 @@ export interface FactInput {
 
 /** Bumped whenever the prompt or the stored schema changes: the version is
  * part of the text hash, so a new prompt re-reads the whole corpus. */
-export const FACT_PROMPT_VERSION = "2";
+export const FACT_PROMPT_VERSION = "3";
 
 /** Longest description slice sent per listing; ~900 chars covers the facts. */
 const DESCRIPTION_LIMIT = 900;
@@ -245,6 +320,34 @@ const ENUM_HINTS: Record<FactEnumField, string[]> = {
 	urgency: [
 		"urgent = pilne, szybka sprzedaż, sprzedaż z powodu wyjazdu; none = brak pośpiechu",
 	],
+	// --- v3 ---------------------------------------------------------------
+	energyClass: [
+		"A-G = klasa świadectwa energetycznego (EP, EK); brak = unknown",
+	],
+	elevationState: [
+		"after_insulation = elewacja ocieplona, po termomodernizacji; to_renovation = elewacja do remontu, odpadający tynk; ok = w dobrym stanie",
+	],
+	roofType: [
+		"tile = dachówka, ceramiczna, cementowa; metal = blacha, blachodachówka; felt = papa, gont bitumiczny; thatch = strzecha",
+	],
+	parkingType: [
+		"underground = hala podziemna, garaż podziemny; garage = garaż (w bryle lub wolnostojący); hall = hala garażowa naziemna, miejsce w garażu zbiorczym",
+		"street = miejsce naziemne, parking przed budynkiem, na ulicy; none = brak miejsca",
+	],
+	waterSource: ["mains = wodociąg, sieć wodna; well = studnia"],
+	sewage: [
+		"mains = kanalizacja, sieć kanalizacyjna; septic = szambo; treatment = oczyszczalnia przydomowa",
+	],
+	constructionStage: [
+		"planned = w planach, przed budową; foundations = fundamenty; shell = stan surowy otwarty",
+		"closed_shell = stan surowy zamknięty; finishing = wykończenie, prace wykończeniowe; completed = gotowe, oddane, do odbioru",
+	],
+	finishStandard: [
+		"developer = stan deweloperski; turnkey = pod klucz, wykończone; to_finish = do wykończenia",
+	],
+	auctionRound: [
+		"first = pierwsza licytacja; second = druga licytacja; third = trzecia licytacja",
+	],
 };
 
 function enumLine(field: FactEnumField): string {
@@ -282,13 +385,22 @@ export function factPrompt(listings: FactInput[]): Array<{
 		"",
 		"Pola złożone:",
 		'utilities: {"power":bool,"water":bool,"gas":bool,"sewer":bool,"internet":bool} — tylko dla DZIAŁKI lub domu z działką; przyłącza NA DZIAŁCE, "media do doprowadzenia" = false, "wszystkie media" = true; dla mieszkania utilities = null.',
-		'monthlyCosts: {"rent":liczba,"funduszRemontowy":liczba,"advance":liczba,"mediaIncluded":bool,"agencyFeePct":liczba} — zł/mies., prowizja w % (0-10).',
+		'monthlyCosts: {"rent":liczba,"funduszRemontowy":liczba,"advance":liczba,"mediaIncluded":bool,"agencyFeePct":liczba,"deposit":liczba} — zł/mies., prowizja w % (0-10), kaucja w zł.',
 		'context: {"lake":bool,"river":bool,"forest":bool,"mountains":bool,"view":tekst} — otoczenie i widok z opisu ("nad jeziorem", "obok lasu", "widok na góry").',
 		'defects: krótkie kody wad i ryzyk, np. "damp", "no_lift", "roof_to_renovation", "media_missing", "no_access", "flood_risk", "noise", "tenanted".',
 		'encumbrances: krótkie kody obciążeń prawnych, np. "mortgage", "easement", "claims", "life_estate".',
 		'urgency: pilna sprzedaż; "none" gdy ogłoszenie nie sugeruje pośpiechu.',
 		"",
-		'Schemat odpowiedzi: {"results":[{"id":0,"heating":null,"buildingType":null,"largePanel":null,"plotType":null,"buildingMaterial":null,"condition":null,"ownership":null,"buildYear":null,"plotAreaM2":null,"floor":null,"floorCount":null,"hasBalcony":null,"hasTerrace":null,"hasGarden":null,"hasElevator":null,"hasParking":null,"hasGarage":null,"hasBasement":null,"utilities":null,"roadAccess":null,"mpzpSymbol":null,"mpzpPurpose":null,"buildingPermitWz":null,"plotShape":null,"plotDimensions":null,"plotSlope":null,"fencing":null,"kitchen":null,"exposure":null,"windows":null,"technology":null,"insulation":null,"floorHeating":null,"heatPump":null,"recuperation":null,"airConditioning":null,"photovoltaics":null,"parkingSpots":null,"balconyM2":null,"terraceM2":null,"gardenM2":null,"garageM2":null,"legalStatus":null,"encumbrances":null,"defects":null,"context":null,"tenanted":null,"urgency":null,"monthlyCosts":null}]}',
+		"Pola v3 (wypełniaj tylko gdy wynikają z tekstu; enumy jak wyżej):",
+		"renovationYear, roofYear (rok remontu / wymiany dachu, 1800-2035), energyClass, elevationState, roofType,",
+		"garret (poddasze/strych), storageM2 (komórka lokatorska, m2), parkingType, balconyGlazed (balkon zabudowany), topFloor (ostatnie piętro),",
+		"outbuildings (budynki gospodarcze, stodoła), waterSource, sewage, pool, sauna, jacuzzi, strEvidence (ogłoszenie wskazuje na wynajem turystyczny lub obłożenie),",
+		"plotSubdividable (możliwy podział na działki), maxCoveragePct (0-100, powierzchnia zabudowy z MPZP), maxFloors (0-20, kondygnacje z MPZP), existingBuilding (budynek już stoi na działce),",
+		"appraisedValue (oszacowanie z ogłoszenia licytacyjnego, zł), auctionRound, caseNumber (sygn. akt), court (sąd), landRegister (KW nr), shareFraction (np. 1/2),",
+		"unitsCount (mieszkań w inwestycji), buildingsCount (budynków), constructionStage, finishStandard,",
+		'siteAmenities: krótkie kody udogodnień inwestycji, np. "playground", "gym", "concierge", "coworking", "pool", "sauna", "parking_underground".',
+		"",
+		'Schemat odpowiedzi: {"results":[{"id":0,"heating":null,"buildingType":null,"largePanel":null,"plotType":null,"buildingMaterial":null,"condition":null,"ownership":null,"buildYear":null,"plotAreaM2":null,"floor":null,"floorCount":null,"hasBalcony":null,"hasTerrace":null,"hasGarden":null,"hasElevator":null,"hasParking":null,"hasGarage":null,"hasBasement":null,"utilities":null,"roadAccess":null,"mpzpSymbol":null,"mpzpPurpose":null,"buildingPermitWz":null,"plotShape":null,"plotDimensions":null,"plotSlope":null,"fencing":null,"kitchen":null,"exposure":null,"windows":null,"technology":null,"insulation":null,"floorHeating":null,"heatPump":null,"recuperation":null,"airConditioning":null,"photovoltaics":null,"parkingSpots":null,"balconyM2":null,"terraceM2":null,"gardenM2":null,"garageM2":null,"legalStatus":null,"encumbrances":null,"defects":null,"context":null,"tenanted":null,"urgency":null,"monthlyCosts":null,"renovationYear":null,"energyClass":null,"elevationState":null,"roofType":null,"roofYear":null,"garret":null,"storageM2":null,"parkingType":null,"balconyGlazed":null,"topFloor":null,"outbuildings":null,"waterSource":null,"sewage":null,"pool":null,"sauna":null,"jacuzzi":null,"strEvidence":null,"plotSubdividable":null,"maxCoveragePct":null,"maxFloors":null,"existingBuilding":null,"appraisedValue":null,"auctionRound":null,"caseNumber":null,"court":null,"landRegister":null,"shareFraction":null,"unitsCount":null,"buildingsCount":null,"constructionStage":null,"finishStandard":null,"siteAmenities":null}]}',
 		"",
 		'Jeden obiekt na ogłoszenie, w tej samej kolejności, każdy z polem "id".',
 	].join("\n");
@@ -442,6 +554,59 @@ const ENUM_ALIASES: Record<string, string> = {
 	"spoldzielcze wlasnosciowe": "cooperative",
 	"użytkowanie wieczyste": "perpetual_usufruct",
 	"udział w gruncie": "share",
+	// v3: facade and roof
+	"elewacja ocieplona": "after_insulation",
+	ocieplona: "after_insulation",
+	termomodernizacja: "after_insulation",
+	"po termomodernizacji": "after_insulation",
+	"elewacja do remontu": "to_renovation",
+	"elewacja w dobrym stanie": "ok",
+	dachówka: "tile",
+	ceramiczna: "tile",
+	"dachówka ceramiczna": "tile",
+	blacha: "metal",
+	blachodachówka: "metal",
+	papa: "felt",
+	gont: "felt",
+	strzecha: "thatch",
+	// v3: parking
+	"hala garażowa": "hall",
+	"hala podziemna": "underground",
+	podziemny: "underground",
+	"garaż podziemny": "underground",
+	"miejsce naziemne": "street",
+	naziemne: "street",
+	"parking przed budynkiem": "street",
+	// v3: water and sewage
+	wodociąg: "mains",
+	"sieć wodna": "mains",
+	studnia: "well",
+	kanalizacja: "mains",
+	"sieć kanalizacyjna": "mains",
+	szambo: "septic",
+	oczyszczalnia: "treatment",
+	"oczyszczalnia przydomowa": "treatment",
+	// v3: construction stage
+	"w planach": "planned",
+	fundamenty: "foundations",
+	"stan surowy otwarty": "shell",
+	"stan surowy zamknięty": "closed_shell",
+	wykończenie: "finishing",
+	"prace wykończeniowe": "finishing",
+	gotowe: "completed",
+	oddane: "completed",
+	"do odbioru": "completed",
+	// v3: finish standard
+	"stan deweloperski": "developer",
+	developerski: "developer",
+	"pod klucz": "turnkey",
+	wykończone: "turnkey",
+	"do wykończenia": "to_finish",
+	// v3: auction round
+	"pierwsza licytacja": "first",
+	"pierwsza licytacja ": "first",
+	"druga licytacja": "second",
+	"trzecia licytacja": "third",
 	// urgency
 	pilne: "urgent",
 	"pilna sprzedaż": "urgent",
@@ -614,6 +779,7 @@ function monthlyCosts(value: unknown): MonthlyCosts | null {
 		advance: asNumber(source.advance, 0, 20_000),
 		mediaIncluded: asBoolean(source.mediaIncluded),
 		agencyFeePct: asNumber(source.agencyFeePct, 0, 10),
+		deposit: asNumber(source.deposit, 0, 500_000),
 	};
 	return Object.values(out).some((entry) => entry != null) ? out : null;
 }
@@ -693,6 +859,41 @@ export function normalizeFacts(raw: unknown): ListingFacts | null {
 		tenanted: asBoolean(row.tenanted),
 		urgency: asEnum(row.urgency, FACT_VALUES.urgency),
 		monthlyCosts: monthlyCosts(row.monthlyCosts),
+		renovationYear: asNumber(row.renovationYear, 1800, 2035),
+		energyClass: asEnum(row.energyClass, FACT_VALUES.energyClass),
+		elevationState: asEnum(row.elevationState, FACT_VALUES.elevationState),
+		roofType: asEnum(row.roofType, FACT_VALUES.roofType),
+		roofYear: asNumber(row.roofYear, 1800, 2035),
+		garret: asBoolean(row.garret),
+		storageM2: asNumber(row.storageM2, 0, 1_000),
+		parkingType: asEnum(row.parkingType, FACT_VALUES.parkingType),
+		balconyGlazed: asBoolean(row.balconyGlazed),
+		topFloor: asBoolean(row.topFloor),
+		outbuildings: asBoolean(row.outbuildings),
+		waterSource: asEnum(row.waterSource, FACT_VALUES.waterSource),
+		sewage: asEnum(row.sewage, FACT_VALUES.sewage),
+		pool: asBoolean(row.pool),
+		sauna: asBoolean(row.sauna),
+		jacuzzi: asBoolean(row.jacuzzi),
+		strEvidence: asBoolean(row.strEvidence),
+		plotSubdividable: asBoolean(row.plotSubdividable),
+		maxCoveragePct: asNumber(row.maxCoveragePct, 0, 100),
+		maxFloors: asNumber(row.maxFloors, 0, 20),
+		existingBuilding: asBoolean(row.existingBuilding),
+		appraisedValue: asNumber(row.appraisedValue, 0, 100_000_000),
+		auctionRound: asEnum(row.auctionRound, FACT_VALUES.auctionRound),
+		caseNumber: asText(row.caseNumber, 60),
+		court: asText(row.court, 80),
+		landRegister: asText(row.landRegister, 60),
+		shareFraction: asText(row.shareFraction, 20),
+		unitsCount: asCount(row.unitsCount, 0, 5_000),
+		buildingsCount: asCount(row.buildingsCount, 0, 500),
+		constructionStage: asEnum(
+			row.constructionStage,
+			FACT_VALUES.constructionStage,
+		),
+		finishStandard: asEnum(row.finishStandard, FACT_VALUES.finishStandard),
+		siteAmenities: asCodeList(row.siteAmenities),
 	};
 	return facts;
 }
