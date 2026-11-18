@@ -291,7 +291,7 @@ instead. When either import inserts new rows, building assignment
 colored on the map. The run's final passes are the `listing-derived`
 phase, which recomputes `is_visible`/`property_kind`/map anchors for the
 map and table, and the `scoring` phase, which scores new offers and
-appends today's top-5% alerts (see "Alert scoring" below).
+appends today's top-25-per-segment alerts (see "Alert scoring" below).
 Portal failures are isolated per site (one blocked portal does not abort
 the rest of the run). The task and plugin are registered explicitly in
 `vite.config.ts` (no Nitro directory scanning — TanStack Start owns
@@ -318,7 +318,7 @@ but stay unbound — the `osm_buildings` index covers małopolskie + śląskie.
 Every refresh ends with a `scoring` phase (`src/crawler/refresh.ts`) that
 runs `runAlertScoring({ incremental: true })` in the refresh child process,
 never in the HTTP server: every active sale offer without a current-version
-score is scored exactly once, then the new top-5% per region + segment is
+score is scored exactly once, then the new top-25 per segment is
 appended to today's `listing_alerts`. The phase shows on /sources
 (descriptor id `scoring` in `src/crawler/source-status.ts`) and is recorded
 in `crawl_runs` (alerts as new, scored offers as updated); scoring failures
@@ -341,13 +341,30 @@ the component breakdown and rationale.
   `payload_json.reason = "fresh_arrival"` plus the cohort size, and
   `/api/alerts` labels it; this path is additive, the market-wide cut below
   still runs.
-- **The top-5% cut is over the full eligible pool**, not the day's
-  arrivals: every run ranks all scored, active offers that pass the gates,
-  per region and segment, and appends only offers newly inside the cut.
-  Already-alerted listings are skipped after the cut, not before (skipping
-  first would append another 5% of the remainder on every run), so each
-  listing is alerted at most once and re-runs are idempotent: the unique
-  `(listing, alert_date, channel)` index rejects duplicates.
+- **The daily list is the top 25 offers per segment**
+  (`ALERT_TOP_OFFERS`), not a percentage of the pool: every run ranks all
+  scored, active offers that pass the gates, flats, houses and plots
+  separately (across both regions), and keeps only offers inside the cut.
+  Today's list is replaced on every run with the current cut
+  (older dates are untouched), so a better offer that appears during the
+  day is shown and one that loses its place disappears; the row keeps its
+  original `createdAt` (freshness badge). Re-runs are idempotent through
+  the unique `(listing, alert_date, channel)` index. The rule is recorded
+  on each row (`payload_json.cut = "top25"`) and `/api/alerts` enforces
+  the same ceiling on the response, so a date that still holds older
+  5%-era rows never shows more than 25 per category. Changing the cut is a
+  selection change, not a score change, so it does not require a
+  `SCORE_VERSION` bump.
+- **Amenities add points on top of the weighted score**
+  (`AMENITY_BONUSES`): district heating or a heat pump +5, a tram stop
+  within 300 m +5 (flats in Kraków/Katowice), a railway station within 1 km
+  +5, a park within 300 m +3, water within 500 m +2, elevator +2, parking or
+  garage +2. Each is a separate named reason on the card. The bonus is
+  scaled by the remaining headroom, `* min(1, (100 - weighted) / 30)`, so a
+  strong offer still gains without every top candidate collapsing into the
+  same 100; the score stays strictly increasing in the weighted
+  components. This changes stored scores, hence `SCORE_VERSION` 2027.10
+  (a re-score is required).
 - **/alerts always renders three fixed sections**, even when empty:
   Mieszkania, Domy z działką and Działki, fed by `/api/alerts` (latest
   alert date by default, optional `region`/`segment`/`date` filters). Rows

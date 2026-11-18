@@ -65,6 +65,14 @@ const STATE_PATH = "data/crawler/state.json";
 const BLOCK_COOLDOWN_MS = 2 * 60 * 60 * 1000;
 
 /**
+ * Cap on the incremental scoring backlog a single refresh may drain. New
+ * offers are still scored inline by the crawl; this only bounds the catch-up
+ * work after a `SCORE_VERSION` bump so one refresh stays inside its hourly
+ * window.
+ */
+const SCORE_BATCH_LIMIT = 2000;
+
+/**
  * Label for the GUGiK import scope, mirroring `resolveScope` in
  * `import-rcn-gugik.ts` (that helper is module-private). The scope is an
  * import setting rather than a metric, so it is reported in the run log.
@@ -893,7 +901,14 @@ export async function refreshAll(
 		});
 		try {
 			const { runAlertScoring } = await import("../lib/scoring/run.ts");
-			const score = await runAlertScoring({ incremental: true });
+			const score = await runAlertScoring({
+				incremental: true,
+				// New offers are scored inline by `scoreArrivals`, so this cap
+				// only bounds the backlog (for example after a SCORE_VERSION
+				// bump) to keep one refresh inside its hourly window. The rest
+				// drains over the next runs.
+				limit: SCORE_BATCH_LIMIT,
+			});
 			console.log(
 				`[refresh] scoring: ${score.scored} new offers scored, ` +
 					`${score.eligible} eligible, ${score.alerts} alerts, ` +

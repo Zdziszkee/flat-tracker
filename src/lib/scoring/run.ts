@@ -15,6 +15,7 @@ import {
 	gte,
 	inArray,
 	isNotNull,
+	notInArray,
 	or,
 	type SQL,
 	sql,
@@ -37,6 +38,7 @@ import {
 import {
 	ALERT_FRESHNESS,
 	ALERT_GATES,
+	ALERT_TOP_OFFERS,
 	type AlertSegment,
 	freshArrivalRank,
 	SCORE_VERSION,
@@ -585,16 +587,37 @@ async function storeScore(
 	if (!row) {
 		throw new Error(`score upsert returned no row for listing ${listingId}`);
 	}
+	// A re-score updates the same (listing, version) row, so any alert that
+	// already points at it must mirror the new values; otherwise a historical
+	// alert would claim a score the stored row no longer has.
+	await db
+		.update(listingAlerts)
+		.set({
+			score: score.totalScore,
+			segment: segmentLabel(score.segment),
+			region: score.region,
+		})
+		.where(eq(listingAlerts.scoreId, row.id));
 	return row.id;
 }
 
 /**
- * Rank eligible scores per region and segment and append today's top 5% to
- * the alert list. The pool is every scored, active offer (not only today's
- * arrivals), so a new offer competes against the full market; listings
- * already alerted on any earlier day are skipped, which makes the list grow
- * incrementally as new offers come in. Re-running is idempotent: the unique
- * alert index rejects duplicates.
+ * Rebuild today's leaderboard from the current-version pool. Used after a
+ * manual re-score (a version bump) so the page shows the new scores today
+ * instead of waiting for the next refresh.
+ */
+export async function rebuildTodayAlerts(
+	now: Date = new Date(),
+): Promise<number> {
+	return createAlerts(now);
+}
+
+/**
+ * Rank eligible scores per segment and replace today's list with the top
+ * `ALERT_TOP_OFFERS`. The pool is every scored, active offer (not only
+ * today's arrivals), so a new offer competes against the full market.
+ * Re-running is idempotent through the unique
+ * `(listing, alert_date, channel)` index.
  */
 async function createAlerts(now: Date): Promise<number> {
 	const day = dateOnly(now);
@@ -623,59 +646,83 @@ async function createAlerts(now: Date): Promise<number> {
 		)
 		.orderBy(desc(listingScores.totalScore));
 
-	// Group the FULL eligible pool (including already-alerted listings) so
-	// the 5% cut is stable across runs: a re-run without new offers inserts
-	// nothing, and a new offer only enters when it out-ranks the current
-	// top 5%. Skipping alerted rows before the cut would append another 5%
-	// of the remainder on every run.
+	// Group the FULL eligible pool, then keep the best `ALERT_TOP_OFFERS` per
+	// segment (flats, houses, plots across both regions). The group is the
+	// segment alone.
 	const groups = new Map<string, typeof rows>();
-	const alerted = new Set(
-		(
-			await db
-				.select({ listingId: listingAlerts.listingId })
-				.from(listingAlerts)
-		).map((row) => row.listingId),
-	);
 	for (const row of rows) {
-		const key = `${row.region}:${row.segment}`;
+		const key = row.segment;
 		const group = groups.get(key) ?? [];
 		group.push(row);
 		groups.set(key, group);
 	}
 
-	let inserted = 0;
+	// Today's list is a leaderboard, not an append-only inbox: replace it with
+	// the current cut, so a better offer that appeared during the day is shown
+	// and an offer that lost its place disappears. Older dates stay untouched.
+	const dayLeaders: Array<(typeof rows)[number]> = [];
 	for (const group of groups.values()) {
-		const topN = Math.max(1, Math.ceil(group.length * 0.05));
-		for (let index = 0; index < Math.min(topN, group.length); index++) {
+		const topN = Math.min(ALERT_TOP_OFFERS, group.length);
+		for (let index = 0; index < topN; index++) {
 			const row = group[index];
-			if (!row || alerted.has(row.listingId)) continue;
-			const result = await db
-				.insert(listingAlerts)
-				.values({
-					listingId: row.listingId,
+			if (row) dayLeaders.push(row);
+		}
+	}
+	const leaderIds = dayLeaders.map((row) => row.listingId);
+	if (leaderIds.length > 0) {
+		await db
+			.delete(listingAlerts)
+			.where(
+				and(
+					eq(listingAlerts.alertDate, day),
+					notInArray(listingAlerts.listingId, leaderIds),
+				),
+			);
+	} else {
+		await db.delete(listingAlerts).where(eq(listingAlerts.alertDate, day));
+	}
+
+	let inserted = 0;
+	const rankBySegment = new Map<string, number>();
+	for (const row of dayLeaders) {
+		const rank = (rankBySegment.get(row.segment) ?? 0) + 1;
+		rankBySegment.set(row.segment, rank);
+		const result = await db
+			.insert(listingAlerts)
+			.values({
+				listingId: row.listingId,
+				scoreId: row.scoreId,
+				alertDate: day,
+				segment: row.segment,
+				region: row.region,
+				rank,
+				score: row.totalScore,
+				channel: "in_app",
+				status: "pending",
+				payloadJson: JSON.stringify({
+					cut: `top${ALERT_TOP_OFFERS}`,
+					discountPct: row.discountPct,
+					confidence: row.confidence,
+				}),
+			})
+			.onConflictDoUpdate({
+				target: [
+					listingAlerts.listingId,
+					listingAlerts.alertDate,
+					listingAlerts.channel,
+				],
+				// Keep the original createdAt (the freshness badge) and any
+				// fresh-arrival payload; only the leaderboard facts move.
+				set: {
 					scoreId: row.scoreId,
-					alertDate: day,
 					segment: row.segment,
 					region: row.region,
-					rank: index + 1,
+					rank,
 					score: row.totalScore,
-					channel: "in_app",
-					status: "pending",
-					payloadJson: JSON.stringify({
-						discountPct: row.discountPct,
-						confidence: row.confidence,
-					}),
-				})
-				.onConflictDoNothing({
-					target: [
-						listingAlerts.listingId,
-						listingAlerts.alertDate,
-						listingAlerts.channel,
-					],
-				})
-				.returning({ id: listingAlerts.id });
-			if (result.length > 0) inserted++;
-		}
+				},
+			})
+			.returning({ id: listingAlerts.id });
+		if (result.length > 0) inserted++;
 	}
 	return inserted;
 }

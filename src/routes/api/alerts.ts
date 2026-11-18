@@ -5,7 +5,7 @@ import { alias } from "drizzle-orm/sqlite-core";
 
 import { db } from "#/db/index";
 import { listingAlerts, listingScores, listings } from "#/db/schema";
-import { SCORE_VERSION } from "#/lib/scoring/config";
+import { ALERT_TOP_OFFERS, SCORE_VERSION } from "#/lib/scoring/config";
 import type {
 	AlertAmenities,
 	AlertDto,
@@ -139,7 +139,7 @@ export const Route = createFileRoute("/api/alerts")({
 						asc(listingAlerts.rank),
 					);
 
-				const alerts: AlertDto[] = rows.map((row) => {
+				const alerts: AlertDto[] = capPerSegment(rows).map((row) => {
 					const createdAt = row.alertCreatedAt?.toISOString() ?? null;
 					const payload = parseJson<Record<string, unknown>>(
 						row.payloadJson,
@@ -251,6 +251,33 @@ function parseAmenities(value: string | null): AlertAmenities | null {
 	if (parsed == null || typeof parsed !== "object") return null;
 	if (Object.keys(parsed).length === 0) return null;
 	return parsed as AlertAmenities;
+}
+
+/**
+ * Keep the best `ALERT_TOP_OFFERS` rows per segment. The engine already cuts
+ * the pool at that size, but a date can hold rows from an older cut rule (or
+ * fresh-arrival extras), and the page promises a readable leaderboard per
+ * category, so the feed enforces the same ceiling.
+ */
+function capPerSegment<T extends { segment: string; score: number }>(
+	rows: readonly T[],
+): T[] {
+	const bySegment = new Map<string, T[]>();
+	for (const row of rows) {
+		const group = bySegment.get(row.segment) ?? [];
+		group.push(row);
+		bySegment.set(row.segment, group);
+	}
+	const kept = new Set<T>();
+	for (const group of bySegment.values()) {
+		for (const row of group
+			.slice()
+			.sort((left, right) => right.score - left.score)
+			.slice(0, ALERT_TOP_OFFERS)) {
+			kept.add(row);
+		}
+	}
+	return rows.filter((row) => kept.has(row));
 }
 
 /**

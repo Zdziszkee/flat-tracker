@@ -265,10 +265,10 @@ function AlertsPage() {
 				<div>
 					<h1 className="text-balance text-xl font-semibold">Alerty dnia</h1>
 					<p className="text-sm text-muted-foreground">
-						Top 5% ofert na sprzedaż w trzech segmentach: mieszkania, działki i
+						Top 25 ofert na sprzedaż w trzech segmentach: mieszkania, działki i
 						domy. Co najmniej 10% taniej od mediany podobnych z okolicy, osobno
-						dla regionu i segmentu. Nowe oferty są oceniane po każdym
-						odświeżeniu danych.
+						dla każdego segmentu. Nowe oferty są oceniane po każdym odświeżeniu
+						danych.
 					</p>
 					<p className="mt-1 text-sm text-muted-foreground">
 						Data alertów:{" "}
@@ -306,7 +306,7 @@ function AlertsPage() {
 
 			{isLoading && <output className="sr-only">Ładowanie alertów…</output>}
 
-			<div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 xl:grid-cols-3">
+			<div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2 lg:grid-cols-3">
 				{SECTIONS.map(({ segment, label, mapKind }) => {
 					const alerts = sortFreshFirst(bySegment.get(segment) ?? []);
 					return (
@@ -321,7 +321,7 @@ function AlertsPage() {
 							>
 								{label}{" "}
 								<span className="text-sm font-normal text-muted-foreground tabular-nums">
-									· top 5% · {offerCount(alerts.length)}
+									· top 25 · {offerCount(alerts.length)}
 								</span>
 							</h2>
 							{isLoading ? (

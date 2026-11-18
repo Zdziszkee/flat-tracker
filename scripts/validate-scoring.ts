@@ -18,6 +18,8 @@ import {
 import {
 	ALERT_FRESHNESS,
 	ALERT_GATES,
+	ALERT_TOP_OFFERS,
+	AMENITY_BONUSES,
 	FLAT_BUILDING_DELTAS,
 	freshArrivalRank,
 	freshArrivalTopN,
@@ -186,7 +188,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.9",
+		SCORE_VERSION === "2027.10",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -273,6 +275,56 @@ check(
 		plotNear: plotNearTram.transitScore,
 		plotFar: plotFarTram.transitScore,
 	},
+);
+
+// --- Additive amenity points --------------------------------------------
+const bonusScore = scoreAlert(flat, estimate(800000), geo());
+const bonusImpact = (pattern: RegExp): number | undefined =>
+	bonusScore.reasons.find((reason) => pattern.test(reason.label))?.impact;
+check(
+	"municipal heating adds its bonus as a named reason",
+	bonusImpact(/^municipal heating$/) === AMENITY_BONUSES.districtHeating,
+	bonusScore.reasons,
+);
+check(
+	"a tram stop within 300 m adds its bonus",
+	bonusImpact(/^tram stop within 300 m$/) === AMENITY_BONUSES.tramStop,
+	bonusScore.reasons,
+);
+check(
+	"a railway station within 1 km adds its bonus",
+	bonusImpact(/^railway station within 0\.9 km$/) ===
+		AMENITY_BONUSES.railStation,
+	bonusScore.reasons,
+);
+check(
+	"a park within 300 m adds its bonus",
+	bonusImpact(/^park within 300 m$/) === AMENITY_BONUSES.park,
+	bonusScore.reasons,
+);
+const noAmenities = scoreAlert(
+	{ ...flat, heatingType: "gazowe", hasElevator: false },
+	estimate(800000),
+	geo({ tramM: 1000, trainStationM: 2000, parkM: 900, waterM: 2000 }),
+);
+check(
+	"no amenity bonus is granted without the amenity",
+	!noAmenities.reasons.some((reason) =>
+		/municipal heating|tram stop|railway station|park within|water within/u.test(
+			reason.label,
+		),
+	),
+	noAmenities.reasons,
+);
+const cappedBonuses = scoreAlert(
+	{ ...flat, hasParking: true },
+	estimate(500000),
+	geo({ waterM: 100 }),
+);
+check(
+	"amenity bonuses stay inside the 0-100 score cap",
+	cappedBonuses.totalScore <= 100,
+	cappedBonuses.totalScore,
 );
 
 // --- Rail noise ---------------------------------------------------------
@@ -835,13 +887,14 @@ check("no duplicate listing/day alerts", duplicates.length === 0, duplicates);
 const repeatedAlerts = await db
 	.select({
 		listingId: listingAlerts.listingId,
+		alertDate: listingAlerts.alertDate,
 		count: sql<number>`count(*)`,
 	})
 	.from(listingAlerts)
-	.groupBy(listingAlerts.listingId)
+	.groupBy(listingAlerts.listingId, listingAlerts.alertDate)
 	.having(sql`count(*) > 1`);
 check(
-	"each listing is alerted at most once",
+	"each listing is alerted at most once per day (leaderboard repeats across days)",
 	repeatedAlerts.length === 0,
 	repeatedAlerts,
 );
@@ -943,26 +996,36 @@ const pool = await db
 
 const poolGroups = new Map<string, typeof pool>();
 for (const row of pool) {
-	const key = `${row.region}:${row.segment}`;
+	const key = row.segment;
 	const group = poolGroups.get(key) ?? [];
 	group.push(row);
 	poolGroups.set(key, group);
 }
 
+// Alerts repeat across days by design (the page is a leaderboard), so
+// coverage is judged against the latest date only.
+const latestDateRow = await db
+	.select({ date: sql<string | null>`max(${listingAlerts.alertDate})` })
+	.from(listingAlerts);
+const latestDate = latestDateRow[0]?.date ?? null;
 const alertedIds = new Set(
 	(
-		await db
-			.select({ listingId: listingAlerts.listingId })
-			.from(listingAlerts)
+		latestDate
+			? await db
+					.select({ listingId: listingAlerts.listingId })
+					.from(listingAlerts)
+					.where(eq(listingAlerts.alertDate, latestDate))
+			: []
 	).map((row) => row.listingId),
 );
 
-// Current-version alerts on still-visible listings, per group PER DATE:
+// Current-version alerts on still-visible listings, per SEGMENT PER DATE:
 // the list appends across days by design, so the ceiling is per daily cut,
-// not cumulative. (A same-day pool shrink is the only way a past cut could
-// exceed today's topN; the pool only grows within a day in practice.)
+// not cumulative. Only rows created under the current cut rule carry the
+// `payload_json.cut` marker, so legacy 5%-era rows do not count against it.
 // Fresh-arrival alerts follow their own cohort rule and are excluded here;
 // they are bounded by `shouldAlertFreshArrival` instead.
+const cutMarker = `top${ALERT_TOP_OFFERS}`;
 const currentAlertRows = await db
 	.select({
 		listingId: listingAlerts.listingId,
@@ -978,19 +1041,19 @@ const currentAlertRows = await db
 			eq(listingScores.scoreVersion, SCORE_VERSION),
 			eq(listings.isActive, true),
 			eq(listings.isVisible, true),
-			sql`coalesce(json_extract(${listingAlerts.payloadJson}, '$.reason'), '') != 'fresh_arrival'`,
+			sql`coalesce(json_extract(${listingAlerts.payloadJson}, '$.cut'), '') = ${cutMarker}`,
 		),
 	);
 const currentAlertCounts = new Map<string, number>();
 for (const row of currentAlertRows) {
-	const key = `${row.region}:${row.segment}:${row.alertDate}`;
+	const key = `${row.segment}:${row.alertDate}`;
 	currentAlertCounts.set(key, (currentAlertCounts.get(key) ?? 0) + 1);
 }
 
 const ceilingViolations: Array<Record<string, unknown>> = [];
 const uncovered: Array<Record<string, unknown>> = [];
 for (const [key, group] of poolGroups) {
-	const topN = Math.max(1, Math.ceil(group.length * 0.05));
+	const topN = Math.min(ALERT_TOP_OFFERS, group.length);
 	for (const [dateKey, alertCount] of currentAlertCounts) {
 		if (dateKey.startsWith(`${key}:`) && alertCount > topN) {
 			ceilingViolations.push({
@@ -1002,7 +1065,7 @@ for (const [key, group] of poolGroups) {
 		}
 	}
 	// After a completed run every listing inside today's cut must have an
-	// alert (possibly from an earlier day/version: at-most-once semantics).
+	// alert for the latest date (the leaderboard shows today's cut).
 	for (const row of group.slice(0, topN)) {
 		if (!alertedIds.has(row.listingId)) {
 			uncovered.push({ key, listingId: row.listingId, topN });
@@ -1010,12 +1073,12 @@ for (const [key, group] of poolGroups) {
 	}
 }
 check(
-	"current-version alerts stay within the top-5% ceiling per region+segment+day",
+	`current-version alerts stay within the top-${ALERT_TOP_OFFERS} ceiling per segment+day`,
 	ceilingViolations.length === 0,
 	ceilingViolations,
 );
 check(
-	"every listing in the current top-5% cut has an alert (run coverage)",
+	`every listing in the latest top-${ALERT_TOP_OFFERS} cut has an alert`,
 	uncovered.length === 0,
 	uncovered.slice(0, 5),
 );

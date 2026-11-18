@@ -14,6 +14,9 @@ import type { ValuationEstimate } from "#/types/listing";
 import {
 	ALERT_GATES,
 	type AlertSegment,
+	AMENITY_BONUS_RANGE,
+	AMENITY_BONUSES,
+	AMENITY_HEADROOM_SCALE,
 	DISTANCE_BANDS,
 	distanceScore,
 	ESTIMATE_CONFIDENCE,
@@ -717,6 +720,66 @@ function riskComponent(
 	return { score: clamp(score, 0, 100), confidence: 0.75, reasons, flags };
 }
 
+/**
+ * Additive amenity points. These are observed facts, not estimates, so they
+ * bypass the confidence compression the weighted components go through and
+ * are added to the final 0-100 score as their own named reasons.
+ */
+function amenityBonusReasons(
+	input: ScoreListingInput,
+	geo: GeoUniqueness | null,
+): Array<{ label: string; impact: number }> {
+	const reasons: Array<{ label: string; impact: number }> = [];
+	const heating = input.heatingType?.toLowerCase() ?? "";
+	if (heatingDelta(input.heatingType) >= HEATING_DELTAS.district) {
+		reasons.push({
+			label: /pompa|heat[ _-]?pump/u.test(heating)
+				? "heat pump"
+				: "municipal heating",
+			impact: AMENITY_BONUSES.districtHeating,
+		});
+	}
+	if (
+		input.segment === "flat" &&
+		inTramCity(input.city) &&
+		geo?.tramM != null &&
+		geo.tramM <= AMENITY_BONUS_RANGE.tramM
+	) {
+		reasons.push({
+			label: `tram stop within ${Math.round(geo.tramM)} m`,
+			impact: AMENITY_BONUSES.tramStop,
+		});
+	}
+	if (
+		geo?.trainStationM != null &&
+		geo.trainStationM <= AMENITY_BONUS_RANGE.stationM
+	) {
+		reasons.push({
+			label: `railway station within ${(geo.trainStationM / 1000).toFixed(1)} km`,
+			impact: AMENITY_BONUSES.railStation,
+		});
+	}
+	if (geo?.parkM != null && geo.parkM <= AMENITY_BONUS_RANGE.parkM) {
+		reasons.push({
+			label: `park within ${Math.round(geo.parkM)} m`,
+			impact: AMENITY_BONUSES.park,
+		});
+	}
+	if (geo?.waterM != null && geo.waterM <= AMENITY_BONUS_RANGE.waterM) {
+		reasons.push({
+			label: `water within ${Math.round(geo.waterM)} m`,
+			impact: AMENITY_BONUSES.water,
+		});
+	}
+	if (input.hasElevator) {
+		reasons.push({ label: "elevator", impact: AMENITY_BONUSES.elevator });
+	}
+	if (input.hasParking || input.hasGarage) {
+		reasons.push({ label: "parking", impact: AMENITY_BONUSES.parking });
+	}
+	return reasons;
+}
+
 export function scoreAlert(
 	input: ScoreListingInput,
 	estimate: ValuationEstimate | null,
@@ -750,11 +813,18 @@ export function scoreAlert(
 		green.confidence * weights.green +
 		property.confidence * weights.property +
 		risk.confidence * weights.risk;
-	const totalScore = clamp(
-		50 + (raw - 50) * (0.65 + 0.35 * confidence),
-		0,
-		100,
+	const bonuses = amenityBonusReasons(input, geo);
+	const bonusPoints = bonuses.reduce((sum, bonus) => sum + bonus.impact, 0);
+	const weighted = clamp(50 + (raw - 50) * (0.65 + 0.35 * confidence), 0, 100);
+	// Amenity points are applied against the remaining headroom, so a strong
+	// offer still gains from them without every top candidate collapsing into
+	// the same 100. `AMENITY_HEADROOM_SCALE` is larger than the bonus budget,
+	// which keeps the total strictly increasing in the weighted score.
+	const headroom = Math.min(
+		1,
+		Math.max(0, (100 - weighted) / AMENITY_HEADROOM_SCALE),
 	);
+	const totalScore = clamp(weighted + bonusPoints * headroom, 0, 100);
 
 	const applying: Array<{ label: string; impact: number }> = [];
 	for (const key of [
@@ -772,6 +842,7 @@ export function scoreAlert(
 			});
 		}
 	}
+	for (const bonus of bonuses) applying.push(bonus);
 	const reasons: ScoreReason[] = applying
 		.filter((reason) => Math.abs(reason.impact) >= 1)
 		.sort((a, b) => Math.abs(b.impact) - Math.abs(a.impact))

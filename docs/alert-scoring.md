@@ -1,12 +1,13 @@
-# Alert scoring 2027.9
+# Alert scoring 2027.10
 
 Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
 model participates in the score. The job stores every component, reason
 and risk flag so an alert can be audited later. Scoring is incremental: the
 crawl pipeline scores each newly saved offer immediately, the end of every
 `refreshAll()` scores anything still missing a current-version score
-(`incremental: true`) and appends the new top-5% offers to today's alert
-list; the daily 06:30 task additionally re-scores recent offers.
+(`incremental: true`) and appends the new top-25-per-segment offers to
+today's alert list; the daily 06:30 task additionally re-scores recent
+offers.
 
 ## Research basis
 
@@ -25,6 +26,25 @@ list; the daily 06:30 task additionally re-scores recent offers.
 ## Score
 
 `total = 50 + (weighted_raw - 50) * (0.65 + 0.35 * confidence)`
+
+On top of that weighted score, a small set of observed amenities adds points
+(`src/lib/scoring/config.ts`, `AMENITY_BONUSES`):
+
+| Amenity | Points | Range |
+|---|---:|---|
+| Ogrzewanie miejskie / pompa ciepła | 5 | heating field |
+| Przystanek tramwajowy | 5 | 300 m, flat in Kraków/Katowice |
+| Dworzec kolejowy | 5 | 1 km |
+| Park | 3 | 300 m |
+| Woda | 2 | 500 m |
+| Winda | 2 | flag |
+| Miejsce postojowe / garaż | 2 | flag |
+
+The bonus is applied against the remaining headroom:
+`bonus * min(1, (100 - weighted) / 30)`. A weak offer gets the full +5 for a
+tram stop, a 90-point offer gets about +1.7, and no two offers collapse into
+the same 100. Each bonus is a separate, named reason on the alert card, so
+the points are auditable.
 
 Segment weights:
 
@@ -135,11 +155,23 @@ An offer enters the alert list only when:
 - `confidence >= 0.5`
 - `discount >= 10%`
 
-Top 5% is computed per region and segment over the whole scored, active
-pool. Each run appends the offers that newly rank in the top 5%; a listing
-is alerted at most once, so the list grows incrementally as new offers come
-in. The alerts page always shows the three segments (Mieszkania, Domy
-z działką, Działki) as separate sections, even when a section is empty.
+The daily leaderboard is the best `ALERT_TOP_OFFERS` offers (25) per
+segment (flats, houses, plots) across both tracked regions, computed over
+the whole scored, active pool. Today's list is replaced on every run with
+the current cut (older dates are untouched), so a better offer that appears
+during the day is shown and one that loses its place disappears; the row
+keeps its original `createdAt` for the freshness badge. Re-runs are
+idempotent through the unique `(listing, alert_date, channel)` index. The
+alert row records the rule it was created under
+(`payload_json.cut = "top25"`), which keeps legacy 5%-era rows
+identifiable. The alerts page always shows the three segments (Mieszkania,
+Domy z działką, Działki) as side-by-side sections, even when a section is
+empty, and `/api/alerts` enforces the same 25-per-segment ceiling on the
+response.
+
+This is a selection rule, not a scoring rule: it changes which scored offers
+become alerts, never a stored score, so it does not need a `SCORE_VERSION`
+bump.
 
 ## Fresh arrivals
 
@@ -160,7 +192,7 @@ hours in the same region and segment.
   cohort size, so `/api/alerts` can label it. Insertion is
   `onConflictDoNothing` on `(listing_id, alert_date, channel)`, and already
   scored ids are skipped, so a re-run inserts nothing.
-- This is an additional path, not a replacement: the market-wide top-5% cut
+- This is an additional path, not a replacement: the market-wide top-25 cut
   still runs at the end of the refresh, so a fresh offer that misses its
   24-hour cohort can still enter through the full pool.
 - Scoring is advisory in the crawl: a failure is logged and swallowed, and

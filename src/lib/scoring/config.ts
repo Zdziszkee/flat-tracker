@@ -1,13 +1,15 @@
 /**
  * Versioned constants for the transparent alert score.
  *
- * Every number here is a policy choice, not a learned parameter. Changing any
- * value requires a new `SCORE_VERSION` so stored scores stay auditable.
+ * Every number that can change a stored score is a policy choice, not a
+ * learned parameter, and changing it requires a new `SCORE_VERSION` so stored
+ * scores stay auditable. Selection-only rules (how many alerts are kept) are
+ * documented separately and do not change a score.
  */
 
 import { clamp } from "#/lib/stats";
 
-export const SCORE_VERSION = "2027.9";
+export const SCORE_VERSION = "2027.10";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -16,6 +18,61 @@ export const ALERT_GATES = {
 	/** Asking price must be at least this far below the local comparable median. */
 	minDiscountPct: 10,
 } as const;
+
+/**
+ * Size of the daily leaderboard: the best `ALERT_TOP_OFFERS` offers per
+ * segment (flats, houses, plots) across the tracked regions. This replaced
+ * the old top-5%-of-the-pool cut so the /alerts page shows a stable, readable
+ * number of offers per category instead of a number that grows with the pool.
+ *
+ * This is a selection rule, not a scoring rule: it changes which scored
+ * offers become alerts, never a stored score, so it does not require a
+ * `SCORE_VERSION` bump. The value is recorded on each alert it creates
+ * (`payload_json.cut`), which keeps old rows auditable after a rule change.
+ */
+export const ALERT_TOP_OFFERS = 25;
+
+/**
+ * Additive amenity boosts, applied AFTER the weighted components.
+ *
+ * The five components are 0-100 each and average a strong location signal
+ * away: a flat next to a tram stop, in a municipal-heating block, can score
+ * barely above one with gas heating and a 600 m walk. Each boost below is a
+ * separate named reason, so the alert card shows exactly why the offer
+ * gained points. Values are points on the final 0-100 score, deliberately
+ * small: a fully served flat gains 24, not a tier reset.
+ */
+export const AMENITY_BONUSES = {
+	/** District heating (miejskie) or a heat pump. */
+	districtHeating: 5,
+	/** A tram stop inside `AMENITY_BONUS_RANGE.tramM`. */
+	tramStop: 5,
+	/** A railway station inside `AMENITY_BONUS_RANGE.stationM`. */
+	railStation: 5,
+	/** A park inside `AMENITY_BONUS_RANGE.parkM`. */
+	park: 3,
+	/** Water inside `AMENITY_BONUS_RANGE.waterM`. */
+	water: 2,
+	elevator: 2,
+	parking: 2,
+} as const;
+
+/** Distance ceilings for the additive amenities, in metres. */
+export const AMENITY_BONUS_RANGE = {
+	tramM: 300,
+	stationM: 1000,
+	parkM: 300,
+	waterM: 500,
+} as const;
+
+/**
+ * Headroom scale for the additive amenities, in score points. A bonus is
+ * multiplied by `min(1, (100 - weighted) / SCALE)`, so a 90-point offer
+ * still gains from a tram stop without every top candidate collapsing into
+ * the same 100. The scale is larger than the bonus budget (24), which keeps
+ * the final score strictly increasing in the weighted components.
+ */
+export const AMENITY_HEADROOM_SCALE = 30;
 
 /**
  * Fresh-arrival alerts. A newly saved offer is scored immediately and
