@@ -267,8 +267,9 @@ function AlertsPage() {
 					<p className="text-sm text-muted-foreground">
 						Top 25 ofert na sprzedaż w trzech segmentach: mieszkania, działki i
 						domy. Co najmniej 10% taniej od mediany podobnych z okolicy, osobno
-						dla każdego segmentu. Nowe oferty są oceniane po każdym odświeżeniu
-						danych.
+						dla każdego segmentu. Mieszkania: bez wielkiej płyty i tylko z
+						ogrzewaniem miejskim. Działki: tylko budowlane. Nowe oferty są
+						oceniane po każdym odświeżeniu danych.
 					</p>
 					<p className="mt-1 text-sm text-muted-foreground">
 						Data alertów:{" "}

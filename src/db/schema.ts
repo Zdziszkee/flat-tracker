@@ -849,6 +849,8 @@ export const listingScores = sqliteTable(
 		riskScore: real("risk_score").notNull(),
 		totalScore: real("total_score").notNull(),
 		confidence: real().notNull(),
+		/** False when a segment eligibility rule rejects the offer. */
+		eligible: integer({ mode: "boolean" }).notNull().default(true),
 		rankPct: real("rank_pct"),
 		discountPct: real("discount_pct"),
 		fairPrice: real("fair_price"),

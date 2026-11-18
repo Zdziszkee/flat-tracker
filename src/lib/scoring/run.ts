@@ -487,6 +487,7 @@ async function alertFreshArrival(
 				eq(listingScores.scoreVersion, SCORE_VERSION),
 				eq(listingScores.segment, entry.segment),
 				eq(listingScores.region, entry.region),
+				eq(listingScores.eligible, true),
 				eq(listings.isActive, true),
 				eq(listings.isVisible, true),
 				sql`${seenAt} >= ${Math.floor(windowStart.getTime() / 1000)}`,
@@ -545,6 +546,7 @@ async function storeScore(
 			riskScore: score.riskScore,
 			totalScore: score.totalScore,
 			confidence: score.confidence,
+			eligible: score.eligible,
 			discountPct: score.discountPct,
 			fairPrice: score.fairPrice,
 			fairM2: score.fairM2,
@@ -569,6 +571,7 @@ async function storeScore(
 				riskScore: score.riskScore,
 				totalScore: score.totalScore,
 				confidence: score.confidence,
+				eligible: score.eligible,
 				discountPct: score.discountPct,
 				fairPrice: score.fairPrice,
 				fairM2: score.fairM2,
@@ -637,6 +640,7 @@ async function createAlerts(now: Date): Promise<number> {
 		.where(
 			and(
 				eq(listingScores.scoreVersion, SCORE_VERSION),
+				eq(listingScores.eligible, true),
 				eq(listings.isActive, true),
 				eq(listings.isVisible, true),
 				gte(listingScores.valueScore, ALERT_GATES.minValueScore),

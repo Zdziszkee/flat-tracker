@@ -1,0 +1,1 @@
+ALTER TABLE `listing_scores` ADD `eligible` integer DEFAULT true NOT NULL;

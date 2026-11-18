@@ -363,8 +363,17 @@ the component breakdown and rationale.
   scaled by the remaining headroom, `* min(1, (100 - weighted) / 30)`, so a
   strong offer still gains without every top candidate collapsing into the
   same 100; the score stays strictly increasing in the weighted
-  components. This changes stored scores, hence `SCORE_VERSION` 2027.10
+  components. This changes stored scores, hence `SCORE_VERSION` 2027.11
   (a re-score is required).
+- **Eligibility is a hard filter before the discount gate**: flats must not
+  be large-panel blocks and must prove district heating or a heat pump (gas,
+  electric, coal and unknown heating fail); plots need building evidence (a
+  building plot type, a WZ decision or a zoning plan); an estimate built
+  from fewer than three comps fails. The score row stores `eligible`
+  (`listing_scores.eligible`) and the leaderboard query filters on it, so a
+  rejected offer stays in the table and is never alerted. Plot forest/lake
+  points are tiered: on or next to the parcel (radius + 20 m) three times
+  the base value, within 3 km a third, beyond that nothing.
 - **/alerts always renders three fixed sections**, even when empty:
   Mieszkania, Domy z działką and Działki, fed by `/api/alerts` (latest
   alert date by default, optional `region`/`segment`/`date` filters). Rows

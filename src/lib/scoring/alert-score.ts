@@ -22,10 +22,12 @@ import {
 	ESTIMATE_CONFIDENCE,
 	FLAT_BUILDING_DELTAS,
 	HEATING_DELTAS,
+	PLOT_GREEN,
 	PLOT_LISTING_BASE_CONFIDENCE,
 	PLOT_LISTING_RCN_FACTOR,
 	PLOT_SPREAD_FACTOR_FLOOR,
 	SCORE_VERSION,
+	SEGMENT_ELIGIBILITY,
 	SEGMENT_WEIGHTS,
 	TRAIN_FALLBACK,
 	TRAIN_PREFERRED_M,
@@ -720,6 +722,27 @@ function riskComponent(
 	return { score: clamp(score, 0, 100), confidence: 0.75, reasons, flags };
 }
 
+function isLargePanelFlat(input: ScoreListingInput): boolean {
+	return flatBuildingStyle(input)?.style === "largePanel";
+}
+
+/** District heating or a heat pump; gas, electric, coal and unknown fail. */
+function hasDistrictHeating(input: ScoreListingInput): boolean {
+	return heatingDelta(input.heatingType) >= HEATING_DELTAS.district;
+}
+
+/**
+ * A plot only qualifies when the data says a house can be built: an explicit
+ * building plot type, a zoning decision (WZ) or a zoning plan. A plot with no
+ * such evidence is kept in the table but never alerted.
+ */
+function isBuildingPlot(input: ScoreListingInput): boolean {
+	const type = (input.plotType ?? "").toLowerCase();
+	if (type.includes("budowl") || type.includes("build")) return true;
+	const parcel = input.parcelFeatures;
+	return parcel?.zoningWz === true || (parcel?.zoningPlanCount ?? 0) > 0;
+}
+
 /**
  * Additive amenity points. These are observed facts, not estimates, so they
  * bypass the confidence compression the weighted components go through and
@@ -759,17 +782,47 @@ function amenityBonusReasons(
 			impact: AMENITY_BONUSES.railStation,
 		});
 	}
-	if (geo?.parkM != null && geo.parkM <= AMENITY_BONUS_RANGE.parkM) {
-		reasons.push({
-			label: `park within ${Math.round(geo.parkM)} m`,
-			impact: AMENITY_BONUSES.park,
-		});
-	}
-	if (geo?.waterM != null && geo.waterM <= AMENITY_BONUS_RANGE.waterM) {
-		reasons.push({
-			label: `water within ${Math.round(geo.waterM)} m`,
-			impact: AMENITY_BONUSES.water,
-		});
+	if (input.segment === "plot") {
+		// A forest or lake on the parcel (or right next to it) is worth three
+		// times the base value; the same feature within the range is worth a
+		// third. The parcel radius approximates "same or adjacent parcel"
+		// without a full polygon-neighbour search.
+		const area = input.plotAreaM2 ?? input.areaM2 ?? 0;
+		const adjacentM =
+			Math.sqrt(Math.max(area, 0) / Math.PI) + PLOT_GREEN.adjacentMarginM;
+		const pushTier = (
+			label: string,
+			distance: number | null | undefined,
+			base: number,
+		) => {
+			if (distance == null) return;
+			if (distance <= adjacentM) {
+				reasons.push({
+					label: `${label} on or next to the plot`,
+					impact: Math.round(base * PLOT_GREEN.nearMultiplier * 10) / 10,
+				});
+			} else if (distance <= PLOT_GREEN.rangeM) {
+				reasons.push({
+					label: `${label} within ${(distance / 1000).toFixed(1)} km`,
+					impact: Math.round((base / PLOT_GREEN.farDivisor) * 10) / 10,
+				});
+			}
+		};
+		pushTier("forest", geo?.forestM, AMENITY_BONUSES.park);
+		pushTier("lake", geo?.waterM, AMENITY_BONUSES.water);
+	} else {
+		if (geo?.parkM != null && geo.parkM <= AMENITY_BONUS_RANGE.parkM) {
+			reasons.push({
+				label: `park within ${Math.round(geo.parkM)} m`,
+				impact: AMENITY_BONUSES.park,
+			});
+		}
+		if (geo?.waterM != null && geo.waterM <= AMENITY_BONUS_RANGE.waterM) {
+			reasons.push({
+				label: `water within ${Math.round(geo.waterM)} m`,
+				impact: AMENITY_BONUSES.water,
+			});
+		}
 	}
 	if (input.hasElevator) {
 		reasons.push({ label: "elevator", impact: AMENITY_BONUSES.elevator });
@@ -870,9 +923,31 @@ export function scoreAlert(
 			: null;
 
 	let gateReason: string | null = null;
-	if (estimate == null || fair == null || fair <= 0)
+	if (
+		SEGMENT_ELIGIBILITY.flatExcludesLargePanel &&
+		input.segment === "flat" &&
+		isLargePanelFlat(input)
+	) {
+		gateReason = "large_panel_block";
+	} else if (
+		SEGMENT_ELIGIBILITY.flatRequiresDistrictHeating &&
+		input.segment === "flat" &&
+		!hasDistrictHeating(input)
+	) {
+		gateReason = "no_district_heating";
+	} else if (
+		SEGMENT_ELIGIBILITY.plotRequiresBuildingEvidence &&
+		input.segment === "plot" &&
+		!isBuildingPlot(input)
+	) {
+		gateReason = "not_building_plot";
+	} else if (estimate == null || fair == null || fair <= 0)
 		gateReason = "no_comparable_estimate";
-	else if (discountPct == null || discountPct < ALERT_GATES.minDiscountPct) {
+	else if (estimate.confidence.totalCount < 3) {
+		// The valuation itself refuses fewer than three comps; an estimate
+		// that still reaches here is too thin to alert on.
+		gateReason = "thin_comps";
+	} else if (discountPct == null || discountPct < ALERT_GATES.minDiscountPct) {
 		gateReason = "discount_below_gate";
 	} else if (value.score < ALERT_GATES.minValueScore)
 		gateReason = "value_score_below_gate";

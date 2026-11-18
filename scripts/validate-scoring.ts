@@ -188,7 +188,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.10",
+		SCORE_VERSION === "2027.11",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -325,6 +325,124 @@ check(
 	"amenity bonuses stay inside the 0-100 score cap",
 	cappedBonuses.totalScore <= 100,
 	cappedBonuses.totalScore,
+);
+
+// --- Segment eligibility gates ------------------------------------------
+const gasHeated = scoreAlert(
+	{ ...flat, heatingType: "gazowe" },
+	estimate(800000),
+	geo(),
+);
+check(
+	"a gas-heated flat is excluded from alerts",
+	!gasHeated.eligible && gasHeated.gateReason === "no_district_heating",
+	gasHeated.gateReason,
+);
+const unknownHeating = scoreAlert(
+	{ ...flat, heatingType: null },
+	estimate(800000),
+	geo(),
+);
+check(
+	"a flat with unknown heating is excluded (municipal must be proven)",
+	!unknownHeating.eligible &&
+		unknownHeating.gateReason === "no_district_heating",
+	unknownHeating.gateReason,
+);
+const blockFlatGate = scoreAlert(
+	{ ...flat, buildingType: "block" },
+	estimate(800000),
+	geo(),
+);
+check(
+	"a large-panel block is excluded from alerts",
+	!blockFlatGate.eligible && blockFlatGate.gateReason === "large_panel_block",
+	blockFlatGate.gateReason,
+);
+const tenementFlatGate = scoreAlert(
+	{ ...flat, buildingType: "tenement" },
+	estimate(800000),
+	geo(),
+);
+check(
+	"a tenement with district heating stays eligible",
+	tenementFlatGate.eligible,
+	tenementFlatGate.gateReason,
+);
+const farmland = scoreAlert(
+	{
+		...plot,
+		plotType: "rolna",
+		parcelFeatures: {
+			...plot.parcelFeatures,
+			zoningWz: false,
+			zoningPlanCount: 0,
+		},
+	},
+	estimate(300000),
+	geo(),
+);
+check(
+	"a plot without building evidence is excluded",
+	!farmland.eligible && farmland.gateReason === "not_building_plot",
+	farmland.gateReason,
+);
+const wzPlot = scoreAlert(
+	{
+		...plot,
+		plotType: "rolna",
+		parcelFeatures: { ...plot.parcelFeatures, zoningWz: true },
+	},
+	estimate(300000),
+	geo(),
+);
+check(
+	"a plot with a zoning decision stays eligible",
+	wzPlot.eligible,
+	wzPlot.gateReason,
+);
+
+// --- Plot green tiers ---------------------------------------------------
+const plotAdjacent = scoreAlert(
+	{ ...plot, plotAreaM2: 1200 },
+	estimate(300000),
+	geo({ forestM: 5, waterM: 10 }),
+);
+check(
+	"a forest on or next to the plot grants triple points",
+	plotAdjacent.reasons.some(
+		(reason) =>
+			reason.label === "forest on or next to the plot" && reason.impact === 9,
+	),
+	plotAdjacent.reasons,
+);
+check(
+	"a lake on or next to the plot grants triple points",
+	plotAdjacent.reasons.some(
+		(reason) =>
+			reason.label === "lake on or next to the plot" && reason.impact === 6,
+	),
+	plotAdjacent.reasons,
+);
+const plotFarTier = scoreAlert(
+	{ ...plot, plotAreaM2: 1200 },
+	estimate(300000),
+	geo({ forestM: 2000, waterM: 2500 }),
+);
+const plotBeyond = scoreAlert(
+	{ ...plot, plotAreaM2: 1200 },
+	estimate(300000),
+	geo({ forestM: 5000, waterM: 5000 }),
+);
+check(
+	"a forest within 3 km still adds points over a distant one",
+	plotFarTier.totalScore > plotBeyond.totalScore,
+	{ near: plotFarTier.totalScore, far: plotBeyond.totalScore },
+);
+check(
+	"a forest beyond 3 km grants nothing",
+	!plotBeyond.reasons.some((reason) => /forest|lake/u.test(reason.label)),
+	plotBeyond.reasons,
 );
 
 // --- Rail noise ---------------------------------------------------------
@@ -631,9 +749,9 @@ check(
 
 const thinComps = scoreAlert(flat, estimate(800000, 2), geo());
 check(
-	"thin RCN set is ineligible",
-	!thinComps.eligible,
-	{ eligible: thinComps.eligible, confidence: thinComps.confidence },
+	"an estimate from two comps is ineligible",
+	!thinComps.eligible && thinComps.gateReason === "thin_comps",
+	{ eligible: thinComps.eligible, gateReason: thinComps.gateReason },
 );
 
 const cheapEnough = scoreAlert(flat, estimate(700000), geo());
@@ -724,7 +842,7 @@ check(
 			shouldAlertFreshArrival(scored.totalScore, [scored.totalScore]),
 	) &&
 		noEstimate.gateReason === "no_comparable_estimate" &&
-		thinComps.gateReason === "confidence_below_gate" &&
+		thinComps.gateReason === "thin_comps" &&
 		nearFair.gateReason === "discount_below_gate",
 	gateBlockedArrivals.map((scored) => scored.gateReason),
 );
@@ -985,6 +1103,7 @@ const pool = await db
 	.where(
 		and(
 			eq(listingScores.scoreVersion, SCORE_VERSION),
+			eq(listingScores.eligible, true),
 			eq(listings.isActive, true),
 			eq(listings.isVisible, true),
 			gte(listingScores.valueScore, ALERT_GATES.minValueScore),

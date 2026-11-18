@@ -225,6 +225,13 @@
       "when": 1795005580606,
       "tag": "0031_lean_may_parker",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1795009118357,
+      "tag": "0032_motionless_punisher",
+      "breakpoints": true
     }
   ]
 }

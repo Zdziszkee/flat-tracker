@@ -9,7 +9,7 @@
 
 import { clamp } from "#/lib/stats";
 
-export const SCORE_VERSION = "2027.10";
+export const SCORE_VERSION = "2027.11";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -63,6 +63,34 @@ export const AMENITY_BONUS_RANGE = {
 	stationM: 1000,
 	parkM: 300,
 	waterM: 500,
+} as const;
+
+/**
+ * Plot green/water tiers. A forest or lake on the same parcel (or directly
+ * adjacent, approximated by the parcel radius plus a margin) is worth three
+ * times the base amenity value; the same feature within
+ * `PLOT_GREEN_RANGE_M` is worth a third. Beyond the range nothing is
+ * granted, so a distant lake cannot leak into the score.
+ */
+export const PLOT_GREEN = {
+	adjacentMarginM: 20,
+	rangeM: 3000,
+	nearMultiplier: 3,
+	farDivisor: 3,
+} as const;
+
+/**
+ * Alert eligibility by segment. These are hard filters, not score penalties:
+ * an offer that fails one is still scored and kept in the table, but it can
+ * never enter the leaderboard. Unknown values are excluded too, because the
+ * rule is "prove the quality", not "punish a wrong value".
+ */
+export const SEGMENT_ELIGIBILITY = {
+	/** Flats must be district-heated (or a heat pump) and not a large-panel block. */
+	flatRequiresDistrictHeating: true,
+	flatExcludesLargePanel: true,
+	/** Plots must show building-plot evidence: plot type, WZ or a zoning plan. */
+	plotRequiresBuildingEvidence: true,
 } as const;
 
 /**
@@ -160,9 +188,12 @@ export interface SegmentWeights {
  * mispricing, amenities only break ties and filter traps.
  */
 export const SEGMENT_WEIGHTS: Record<AlertSegment, SegmentWeights> = {
-	flat: { value: 0.5, transit: 0.2, green: 0.1, property: 0.15, risk: 0.05 },
-	house: { value: 0.45, transit: 0.1, green: 0.15, property: 0.25, risk: 0.05 },
-	plot: { value: 0.4, transit: 0.05, green: 0.15, property: 0.35, risk: 0.05 },
+	// Price carries less weight than before: a 30% swing in asking price is
+	// common, so location, building quality and risk must decide more of the
+	// ranking.
+	flat: { value: 0.35, transit: 0.22, green: 0.18, property: 0.2, risk: 0.05 },
+	house: { value: 0.35, transit: 0.1, green: 0.25, property: 0.25, risk: 0.05 },
+	plot: { value: 0.3, transit: 0.05, green: 0.3, property: 0.3, risk: 0.05 },
 };
 
 /**

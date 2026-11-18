@@ -1,4 +1,4 @@
-# Alert scoring 2027.10
+# Alert scoring 2027.11
 
 Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
 model participates in the score. The job stores every component, reason
@@ -50,9 +50,34 @@ Segment weights:
 
 | Segment | Value | Transit | Green | Property | Risk |
 |---|---:|---:|---:|---:|---:|
-| flat | 0.50 | 0.20 | 0.10 | 0.15 | 0.05 |
-| house | 0.45 | 0.10 | 0.15 | 0.25 | 0.05 |
-| plot | 0.40 | 0.05 | 0.15 | 0.35 | 0.05 |
+| flat | 0.35 | 0.22 | 0.18 | 0.20 | 0.05 |
+| house | 0.35 | 0.10 | 0.25 | 0.25 | 0.05 |
+| plot | 0.30 | 0.05 | 0.30 | 0.30 | 0.05 |
+
+Value carries less than half the flat score because a 30% swing in asking
+price is common; location, building quality and risk decide more of the
+ranking than the discount alone.
+
+### Eligibility
+
+Three hard rules sit before the discount gate. A failing offer is still
+scored and kept in the table, but it can never enter the leaderboard
+(`listing_scores.eligible = false`):
+
+- **Flats**: no large-panel block (`blok` / `wielka płyta` / `block`), and
+  district heating or a heat pump. Gas, electric, coal and unknown heating
+  are excluded.
+- **Plots**: building evidence only. An explicit building plot type, a
+  zoning decision (WZ) or a zoning plan qualifies; farmland, recreational
+  land and plots with no zoning evidence do not.
+- **Comparable sample**: fewer than three comps in the estimate.
+
+### Plot green/water tiers
+
+For plots, a forest or lake on the same parcel (approximated by the parcel
+radius plus 20 m) is worth three times the base amenity value; the same
+feature within 3 km is worth a third; beyond 3 km nothing is granted.
+
 
 ### Value
 
