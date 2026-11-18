@@ -1,4 +1,5 @@
 import type { PropertyKind } from "#/lib/property-kind";
+import type { PriceMetric } from "#/lib/valuation/comp-selection";
 import type { ValuationStatistics } from "#/lib/valuation/estimate-statistics";
 import type { QualityReason } from "#/lib/valuation/quality-factor";
 import type { UpsidePotential } from "#/lib/valuation/upside";
@@ -275,6 +276,8 @@ export interface ValuationComparable {
 	originalPrice: number | null;
 	originalPriceM2: number;
 	timeFactor: number;
+	/** Size correction `(compArea / targetArea) ** beta`; 1 when absent. */
+	areaFactor?: number | null;
 	adjustedPriceM2: number;
 	indexSource: string | null;
 	indexGeography: string | null;
@@ -329,6 +332,16 @@ export interface ValuationEstimate {
 	qualityAdjustmentPct: number;
 	qualityAdjustmentKnown: boolean;
 	qualityAdjustmentReasons: QualityReason[];
+	/** Price aggregate behind `fairM2`; absent on rows written before it existed. */
+	metric?: PriceMetric | null;
+	/** Positive area elasticity `(compArea / targetArea) ** beta` applied to comps. */
+	areaElasticity?: number | null;
+	/**
+	 * True when the implied discount is so large that the comp set, not the
+	 * offer, is the likely explanation (few comps or a wide interquartile range).
+	 */
+	implausibleDiscount?: boolean;
+	implausibleDiscountReason?: string | null;
 	/** Evidence behind the correction factors, for audit and the detail card. */
 	statistics: ValuationStatistics;
 	/** Forward-looking 12-month expectation; null when fair value is unusable. */

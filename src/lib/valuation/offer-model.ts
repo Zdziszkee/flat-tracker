@@ -1,15 +1,30 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { HIDDEN_SOURCES } from "#/crawler/hidden-sources";
 import { db } from "#/db/index";
 import { priceIndexSeries } from "#/db/queries/price-indices";
 import { regionOf } from "#/db/region";
-import { listings, transactions } from "#/db/schema";
+import { listings, parcels, transactions } from "#/db/schema";
 import type { ScoredFacts } from "#/lib/llm/fact-access";
 import { propertyKindOf } from "#/lib/property-kind";
 import type { AskingRatio } from "#/lib/valuation/asking-ratio";
 import { askingToTransactionRatio } from "#/lib/valuation/asking-ratio";
-import { convertCompPrice } from "#/lib/valuation/comp-price";
+import { AREA_ELASTICITY, convertCompPrice } from "#/lib/valuation/comp-price";
+import {
+	type CompSelection,
+	type CompTarget,
+	estimateCompPrice,
+	GUARDED_FACTOR_WEIGHT,
+	guardTimeFactor,
+	implausibleDiscount,
+	type PlotClassFamily,
+	PRICE_METRIC,
+	plotClassFamily,
+	plotClassFamilyFromType,
+	type SelectionOptions,
+	selectComparables,
+	selectionDefaults,
+} from "#/lib/valuation/comp-selection";
 import { estimateStatistics } from "#/lib/valuation/estimate-statistics";
 import { externalCityFor } from "#/lib/valuation/external-city";
 import {
@@ -82,6 +97,7 @@ interface RcnRow {
 	lng: number | null;
 	region: string | null;
 	buildingId: number | null;
+	parcelId: string | null;
 }
 
 interface ListingRow {
@@ -102,6 +118,8 @@ interface ListingRow {
 	propertyType: string | null;
 	market: string | null;
 	buildingId: number | null;
+	plotType: string | null;
+	floor: string | null;
 }
 
 type CompSet = "buildingRcn" | "nearbyRcn" | "listing";
@@ -124,8 +142,13 @@ interface WorkingComp {
 	market: number | null;
 	distanceM: number | null;
 	timeFactor: number;
+	/** Size correction `(compArea / targetArea) ** beta`. */
+	sizeFactor: number;
 	adjustedPriceM2: number;
 	weight: number;
+	floor: string | null;
+	/** Plot land-use family, when the cadastre knows it. */
+	plotClassFamily: PlotClassFamily | null;
 	indexSource: string | null;
 	/** Asking-to-transaction ratio applied to a listing comp. */
 	askingRatio: number | null;
@@ -214,69 +237,90 @@ function indexSegmentFor(row: {
 	return row.kind;
 }
 
-function areaRatioMatches(ratio: number, relaxation: 0 | 1 | 2): boolean {
-	if (relaxation === 0) return ratio >= 0.6 && ratio <= 1.4;
-	if (relaxation === 1) return ratio >= 0.5 && ratio <= 2;
-	return ratio >= 0.25 && ratio <= 4;
+/**
+ * Plots must prove their land-use family on both sides before they can share
+ * a comp set: a village building plot priced against agricultural or forest
+ * land is exactly the "94% below market" failure the live list showed.
+ */
+const REQUIRE_PLOT_TYPE_AGREEMENT = true;
+
+/** The offer's land-use family, from EGiB or from the advert text. */
+function offerPlotFamily(offer: OfferForValuation): PlotClassFamily | null {
+	if (offer.kind !== "plot") return null;
+	return (
+		plotClassFamily(offer.landUseClass) ??
+		plotClassFamilyFromType(offer.plotType) ??
+		null
+	);
 }
 
-function matchesOffer(
-	comp: Pick<WorkingComp, "areaM2" | "rooms" | "market">,
-	offer: OfferForValuation,
-	relaxation: 0 | 1 | 2,
-): boolean {
-	const ratio = comp.areaM2 / (offer.areaM2 as number);
-	if (!areaRatioMatches(ratio, relaxation)) return false;
-	if (offer.kind === "flat" && offer.rooms != null && comp.rooms != null) {
-		if (relaxation === 0 && comp.rooms !== offer.rooms) return false;
-		if (relaxation === 1 && Math.abs(comp.rooms - offer.rooms) > 1) {
-			return false;
-		}
-	}
-	const wantedMarket = offerMarket(offer);
-	if (
-		offer.kind === "flat" &&
-		wantedMarket != null &&
-		comp.market != null &&
-		relaxation < 2 &&
-		comp.market !== wantedMarket
-	) {
-		return false;
-	}
-	return true;
-}
-
-function preliminaryWeight(
-	comp: Pick<
-		WorkingComp,
-		"areaM2" | "rooms" | "market" | "distanceM" | "date" | "set"
-	>,
+function compTargetFor(
 	offer: OfferForValuation,
 	nowSeconds: number,
-): number {
-	const ageMonths = Math.max(
-		0,
-		(nowSeconds - (secondsOf(comp.date) ?? nowSeconds)) / (30.44 * 86_400),
-	);
-	const recency = 0.5 ** (ageMonths / 24);
-	const distance =
-		comp.distanceM == null ? 0.85 : 1 / (1 + comp.distanceM / 1500);
-	const areaSimilarity =
-		1 / (1 + Math.abs(Math.log(comp.areaM2 / (offer.areaM2 as number))));
-	let rooms = 1;
-	if (offer.kind === "flat" && offer.rooms != null) {
-		if (comp.rooms == null) rooms = 0.85;
-		else if (comp.rooms === offer.rooms) rooms = 1;
-		else if (Math.abs(comp.rooms - offer.rooms) === 1) rooms = 0.8;
-		else rooms = 0.55;
+): CompTarget {
+	return {
+		kind: offer.kind,
+		areaM2: offer.areaM2 as number,
+		rooms: offer.rooms,
+		market: offerMarket(offer),
+		asOfSeconds: nowSeconds,
+		plotClassFamily: offerPlotFamily(offer),
+		floor: offer.floor ?? null,
+	};
+}
+
+function selectionOptionsFor(kind: ValuationSegment): SelectionOptions {
+	return {
+		...selectionDefaults(kind),
+		requirePlotTypeAgreement: kind === "plot" && REQUIRE_PLOT_TYPE_AGREEMENT,
+	};
+}
+
+/** Selected comps in selection order (weight descending). */
+function selectedComps<T extends WorkingComp>(
+	selection: CompSelection<T>,
+): T[] {
+	// The selection owns the weight; copy it onto the working comp the rest of
+	// the model aggregates and sorts. A comp left at weight 0 would vanish
+	// from the weighted median.
+	return selection.entries.map((entry) => {
+		entry.comp.weight = entry.weight;
+		return entry.comp;
+	});
+}
+
+/**
+ * Parcel land-use class for plot comps. The cadastre row is looked up in one
+ * batched query; a missing row leaves the family unknown, which the plot
+ * filter treats as "no evidence", not as agreement.
+ */
+async function parcelFamilies(
+	rows: readonly RcnRow[],
+): Promise<Map<string, PlotClassFamily>> {
+	const ids = [
+		...new Set(
+			rows
+				.map((row) => row.parcelId)
+				.filter((id): id is string => id != null && id !== ""),
+		),
+	];
+	const families = new Map<string, PlotClassFamily>();
+	for (let offset = 0; offset < ids.length; offset += 400) {
+		const chunk = ids.slice(offset, offset + 400);
+		if (chunk.length === 0) continue;
+		const found = await db
+			.select({
+				parcelId: parcels.parcelId,
+				landUseClass: parcels.landUseClass,
+			})
+			.from(parcels)
+			.where(inArray(parcels.parcelId, chunk));
+		for (const row of found) {
+			const family = plotClassFamily(row.landUseClass);
+			if (family) families.set(row.parcelId, family);
+		}
 	}
-	const wantedMarket = offerMarket(offer);
-	const market =
-		wantedMarket != null && comp.market != null && comp.market !== wantedMarket
-			? 0.65
-			: 1;
-	const building = comp.set === "buildingRcn" ? 2 : 1;
-	return recency * distance * areaSimilarity * rooms * market * building;
+	return families;
 }
 
 function compAddress(comp: {
@@ -332,6 +376,7 @@ class IndexResolver {
 
 	async adjust(comp: WorkingComp): Promise<{
 		factor: number;
+		replaced: boolean;
 		source: string;
 		geography: string;
 		fromPeriod: string;
@@ -367,14 +412,14 @@ class IndexResolver {
 			};
 		};
 
-		const geographies: Array<{
+		const narrowGeographies: Array<{
 			type: IndexPoint["geographyType"];
 			key: string;
 		}> = [];
 		const district = normalizeDistrict(comp.district);
-		if (district) geographies.push({ type: "district", key: district });
+		if (district) narrowGeographies.push({ type: "district", key: district });
 		if (comp.lat != null && comp.lng != null) {
-			geographies.push({
+			narrowGeographies.push({
 				type: "grid10",
 				key: grid10Key(comp.lat, comp.lng),
 			});
@@ -384,7 +429,6 @@ class IndexResolver {
 			(comp.lat != null && comp.lng != null
 				? regionOf(comp.lat, comp.lng)
 				: null);
-		if (region) geographies.push({ type: "region", key: region });
 		const segment = indexSegmentFor({
 			kind: comp.kind,
 			market: comp.market,
@@ -393,18 +437,44 @@ class IndexResolver {
 			segment === "flat_primary" || segment === "flat_secondary"
 				? [segment, "flat"]
 				: [segment];
-		// RCN first: a district or grid10 series is the closest evidence, and
-		// every local series beats an external city-wide one.
+		// The regional factor is the reference the plausibility guard compares
+		// a narrow grid/district factor against. Resolve it first so a chain
+		// artifact (live: ×5.07 on a 2021 house comp) cannot slip through.
+		let regionAdjustment: Awaited<ReturnType<typeof trySeries>> = null;
 		for (const indexSegment of segments) {
-			for (const geography of geographies) {
+			if (!region) break;
+			regionAdjustment = await trySeries(indexSegment, "region", region, "rcn");
+			if (regionAdjustment) break;
+		}
+		let narrowAdjustment: Awaited<ReturnType<typeof trySeries>> = null;
+		outer: for (const indexSegment of segments) {
+			for (const geography of narrowGeographies) {
 				const adjustment = await trySeries(
 					indexSegment,
 					geography.type,
 					geography.key,
 					"rcn",
 				);
-				if (adjustment) return adjustment;
+				if (adjustment) {
+					narrowAdjustment = adjustment;
+					break outer;
+				}
 			}
+		}
+		if (narrowAdjustment) {
+			if (regionAdjustment) {
+				const guard = guardTimeFactor({
+					factor: narrowAdjustment.factor,
+					regionFactor: regionAdjustment.factor,
+				});
+				if (guard.replaced) {
+					return { ...regionAdjustment, replaced: true };
+				}
+			}
+			return { ...narrowAdjustment, replaced: false };
+		}
+		if (regionAdjustment) {
+			return { ...regionAdjustment, replaced: false };
 		}
 		// Last resort for flats only: the city-level RCN reference (finwire).
 		// It is a trend, not a price level, so it never becomes a comparable
@@ -421,7 +491,7 @@ class IndexResolver {
 						externalCity,
 						"finwire",
 					);
-					if (adjustment) return adjustment;
+					if (adjustment) return { ...adjustment, replaced: false };
 				}
 			}
 		}
@@ -441,6 +511,7 @@ function toComparable(comp: WorkingComp): ValuationComparable {
 		originalPrice: comp.price,
 		originalPriceM2: Math.round(comp.pricePerM2),
 		timeFactor: Math.round(comp.timeFactor * 1000) / 1000,
+		areaFactor: Math.round(comp.sizeFactor * 1000) / 1000,
 		adjustedPriceM2: Math.round(comp.adjustedPriceM2),
 		indexSource: comp.indexSource,
 		askingRatio: comp.askingRatio,
@@ -515,12 +586,12 @@ function ratingFor(
 function makeListingComp(
 	row: ListingRow,
 	offer: OfferForValuation,
-	nowSeconds: number,
 	askingRatio: number | null,
 ): WorkingComp | null {
 	if (row.pricePerM2 == null || row.areaM2 == null || row.areaM2 <= 0) {
 		return null;
 	}
+	if (offer.id != null && row.id === offer.id) return null;
 	const kind = propertyKindOf({
 		source: row.source,
 		title: row.title,
@@ -541,6 +612,11 @@ function makeListingComp(
 		source: "listing",
 		pricePerM2: row.pricePerM2,
 		askingRatio,
+		size: {
+			beta: AREA_ELASTICITY[offer.kind],
+			compAreaM2: row.areaM2,
+			targetAreaM2: offer.areaM2,
+		},
 	});
 	const comp: WorkingComp = {
 		id: `listing:${row.source}:${row.externalId}`,
@@ -560,8 +636,11 @@ function makeListingComp(
 		market: null,
 		distanceM,
 		timeFactor: converted.timeFactor,
+		sizeFactor: converted.sizeFactor,
 		adjustedPriceM2: converted.adjustedPriceM2,
 		weight: 0,
+		floor: row.floor,
+		plotClassFamily: plotClassFamilyFromType(row.plotType),
 		indexSource: converted.indexSource,
 		askingRatio: converted.indexSource == null ? null : askingRatio,
 		indexGeography: null,
@@ -569,7 +648,6 @@ function makeListingComp(
 		indexToPeriod: null,
 		indexSegment: null,
 	};
-	comp.weight = preliminaryWeight(comp, offer, nowSeconds) * 0.5;
 	return comp;
 }
 
@@ -618,15 +696,22 @@ async function listingComps(
 			propertyType: listings.propertyType,
 			market: listings.market,
 			buildingId: listings.buildingId,
+			plotType: listings.plotType,
+			floor: listings.floor,
 		})
 		.from(listings)
 		.where(and(...filters))
 		.orderBy(desc(listings.scrapedAt))
 		.limit(400);
-	return rows
-		.map((row) => makeListingComp(row, offer, nowSeconds, askingRatio))
-		.filter((comp): comp is WorkingComp => comp != null)
-		.filter((comp) => matchesOffer(comp, offer, 2));
+	const candidates = rows
+		.map((row) => makeListingComp(row, offer, askingRatio))
+		.filter((comp): comp is WorkingComp => comp != null);
+	const selection = selectComparables(
+		compTargetFor(offer, nowSeconds),
+		candidates,
+		selectionOptionsFor(offer.kind),
+	);
+	return selectedComps(selection);
 }
 
 async function rcnRows(
@@ -659,6 +744,7 @@ async function rcnRows(
 		lng: transactions.lng,
 		region: transactions.region,
 		buildingId: transactions.buildingId,
+		parcelId: transactions.parcelId,
 	};
 	const output: Array<{ row: RcnRow; set: CompSet; distanceM: number | null }> =
 		[];
@@ -722,7 +808,7 @@ async function rcnRows(
 function toRcnComp(
 	input: { row: RcnRow; set: CompSet; distanceM: number | null },
 	offer: OfferForValuation,
-	nowSeconds: number,
+	families: Map<string, PlotClassFamily>,
 ): WorkingComp | null {
 	const { row, set, distanceM } = input;
 	if (row.pricePerM2 == null || row.areaM2 == null || row.areaM2 <= 0) {
@@ -746,8 +832,12 @@ function toRcnComp(
 		market: row.market,
 		distanceM,
 		timeFactor: 1,
+		sizeFactor: 1,
 		adjustedPriceM2: row.pricePerM2,
 		weight: 0,
+		floor: row.floor,
+		plotClassFamily:
+			row.parcelId == null ? null : (families.get(row.parcelId) ?? null),
 		indexSource: null,
 		askingRatio: null,
 		indexGeography: null,
@@ -755,7 +845,6 @@ function toRcnComp(
 		indexToPeriod: null,
 		indexSegment: null,
 	};
-	comp.weight = preliminaryWeight(comp, offer, nowSeconds);
 	return comp;
 }
 
@@ -763,40 +852,38 @@ async function gatherRcnComps(
 	offer: OfferForValuation,
 	nowSeconds: number,
 ): Promise<WorkingComp[]> {
-	const seen = new Set<string>();
-	const all: WorkingComp[] = [];
 	const radius =
-		offer.lat != null && offer.lng != null ? initialRadius(offer.kind) : null;
-	for (const multiplier of [1, 2]) {
-		const rows = await rcnRows(
-			offer,
-			radius == null ? null : radius * multiplier,
-			nowSeconds,
-		);
-		for (const input of rows) {
-			if (seen.has(input.row.transactionId)) continue;
-			seen.add(input.row.transactionId);
-			const comp = toRcnComp(input, offer, nowSeconds);
-			if (comp) all.push(comp);
-		}
-		const strict = all.filter((comp) => matchesOffer(comp, offer, 0));
-		if (strict.length >= 3) break;
-		if (radius == null) break;
+		offer.lat != null && offer.lng != null
+			? initialRadius(offer.kind) * 2
+			: null;
+	const inputs = await rcnRows(offer, radius, nowSeconds);
+	const seen = new Set<string>();
+	const unique: typeof inputs = [];
+	for (const input of inputs) {
+		if (seen.has(input.row.transactionId)) continue;
+		seen.add(input.row.transactionId);
+		unique.push(input);
 	}
-	for (const relaxation of [0, 1, 2] as const) {
-		const filtered = all.filter((comp) =>
-			matchesOffer(comp, offer, relaxation),
-		);
-		if (filtered.length >= 3 || relaxation === 2) {
-			return filtered.sort((a, b) => b.weight - a.weight).slice(0, 140);
-		}
-	}
-	return [];
+	const families =
+		offer.kind === "plot"
+			? await parcelFamilies(unique.map((input) => input.row))
+			: new Map<string, PlotClassFamily>();
+	const candidates = unique
+		.map((input) => toRcnComp(input, offer, families))
+		.filter((comp): comp is WorkingComp => comp != null);
+	const selection = selectComparables(
+		compTargetFor(offer, nowSeconds),
+		candidates,
+		selectionOptionsFor(offer.kind),
+	);
+	return selectedComps(selection);
 }
 
 async function adjustComps(
 	comps: WorkingComp[],
 	asOfPeriod: string,
+	targetAreaM2: number,
+	areaElasticity: number,
 ): Promise<WorkingComp[]> {
 	const resolver = new IndexResolver(asOfPeriod);
 	const adjusted: WorkingComp[] = [];
@@ -811,8 +898,20 @@ async function adjustComps(
 			adjusted.push(comp);
 			continue;
 		}
-		comp.timeFactor = index.factor;
-		comp.adjustedPriceM2 = comp.pricePerM2 * index.factor;
+		if (index.replaced) comp.weight *= GUARDED_FACTOR_WEIGHT;
+		const converted = convertCompPrice({
+			source: "rcn",
+			pricePerM2: comp.pricePerM2,
+			timeFactor: index.factor,
+			size: {
+				beta: areaElasticity,
+				compAreaM2: comp.areaM2,
+				targetAreaM2,
+			},
+		});
+		comp.timeFactor = converted.timeFactor;
+		comp.sizeFactor = converted.sizeFactor;
+		comp.adjustedPriceM2 = converted.adjustedPriceM2;
 		comp.indexSource = index.source;
 		comp.indexGeography = index.geography;
 		comp.indexFromPeriod = index.fromPeriod;
@@ -910,8 +1009,9 @@ export async function estimateSaleValue(
 	}
 	const nowSeconds = Math.floor(asOf.getTime() / 1000);
 	const asOfPeriod = currentQuarter(asOf);
+	const areaElasticity = AREA_ELASTICITY[offer.kind];
 	const rcn = await gatherRcnComps(offer, nowSeconds);
-	let comps = await adjustComps(rcn, asOfPeriod);
+	let comps = await adjustComps(rcn, asOfPeriod, offer.areaM2, areaElasticity);
 	let asking: AskingRatio | null = null;
 	if (
 		options.includeListings !== false &&
@@ -952,7 +1052,15 @@ export async function estimateSaleValue(
 		asOfYear: asOf.getUTCFullYear(),
 	});
 	const qualityFactor = 1 + quality.pct / 100;
-	const fairM2 = overall.medianM2 * qualityFactor;
+	const metricM2 = estimateCompPrice(
+		comps.map((comp) => ({
+			value: comp.adjustedPriceM2,
+			weight: comp.weight,
+			areaM2: comp.areaM2,
+		})),
+		PRICE_METRIC,
+	);
+	const fairM2 = (metricM2 ?? overall.medianM2) * qualityFactor;
 	const lowM2 = Math.min(overall.p25M2, overall.medianM2) * qualityFactor;
 	const highM2 = Math.max(overall.p75M2, overall.medianM2) * qualityFactor;
 	const offerM2 = compareToOffer ? offer.pricePerM2 : null;
@@ -961,6 +1069,13 @@ export async function estimateSaleValue(
 			? (offerM2 / fairM2 - 1) * 100
 			: null;
 	const spreadPct = fairM2 > 0 ? ((highM2 - lowM2) / fairM2) * 100 : 100;
+	const discountGuard = implausibleDiscount({
+		offerM2,
+		fairM2,
+		compCount: comps.length,
+		p25M2: overall.p25M2,
+		p75M2: overall.p75M2,
+	});
 	const confidence = confidenceFor(comps, spreadPct, nowSeconds);
 	const area = offer.areaM2;
 	const index = indexSummary(comps);
@@ -995,6 +1110,10 @@ export async function estimateSaleValue(
 		qualityAdjustmentPct: quality.pct,
 		qualityAdjustmentKnown: quality.known,
 		qualityAdjustmentReasons: quality.reasons,
+		metric: PRICE_METRIC,
+		areaElasticity,
+		implausibleDiscount: discountGuard.implausible,
+		implausibleDiscountReason: discountGuard.reason,
 		statistics: estimateStatistics(comps, asking, nowSeconds),
 		upside,
 	};
