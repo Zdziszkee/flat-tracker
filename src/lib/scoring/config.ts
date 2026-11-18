@@ -9,7 +9,7 @@
 
 import { clamp } from "#/lib/stats";
 
-export const SCORE_VERSION = "2027.15";
+export const SCORE_VERSION = "2027.16";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -17,6 +17,42 @@ export const ALERT_GATES = {
 	minConfidence: 0.5,
 	/** Asking price must be at least this far below the local comparable median. */
 	minDiscountPct: 10,
+	/**
+	 * A discount this large is evidence against the comparable set, not for the
+	 * offer. The live list carried a 1000 m² village plot "94% below median"
+	 * (120k asking, 2.07M "fair") and a 156 m² industrial plot at 85%: both
+	 * were land compared with central building plots because the listing
+	 * coordinates were a city-centre placeholder. A real offer rarely clears
+	 * half the local median; a court auction starts around 25-45% below, which
+	 * this ceiling still admits.
+	 */
+	maxDiscountPct: 55,
+	/**
+	 * Between `unverifiedDiscountPct` and `maxDiscountPct` the discount must be
+	 * carried by a broad and tight comp set, otherwise it is a mispriced
+	 * estimate (Torfowa 57 m² scored 33.5% below on a fair value of
+	 * 18 454 zł/m² in Ruczaj, where the market trades nearer 13-14k).
+	 */
+	unverifiedDiscountPct: 35,
+	unverifiedDiscountMinComps: 15,
+	unverifiedDiscountMaxSpreadPct: 25,
+	/**
+	 * Plausibility band for the median index factor that brings the comps to
+	 * today. Nominal prices in the tracked regions grew roughly 25-35% between
+	 * 2020 and 2026, so a median factor near x5 (a 2021-Q4 comp in Bielsko-Biała
+	 * scored x5.07) or a factor below the region series (x0.85 on a three-year
+	 * Katowice span, where the region series rose) is a thin-cell series
+	 * artifact, not market movement. The lower bound sits at 0.9 because a
+	 * median which says the comps fell while the region rose cannot come from
+	 * a healthy cell; the deepest real dip in the tracked market was under 10%
+	 * and only for two quarters. When
+	 * the median factor leaves this band the fair value is fiction. The band is
+	 * wide on purpose: it catches broken series only, not price growth.
+	 */
+	minIndexFactor: 0.9,
+	maxIndexFactor: 2,
+	/** Above this the factor is suspicious but not yet disqualifying. */
+	highIndexFactor: 1.6,
 } as const;
 
 /**
@@ -31,6 +67,15 @@ export const ALERT_GATES = {
  * (`payload_json.cut`), which keeps old rows auditable after a rule change.
  */
 export const ALERT_TOP_OFFERS = 25;
+
+/**
+ * How many units of one investment (osiedle, developer, one address) may fill
+ * a segment's leaderboard. A developer price list is not 25 opportunities:
+ * today's flat list carried five units of "Apartamenty Park Matecznego" and six
+ * of "Stańczyka II", so half a column was one building. Selection only, never
+ * a score, so it does not require a `SCORE_VERSION` bump.
+ */
+export const ALERT_MAX_PER_INVESTMENT = 2;
 
 /**
  * Additive amenity boosts, applied AFTER the weighted components.

@@ -12,6 +12,7 @@ import { nearestFastRail } from "#/lib/scoring/fast-rail";
 import { HEATING_LABELS, resolveHeatingEvidence } from "#/lib/scoring/heating";
 import type {
 	AlertAmenities,
+	AlertComparable,
 	AlertDto,
 	AlertFacts,
 	AlertLocation,
@@ -164,6 +165,10 @@ export const Route = createFileRoute("/api/alerts")({
 						row.payloadJson,
 						{},
 					);
+					const amenities = mergeAmenities(
+						parseAmenities(row.amenitiesJson),
+						parseAmenities(row.latestAmenitiesJson),
+					);
 					return {
 						id: row.id,
 						alertDate: row.alertDate,
@@ -193,10 +198,7 @@ export const Route = createFileRoute("/api/alerts")({
 						riskScore: row.riskScore,
 						reasons: parseJson(row.reasonsJson, []),
 						flags: parseJson(row.flagsJson, []),
-						amenities: mergeAmenities(
-							parseAmenities(row.amenitiesJson),
-							parseAmenities(row.latestAmenitiesJson),
-						),
+						amenities,
 						properties: toProperties(row.listings),
 						compCount: preferEvidence(row.latestCompCount, row.compCount),
 						compRcnCount: preferEvidence(
@@ -206,7 +208,7 @@ export const Route = createFileRoute("/api/alerts")({
 						listedAt: row.listedAt?.toISOString() ?? null,
 						firstSeenAt: row.firstSeenAt?.toISOString() ?? null,
 						location: toLocation(row),
-						facts: toFacts(factsById.get(row.listingId) ?? null),
+						facts: toFacts(factsById.get(row.listingId) ?? null, amenities),
 						valuation: parseValuation(row.valuationJson),
 						isFresh:
 							createdAt != null &&
@@ -260,6 +262,57 @@ function parseJson<T>(value: string, fallback: T): T {
 	} catch {
 		return fallback;
 	}
+}
+
+/** A stored number, or null for a missing/non-finite value. */
+function finiteNumber(value: unknown): number | null {
+	return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** Comparable rows kept in a stored valuation; the engine cuts at the same size. */
+const MAX_COMPARABLES = 30;
+
+/**
+ * The comparable sample stored with a score. Rows are written by our own
+ * scoring run, but the payload is still checked field by field so a malformed
+ * blob degrades to an empty list instead of a broken card.
+ */
+function parseComparables(value: unknown): AlertComparable[] {
+	if (!Array.isArray(value)) return [];
+	const out: AlertComparable[] = [];
+	for (const raw of value.slice(0, MAX_COMPARABLES)) {
+		if (raw == null || typeof raw !== "object") continue;
+		const record = raw as Record<string, unknown>;
+		const id = typeof record.id === "string" ? record.id : null;
+		const source = record.source;
+		const priceM2 = finiteNumber(record.priceM2);
+		if (
+			id == null ||
+			(source !== "rcn" && source !== "listing") ||
+			priceM2 == null
+		) {
+			continue;
+		}
+		out.push({
+			id,
+			source,
+			date: typeof record.date === "string" ? record.date : null,
+			distanceM: finiteNumber(record.distanceM),
+			areaM2: finiteNumber(record.areaM2),
+			rooms: finiteNumber(record.rooms),
+			address:
+				typeof record.address === "string" && record.address.length > 0
+					? record.address
+					: null,
+			priceM2,
+			// A row without an adjusted price is its own adjusted price: no
+			// correction applied, so the card shows no "→" suffix.
+			adjustedPriceM2: finiteNumber(record.adjustedPriceM2) ?? priceM2,
+			timeFactor: finiteNumber(record.timeFactor) ?? 1,
+			askingRatio: finiteNumber(record.askingRatio),
+		});
+	}
+	return out;
 }
 
 function countBy(
@@ -327,7 +380,7 @@ function preferEvidence(latest: number | null, stored: number | null): number {
 	return stored ?? 0;
 }
 
-const AMENITY_NAME_KEYS = [
+const AMENITY_LATEST_KEYS = [
 	"parkName",
 	"forestName",
 	"waterName",
@@ -336,12 +389,18 @@ const AMENITY_NAME_KEYS = [
 	"transitName",
 	"tramName",
 	"busName",
+	// House extras: an alert raised before the fields existed still shows the
+	// current-version measurement rather than nothing.
+	"neighbourM",
+	"neighbours150m",
+	"strNightly",
+	"strSample",
 ] as const;
 
 /**
- * Fill names missing from the alert's own payload with the listing's latest
- * score row. Distances are kept from the alert's row: only names are lifted,
- * and only where the alert row has none.
+ * Fill values missing from the alert's own payload with the listing's latest
+ * score row. Distances are kept from the alert's row: only names and the
+ * house extras are lifted, and only where the alert row has none.
  */
 function mergeAmenities(
 	base: AlertAmenities | null,
@@ -350,10 +409,10 @@ function mergeAmenities(
 	if (base == null) return latest;
 	if (latest == null) return base;
 	const merged = { ...base };
-	for (const key of AMENITY_NAME_KEYS) {
-		const name = latest[key];
-		if (merged[key] == null && typeof name === "string" && name.length > 0) {
-			Object.assign(merged, { [key]: name });
+	for (const key of AMENITY_LATEST_KEYS) {
+		const value = latest[key];
+		if (merged[key] == null && value != null) {
+			Object.assign(merged, { [key]: value });
 		}
 	}
 	return merged;
@@ -455,7 +514,10 @@ function toLocation(row: {
 }
 
 /** Card projection of the extracted facts; empty arrays when nothing was read. */
-function toFacts(facts: ScoredFacts | null): AlertFacts {
+function toFacts(
+	facts: ScoredFacts | null,
+	amenities: AlertAmenities | null,
+): AlertFacts {
 	const plot = facts?.plot ?? null;
 	const context = facts?.context ?? null;
 	const setting: string[] = [];
@@ -474,6 +536,26 @@ function toFacts(facts: ScoredFacts | null): AlertFacts {
 		monthlyRent: facts?.monthlyCosts?.rent ?? null,
 		funduszRemontowy: facts?.monthlyCosts?.funduszRemontowy ?? null,
 		legalStatus: facts?.legalStatus ?? null,
+		...houseExtras(amenities),
+	};
+}
+
+/**
+ * House solitude and rental-market evidence carried in the amenities blob.
+ * Values are numbers by construction; anything else becomes null so the card
+ * never prints a fabricated distance or price.
+ */
+function houseExtras(
+	amenities: AlertAmenities | null,
+): Pick<
+	AlertFacts,
+	"neighbourM" | "neighbours150m" | "strNightly" | "strSample"
+> {
+	return {
+		neighbourM: finiteNumber(amenities?.neighbourM),
+		neighbours150m: finiteNumber(amenities?.neighbours150m),
+		strNightly: finiteNumber(amenities?.strNightly),
+		strSample: finiteNumber(amenities?.strSample),
 	};
 }
 
@@ -491,6 +573,7 @@ function parseValuation(value: string | null): AlertValuation | null {
 		qualityReasons: Array.isArray(record.qualityReasons)
 			? (record.qualityReasons as AlertValuation["qualityReasons"])
 			: [],
+		comparables: parseComparables(record.comparables),
 		timeFactorMedian:
 			typeof record.timeFactorMedian === "number"
 				? record.timeFactorMedian

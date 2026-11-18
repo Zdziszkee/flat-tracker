@@ -112,6 +112,12 @@ export interface ScoreListingInput {
 	neighbours?: Neighbourhood | null;
 	/** Short-term-rental market around a house (airbnb/booking rows). */
 	str?: StrMarket | null;
+	/**
+	 * Coordinates are a bulk-source placeholder (a city centre shared by dozens
+	 * of street-less listings), so every distance in the score is fiction. Set
+	 * by `run.ts` from `placeholder-points.ts`.
+	 */
+	placeholderCoordinates?: boolean;
 }
 
 export interface ScoreReason {
@@ -837,6 +843,18 @@ function riskComponent(
 		score -= 8;
 		flags.push("wide_comp_spread");
 	}
+	// A high but not impossible index factor: the comps are old and the series
+	// is doing heavy lifting, so the fair value is less trustworthy than the
+	// sample size suggests. A factor past `maxIndexFactor` is a hard gate.
+	const indexFactor = estimate?.statistics.timeFactorMedian ?? null;
+	if (
+		indexFactor != null &&
+		indexFactor > ALERT_GATES.highIndexFactor &&
+		indexFactor <= ALERT_GATES.maxIndexFactor
+	) {
+		score -= 8;
+		flags.push("high_index_factor");
+	}
 	if (geo?.railM != null && geo.railM < 200) {
 		score -= 15;
 		flags.push("rail_noise");
@@ -1281,6 +1299,15 @@ export function scoreAlert(
 	const gateFailures: string[] = [];
 	const zone = nearestCentreAnchor(input.lat, input.lng, input.city);
 	const rail = nearestFastRail(input.lat, input.lng);
+	// Every location signal (centre zone, rail distance, comp set) is derived
+	// from the listing's coordinates. When those are a shared city-centre
+	// placeholder the whole score is geography fiction: "Giszowiec 59 m²" sat on
+	// the Katowice Rynek 62 m from the anchor, and a plot in Janczowa (a village
+	// 100 km away) sat on the same point and "discounted 94%" against central
+	// building land.
+	if (input.placeholderCoordinates) {
+		gateFailures.push("placeholder_coordinates");
+	}
 	if (input.segment === "flat") {
 		if (SEGMENT_ELIGIBILITY.flatExcludesLargePanel && isLargePanelFlat(input)) {
 			gateFailures.push("large_panel_block");
@@ -1347,6 +1374,39 @@ export function scoreAlert(
 		}
 		if (discountPct == null || discountPct < ALERT_GATES.minDiscountPct) {
 			gateFailures.push("discount_below_gate");
+		}
+		// Plausibility of the discount itself. An offer priced at a fraction of
+		// its own "fair value" is nearly always a broken comp set (land against
+		// land of another type, a placeholder location, a thin cell index), not a
+		// bargain, and surfacing it as the day's best is the worst failure the
+		// leaderboard can have. A large discount must be carried by a broad and
+		// tight sample; past `maxDiscountPct` no sample makes it credible.
+		if (discountPct != null && discountPct >= ALERT_GATES.maxDiscountPct) {
+			gateFailures.push("implausible_discount");
+		}
+		if (
+			discountPct != null &&
+			discountPct >= ALERT_GATES.unverifiedDiscountPct &&
+			discountPct < ALERT_GATES.maxDiscountPct &&
+			(estimate.confidence.totalCount <
+				ALERT_GATES.unverifiedDiscountMinComps ||
+				estimate.confidence.spreadPct >
+					ALERT_GATES.unverifiedDiscountMaxSpreadPct)
+		) {
+			gateFailures.push("unverified_discount");
+		}
+		// The fair value is a comp price carried to today by a price index.
+		// A broken index series (a thin grid cell, a handful of odd notarial
+		// prices) turns that multiplication into fiction: the live house list
+		// showed factors of x5.07, x2.20 and x1.92 on 2021-2022 comps, which is
+		// not what the market did, and every one of those inflated the "discount".
+		const indexFactor = estimate.statistics.timeFactorMedian;
+		if (
+			indexFactor != null &&
+			(indexFactor > ALERT_GATES.maxIndexFactor ||
+				indexFactor < ALERT_GATES.minIndexFactor)
+		) {
+			gateFailures.push("broken_index_factor");
 		}
 		if (value.score < ALERT_GATES.minValueScore) {
 			gateFailures.push("value_score_below_gate");

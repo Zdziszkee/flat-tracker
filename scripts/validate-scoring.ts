@@ -49,7 +49,14 @@ function check(name: string, condition: boolean, detail: unknown): void {
 	}
 }
 
-function estimate(fairPrice: number, rcnCount = 20): ValuationEstimate {
+function estimate(
+	fairPrice: number,
+	rcnCount = 20,
+	overrides: {
+		spreadPct?: number;
+		timeFactorMedian?: number | null;
+	} = {},
+): ValuationEstimate {
 	const area = 60;
 	return {
 		segment: "flat",
@@ -67,7 +74,7 @@ function estimate(fairPrice: number, rcnCount = 20): ValuationEstimate {
 			listingCount: 0,
 			timeAdjustedCount: rcnCount,
 			totalCount: rcnCount,
-			spreadPct: 12,
+			spreadPct: overrides.spreadPct ?? 12,
 			sameBuildingCount: 0,
 		},
 		comparables: [],
@@ -77,7 +84,7 @@ function estimate(fairPrice: number, rcnCount = 20): ValuationEstimate {
 		qualityAdjustmentKnown: false,
 		qualityAdjustmentReasons: [],
 		statistics: {
-			timeFactorMedian: null,
+			timeFactorMedian: overrides.timeFactorMedian ?? null,
 			indexSpan: null,
 			askingRatio: null,
 			askingRatioSource: null,
@@ -233,7 +240,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.15",
+		SCORE_VERSION === "2027.16",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -1672,6 +1679,113 @@ check(
 	"incremental selection partitions sale listings into scored + backlog",
 	part != null && part.total >= part.scored && backlog >= 0,
 	{ ...part, backlog, scoreVersion: SCORE_VERSION },
+);
+
+// --- Discount plausibility, placeholder coordinates, index sanity -------
+// The live list (2027.14) carried: a 1000 m² village plot 94% "below median"
+// against central building land because its coordinates were a city-centre
+// placeholder; a Giszowiec flat 62 m from the Katowice Rynek for the same
+// reason; houses whose fair value was multiplied by index factors of x5.07,
+// x2.20 and x1.92; and 33-44% "discounts" on ordinary estate flats built from
+// a wide comp set. Each of these is now a gate.
+const placeholderFlat = scoreAlert(
+	{ ...flat, placeholderCoordinates: true },
+	estimate(900000),
+	geo(),
+);
+check(
+	"placeholder coordinates never alert",
+	!placeholderFlat.eligible &&
+		placeholderFlat.gateReason === "placeholder_coordinates" &&
+		!placeholderFlat.fallbackEligible,
+	{ gate: placeholderFlat.gateReason },
+);
+
+const villagePlotPrice = 120000;
+const absurdDiscount = scoreAlert(
+	flat,
+	estimate(villagePlotPrice / 0.058),
+	geo(),
+);
+check(
+	"a 94% below-median offer is rejected as an implausible discount",
+	!absurdDiscount.eligible &&
+		absurdDiscount.gateReason === "implausible_discount",
+	{
+		discountPct: absurdDiscount.discountPct,
+		gate: absurdDiscount.gateReason,
+	},
+);
+
+// ~40% below with a thin and wide sample: not credible.
+const thinWide = scoreAlert(flat, estimate(1000000, 7, { spreadPct: 40 }), geo());
+// The same discount carried by a broad, tight sample: kept.
+const broadTight = scoreAlert(
+	flat,
+	estimate(1000000, 24, { spreadPct: 12 }),
+	geo(),
+);
+check(
+	"a large discount needs a broad and tight comp set",
+	!thinWide.eligible &&
+		thinWide.gateReason === "unverified_discount" &&
+		broadTight.eligible,
+	{
+		thinWide: { gate: thinWide.gateReason, comps: 7, spread: 40 },
+		broadTight: { gate: broadTight.gateReason, comps: 24, spread: 12 },
+	},
+);
+
+const brokenIndex = scoreAlert(
+	flat,
+	estimate(900000, 20, { timeFactorMedian: 5.07 }),
+	geo(),
+);
+const impossibleDrop = scoreAlert(
+	flat,
+	estimate(900000, 20, { timeFactorMedian: 0.85 }),
+	geo(),
+);
+const healthyIndex = scoreAlert(
+	flat,
+	estimate(900000, 20, { timeFactorMedian: 1.15 }),
+	geo(),
+);
+check(
+	"a broken index factor invalidates the fair value",
+	!brokenIndex.eligible &&
+		brokenIndex.gateReason === "broken_index_factor" &&
+		!impossibleDrop.eligible &&
+		impossibleDrop.gateReason === "broken_index_factor" &&
+		healthyIndex.eligible,
+	{
+		broken: brokenIndex.gateReason,
+		drop: impossibleDrop.gateReason,
+		healthy: healthyIndex.gateReason,
+	},
+);
+
+const highIndex = scoreAlert(
+	flat,
+	estimate(900000, 20, { timeFactorMedian: 1.7 }),
+	geo(),
+);
+const normalIndex = scoreAlert(
+	flat,
+	estimate(900000, 20, { timeFactorMedian: 1.15 }),
+	geo(),
+);
+check(
+	"a high-but-possible index factor costs risk points without a gate",
+	highIndex.eligible &&
+		highIndex.flags.includes("high_index_factor") &&
+		!normalIndex.flags.includes("high_index_factor") &&
+		highIndex.totalScore < normalIndex.totalScore,
+	{
+		high: highIndex.totalScore,
+		normal: normalIndex.totalScore,
+		flags: highIndex.flags,
+	},
 );
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -39,6 +39,7 @@ import {
 import {
 	ALERT_FRESHNESS,
 	ALERT_GATES,
+	ALERT_MAX_PER_INVESTMENT,
 	ALERT_TOP_OFFERS,
 	type AlertSegment,
 	freshArrivalRank,
@@ -46,6 +47,12 @@ import {
 	shouldAlertFreshArrival,
 } from "#/lib/scoring/config";
 import { neighbourhoodAt, strMarketAt } from "#/lib/scoring/house-nature";
+import {
+	clearPlaceholderCache,
+	isPlaceholderListing,
+	loadPlaceholderPoints,
+	type PlaceholderIndex,
+} from "#/lib/scoring/placeholder-points";
 import { estimateSaleValue } from "#/lib/valuation/offer-model";
 import { geoUniqueness } from "#/lib/valuation/uniqueness-geo";
 
@@ -137,8 +144,10 @@ const SCORE_ROW_COLUMNS = {
 	lat: listings.lat,
 	lng: listings.lng,
 	city: listings.city,
+	street: listings.street,
 	voivodeship: listings.voivodeship,
 	buildingId: listings.buildingId,
+	investmentId: listings.investmentId,
 	district: listings.district,
 	propertyKind: listings.propertyKind,
 	propertyType: listings.propertyType,
@@ -223,6 +232,7 @@ async function scoreListingRow(
 	row: ScoreRow,
 	now: Date,
 	facts: Map<number, ScoredFacts>,
+	placeholders: PlaceholderIndex,
 ): Promise<ScoredListing | null> {
 	const kind = propertyKindOf({
 		source: row.source,
@@ -313,6 +323,15 @@ async function scoreListingRow(
 		facts: rowFacts,
 		neighbours: houseExtras?.neighbourhood ?? null,
 		str: houseExtras?.str ?? null,
+		placeholderCoordinates: isPlaceholderListing(placeholders, {
+			id: row.id,
+			lat: row.lat,
+			lng: row.lng,
+			city: row.city,
+			street: row.street,
+			buildingId: row.buildingId,
+			investmentId: row.investmentId,
+		}),
 		price: row.price,
 		pricePerM2: row.pricePerM2,
 		areaM2: row.areaM2,
@@ -391,6 +410,9 @@ export async function runAlertScoring(
 	options: ScoreRunOptions = {},
 ): Promise<ScoreRunSummary> {
 	const started = Date.now();
+	// A crawl that ran since the last call may have added the listings that
+	// make a point a placeholder, or removed them by pruning.
+	clearPlaceholderCache();
 	const now = options.now ?? new Date();
 	const days = options.days ?? 7;
 	const cutoff = new Date(now.getTime() - days * 86_400_000);
@@ -420,10 +442,11 @@ export async function runAlertScoring(
 	// extractor read out of every description (heating, building style,
 	// tenement age, plot zoning, utilities).
 	const facts = await loadScoredFacts(rows.map((row) => row.id));
+	const placeholders = await loadPlaceholderPoints();
 
 	for (const row of rows) {
 		try {
-			const entry = await scoreListingRow(row, now, facts);
+			const entry = await scoreListingRow(row, now, facts, placeholders);
 			if (!entry) continue;
 			scored++;
 			bySegment[entry.segment] = (bySegment[entry.segment] ?? 0) + 1;
@@ -492,6 +515,9 @@ export async function scoreArrivals(
 		(id) => Number.isInteger(id) && id > 0,
 	);
 	if (ids.length === 0) return summary;
+	// The crawl that produced these ids may have just created a shared
+	// placeholder point, so the cached set must not be reused here.
+	clearPlaceholderCache();
 
 	const day = dateOnly(now);
 	const windowStart = new Date(
@@ -504,9 +530,10 @@ export async function scoreArrivals(
 			missingCurrentScoreFilter(),
 		]);
 		const facts = await loadScoredFacts(rows.map((row) => row.id));
+		const placeholders = await loadPlaceholderPoints();
 		for (const row of rows) {
 			try {
-				const entry = await scoreListingRow(row, now, facts);
+				const entry = await scoreListingRow(row, now, facts, placeholders);
 				if (!entry) continue;
 				summary.scored++;
 				// ALERT_GATES live inside the score: an ineligible offer is
@@ -680,6 +707,95 @@ export async function rebuildTodayAlerts(
 }
 
 /**
+ * Normalize a street for duplicate detection: "ul. Jana Sobieskiego" and
+ * "Jana Sobieskiego" are the same offer.
+ */
+function streetKey(street: string | null): string {
+	return (street ?? "")
+		.toLowerCase()
+		.replace(/\bul\.?\s+/g, "")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+/**
+ * The same physical offer, as two portals publish it: same city, same street
+ * (when known), same area within a square metre and the same asking price
+ * within 1%. Today's list carried "Sobieskiego 56 m² 929 000" twice, the
+ * Bielsko-Biała 140 m² house twice and a Janczowa plot twice (morizon and
+ * gratka share one feed), which halves the value of a 25-slot list.
+ */
+function duplicateKey(row: {
+	city: string | null;
+	street: string | null;
+	areaM2: number | null;
+	price: number | null;
+}): string | null {
+	if (row.areaM2 == null || row.price == null || row.price <= 0) return null;
+	const area = Math.round(row.areaM2);
+	// 1% of the price, so a portal that rounds to the nearest 1000 zł still
+	// matches. A null street falls back to the city plus area and price, which
+	// is enough for a village plot published by two feeds.
+	const priceBand = Math.round(row.price / Math.max(1000, row.price * 0.01));
+	return [
+		(row.city ?? "").toLowerCase(),
+		streetKey(row.street),
+		area,
+		priceBand,
+	].join("|");
+}
+
+/**
+ * Which investment a row belongs to, for the per-investment cap: an identified
+ * investment id, else the announced investment title, else the street.
+ */
+function investmentKey(row: {
+	city: string | null;
+	street: string | null;
+	investmentId: string | null;
+	investmentTitle: string | null;
+}): string | null {
+	if (row.investmentId) return `id:${row.investmentId}`;
+	const title = row.investmentTitle?.trim().toLowerCase();
+	if (title) return `title:${title}`;
+	const street = streetKey(row.street);
+	if (street) return `street:${row.city?.toLowerCase() ?? ""}:${street}`;
+	return null;
+}
+
+/**
+ * Take the best `ALERT_TOP_OFFERS` rows of one segment, skipping near-duplicate
+ * offers and capping how many units of one investment may fill the list.
+ *
+ * The pool is already ranked (eligible first, then score), so the first row of
+ * a duplicate or investment group is the one worth showing. A segment doesn't
+ * stop at the cap: the next distinct offers take the freed slots, which keeps
+ * the list at 25 as long as the pool allows it. Selection only, never a score.
+ */
+function selectLeaders<
+	T extends Parameters<typeof duplicateKey>[0] &
+		Parameters<typeof investmentKey>[0],
+>(group: readonly T[]): T[] {
+	const leaders: T[] = [];
+	const seenDuplicates = new Set<string>();
+	const perInvestment = new Map<string, number>();
+	for (const row of group) {
+		if (leaders.length >= ALERT_TOP_OFFERS) break;
+		const dup = duplicateKey(row);
+		if (dup != null && seenDuplicates.has(dup)) continue;
+		const investment = investmentKey(row);
+		if (investment != null) {
+			const used = perInvestment.get(investment) ?? 0;
+			if (used >= ALERT_MAX_PER_INVESTMENT) continue;
+			perInvestment.set(investment, used + 1);
+		}
+		if (dup != null) seenDuplicates.add(dup);
+		leaders.push(row);
+	}
+	return leaders;
+}
+
+/**
  * Rank eligible scores per segment and replace today's list with the top
  * `ALERT_TOP_OFFERS`. The pool is every scored, active offer (not only
  * today's arrivals), so a new offer competes against the full market.
@@ -699,6 +815,14 @@ async function createAlerts(now: Date): Promise<number> {
 			confidence: listingScores.confidence,
 			valueScore: listingScores.valueScore,
 			eligible: listingScores.eligible,
+			// Selection-time grouping: the same offer often arrives twice from
+			// two portals, and one investment can publish a whole price list.
+			city: listings.city,
+			street: listings.street,
+			areaM2: listings.areaM2,
+			price: listings.price,
+			investmentId: listings.investmentId,
+			investmentTitle: listings.investmentTitle,
 		})
 		.from(listingScores)
 		.innerJoin(listings, eq(listingScores.listingId, listings.id))
@@ -736,11 +860,7 @@ async function createAlerts(now: Date): Promise<number> {
 	// and an offer that lost its place disappears. Older dates stay untouched.
 	const dayLeaders: Array<(typeof rows)[number]> = [];
 	for (const group of groups.values()) {
-		const topN = Math.min(ALERT_TOP_OFFERS, group.length);
-		for (let index = 0; index < topN; index++) {
-			const row = group[index];
-			if (row) dayLeaders.push(row);
-		}
+		for (const row of selectLeaders(group)) dayLeaders.push(row);
 	}
 	const leaderIds = dayLeaders.map((row) => row.listingId);
 	if (leaderIds.length > 0) {

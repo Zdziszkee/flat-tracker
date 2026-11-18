@@ -1,4 +1,4 @@
-# Alert scoring 2027.15
+# Alert scoring 2027.16
 
 Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
 model participates in the score. The job stores every component, reason
@@ -302,6 +302,19 @@ An offer enters the alert list only when:
 - `value_score >= 55`
 - `confidence >= 0.5`
 - `discount >= 10%`
+- the coordinates are not a shared placeholder (`placeholder_coordinates`)
+- the discount is credible: below 35% always, 35-55% only on a broad
+  (`>= 15` comps) and tight (`spread <= 25%`) sample, never past 55%
+- the median index factor that carries the comps to today is inside
+  `0.9-2.0` (`broken_index_factor`); `1.6-2.0` costs `high_index_factor`
+  risk points without rejecting the offer
+
+The plausibility gates exist because a "discount" is only as good as its
+comparables. The 2027.14 list carried a 1000 m² village plot at 94% below
+the local median, a 156 m² industrial plot at 85% and ordinary estate flats
+at 33-44%: those were broken comp sets (land of another type, a city-centre
+placeholder location, a thin cell index), not bargains, and a leaderboard
+that ranks them first is worse than an empty one.
 
 The daily leaderboard is the best `ALERT_TOP_OFFERS` offers (25) per
 segment (flats, houses, plots) across both tracked regions, computed over
@@ -317,8 +330,15 @@ Domy z działką, Działki) as side-by-side sections, even when a section is
 empty, and `/api/alerts` enforces the same 25-per-segment ceiling on the
 response.
 
-This is a selection rule, not a scoring rule: it changes which scored offers
-become alerts, never a stored score, so it does not need a `SCORE_VERSION`
+Selection is deduplicated and diversified: the same offer syndicated on two
+portals (`city + street + area in m² + 1% price band`) keeps one row, and a
+single investment fills at most `ALERT_MAX_PER_INVESTMENT` (2) slots, freed
+positions going to the next distinct offer. The live list had half a column
+in one investment (five units of one osiedle, six of another) and three
+literal duplicates.
+
+These are selection rules, not scoring rules: they change which scored offers
+become alerts, never a stored score, so they do not need a `SCORE_VERSION`
 bump.
 
 ## Fresh arrivals
@@ -405,6 +425,9 @@ condition deck, the clamp, monotonicity and the asking-ratio rules, and
   holds for 5-of-100 and 1-of-20 cohorts, a lone arrival alerts, ties are
   conservative, an empty cohort alerts nothing, and the gates stay the sole
   blocker for a weak offer
+- placeholder coordinates, an implausible discount (55%+), an unverified
+  discount (35-55% on a thin or wide sample) and a broken index factor
+  reject the offer; a high-but-possible factor only costs risk points
 - stored scores are bounded, alerts respect gates, no duplicate alerts
 
 `bun run typecheck` and `bun run build` pass.

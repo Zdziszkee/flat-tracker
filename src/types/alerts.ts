@@ -30,6 +30,15 @@ export interface AlertAmenities {
 	lakeM?: number | null;
 	city?: string | null;
 	centerM?: number | null;
+	/**
+	 * House extras, stored with the same blob. Only a house score carries them:
+	 * the nearest other OSM footprint, how many stand within 150 m, and the
+	 * nightly-price median of the short-term rentals within 2 km.
+	 */
+	neighbourM?: number | null;
+	neighbours150m?: number | null;
+	strNightly?: number | null;
+	strSample?: number | null;
 	source?: string | null;
 }
 
@@ -94,6 +103,43 @@ export interface AlertFacts {
 	monthlyRent: number | null;
 	funduszRemontowy: number | null;
 	legalStatus: string | null;
+	/**
+	 * House solitude evidence: distance to the nearest other building and the
+	 * count within 150 m. Read from the OSM footprint index; null for flats and
+	 * plots, and for houses scored before the extras were stored.
+	 */
+	neighbourM: number | null;
+	neighbours150m: number | null;
+	/** Median nightly price of nearby short-term rentals, PLN, and its sample. */
+	strNightly: number | null;
+	strSample: number | null;
+}
+
+/**
+ * One comparable behind the fair-value median, as stored with the score
+ * (`listing_scores.valuation_json.comparables`). `priceM2` is the comp's own
+ * price per m² at the time of the deal; `adjustedPriceM2` is that price
+ * brought to today, so they differ when an index or asking-ratio correction
+ * applied.
+ */
+export interface AlertComparable {
+	/** `rcn:<transactionId>` or `listing:<source>:<externalId>`. */
+	id: string;
+	source: "rcn" | "listing";
+	/** Deal or posting date, ISO 8601; null when the source carried none. */
+	date: string | null;
+	distanceM: number | null;
+	areaM2: number | null;
+	rooms: number | null;
+	/** RCN street and housenumber when the registry had one. */
+	address: string | null;
+	/** Transaction price (or asking price for a listing comp), zł/m². */
+	priceM2: number;
+	/** Price after the time and asking-to-transaction corrections, zł/m². */
+	adjustedPriceM2: number;
+	/** Time index or asking-ratio factor applied to `priceM2`. */
+	timeFactor: number;
+	askingRatio: number | null;
 }
 
 /** Evidence behind the stored fair value. */
@@ -103,6 +149,12 @@ export interface AlertValuation {
 	/** False when no facts were available (correction is then neutral). */
 	qualityKnown: boolean;
 	qualityReasons: Array<{ code: string; label: string; pct: number }>;
+	/**
+	 * The comparables the median was built from, strongest first. Empty for a
+	 * score row written before the field existed, in which case the card keeps
+	 * the static "Wycena z N ofert" note instead of a disclosure.
+	 */
+	comparables: AlertComparable[];
 	/** Median index factor that brought the comparables to today. */
 	timeFactorMedian: number | null;
 	/** Index period span of the comp set ("2019Q2" -> "2026Q4"). */

@@ -1,5 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ExternalLink, Map as MapIcon, SearchX } from "lucide-react";
+import {
+	ChevronDown,
+	ExternalLink,
+	Map as MapIcon,
+	SearchX,
+} from "lucide-react";
 import { useState } from "react";
 
 import { Badge } from "#/components/ui/badge";
@@ -34,7 +39,11 @@ import { formatNumber } from "#/lib/format";
 import type { ListingSearch } from "#/lib/listing-features";
 import type { AlertSegment } from "#/lib/scoring/config";
 import { cn } from "#/lib/utils";
-import type { AlertDto, AlertProperties } from "#/types/alerts";
+import type {
+	AlertComparable,
+	AlertDto,
+	AlertProperties,
+} from "#/types/alerts";
 
 export const Route = createFileRoute("/alerts")({
 	component: AlertsPage,
@@ -235,6 +244,142 @@ function comparableNote(alert: AlertDto): string | null {
 	const rcn =
 		alert.compRcnCount > 0 ? `, w tym ${alert.compRcnCount} z RCN` : "";
 	return `Wycena z ${offerCount(alert.compCount)}${rcn}`;
+}
+
+const factorFormat = new Intl.NumberFormat("pl-PL", {
+	minimumFractionDigits: 2,
+	maximumFractionDigits: 2,
+});
+
+/** `MM.YYYY` from a stored ISO date; "brak daty" when the comp carried none. */
+function comparableMonth(date: string | null): string {
+	if (date == null) return "brak daty";
+	const match = /^(\d{4})-(\d{2})/.exec(date);
+	if (match) return `${match[2]}.${match[1]}`;
+	const parsed = new Date(date);
+	if (Number.isNaN(parsed.getTime())) return "brak daty";
+	return `${String(parsed.getMonth() + 1).padStart(2, "0")}.${parsed.getFullYear()}`;
+}
+
+/**
+ * One comparable, in the order a buyer checks it: what it was, where, how big,
+ * at what price, how the correction moved that price, and when it sold.
+ */
+function ComparableItem({ comparable }: { comparable: AlertComparable }) {
+	const size =
+		comparable.areaM2 != null
+			? `${formatNumber(Math.round(comparable.areaM2))} m²`
+			: null;
+	const delta = comparable.adjustedPriceM2 - comparable.priceM2;
+	const corrected =
+		comparable.priceM2 > 0 && Math.abs(delta) / comparable.priceM2 > 0.01;
+	// RCN comps are indexed forward; listing comps are converted from asking
+	// to transaction price first, so the factor names the correction applied.
+	const factor =
+		comparable.source === "rcn" || comparable.askingRatio == null
+			? `indeks ×${factorFormat.format(comparable.timeFactor)}`
+			: `oferta ×${factorFormat.format(comparable.askingRatio)}`;
+	return (
+		<li className="border-l pl-2">
+			<span className="block text-foreground">
+				{comparable.source === "rcn" ? "RCN" : "oferta"}
+				{comparable.address != null && ` · ${comparable.address}`}
+				{size != null && ` · ${size}`}
+			</span>
+			<span className="block tabular-nums">
+				{formatNumber(Math.round(comparable.priceM2))} zł/m²
+				{corrected && (
+					<>
+						{` → ${formatNumber(Math.round(comparable.adjustedPriceM2))} zł/m² `}
+						<span className="text-muted-foreground">({factor})</span>
+					</>
+				)}
+				{` · ${comparableMonth(comparable.date)}`}
+				{comparable.distanceM != null &&
+					` · ${formatDistance(comparable.distanceM)}`}
+			</span>
+		</li>
+	);
+}
+
+/**
+ * "Wycena z N ofert" as a disclosure. The summary keeps the compact line; the
+ * button expands the comparable sample stored with the score. A row scored
+ * before comparables were stored keeps the plain line it always had.
+ */
+function ComparablesDisclosure({ alert }: { alert: AlertDto }) {
+	const [open, setOpen] = useState(false);
+	const summary = comparableNote(alert);
+	const comparables = alert.valuation?.comparables ?? [];
+	if (summary == null) return null;
+	if (comparables.length === 0) {
+		return <p className="text-xs text-muted-foreground">{summary}</p>;
+	}
+	const listId = `comps-${alert.id}`;
+	return (
+		<div className="text-xs text-muted-foreground">
+			<button
+				type="button"
+				aria-expanded={open}
+				aria-controls={listId}
+				onClick={() => setOpen((value) => !value)}
+				className="flex min-h-11 w-full items-center gap-1.5 rounded text-left transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+			>
+				<ChevronDown
+					aria-hidden="true"
+					className={cn(
+						"size-3.5 shrink-0 transition-transform",
+						open && "rotate-180",
+					)}
+				/>
+				<span>{summary}</span>
+			</button>
+			<ul
+				id={listId}
+				hidden={!open}
+				aria-label="Oferty porównawcze do wyceny"
+				className={cn(
+					"mt-1 max-h-56 flex-col gap-1.5 overflow-y-auto pr-1",
+					open ? "flex" : "hidden",
+				)}
+			>
+				{comparables.map((comparable) => (
+					<ComparableItem
+						key={`${comparable.source}-${comparable.id}`}
+						comparable={comparable}
+					/>
+				))}
+			</ul>
+			{open && comparables.length < alert.compCount && (
+				<p className="mt-1">
+					Pokazano {comparables.length} z {alert.compCount} porównań.
+				</p>
+			)}
+		</div>
+	);
+}
+
+/**
+ * House solitude and rental-market evidence stored with the score. Only the
+ * values that were measured appear, and a house without any keeps no line.
+ */
+function houseExtrasLine(alert: AlertDto): string | null {
+	if (alert.segment !== "house") return null;
+	const { neighbourM, neighbours150m, strNightly, strSample } = alert.facts;
+	const parts: string[] = [];
+	if (neighbourM != null) {
+		parts.push(`najbliższy budynek ${formatDistance(neighbourM)}`);
+	}
+	if (neighbours150m != null) {
+		parts.push(`budynki w 150 m: ${formatNumber(neighbours150m)}`);
+	}
+	if (strNightly != null) {
+		const sample = strSample != null ? ` (${offerCount(strSample)})` : "";
+		parts.push(
+			`Airbnb ~${formatNumber(Math.round(strNightly))} zł/noc${sample}`,
+		);
+	}
+	return parts.length > 0 ? `Samotnie: ${parts.join(" · ")}` : null;
 }
 
 /** Risk codes the extractor emits, rendered as short Polish labels. */
@@ -520,7 +665,7 @@ function AlertCard({
 	const facts = factEntries(alert.properties);
 	const amenities = amenityLabels(alert.properties);
 	const nearby = nearestFeatures(alert.amenities);
-	const valuation = comparableNote(alert);
+	const extras = houseExtrasLine(alert);
 	const location = locationEntries(alert);
 	const correction = valuationNote(alert);
 	return (
@@ -645,9 +790,11 @@ function AlertCard({
 					</ul>
 				)}
 
-				{valuation && (
-					<p className="text-xs text-muted-foreground">{valuation}</p>
+				{extras != null && (
+					<p className="text-xs text-muted-foreground">{extras}</p>
 				)}
+
+				<ComparablesDisclosure alert={alert} />
 
 				{alert.facts.setting.length > 0 && (
 					<p className="text-xs text-muted-foreground">

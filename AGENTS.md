@@ -457,6 +457,31 @@ the component breakdown and rationale.
   market +2/+4/+6 above 250/400/600 zł per night. The isolation distance and
   the nightly median are stored in `amenities_json` (`neighbourM`,
   `neighbours150m`, `strNightly`, `strSample`) and shown on the card.
+- **The fair value must survive a plausibility check** (2027.16). Three
+  failures showed up in the live list and each is now a gate:
+  `placeholder_coordinates` (the coordinates are a point dozens of
+  street-less listings share, i.e. an adapter/geocoder wrote the city centre:
+  a Giszowiec flat sat 62 m from the Katowice Rynek, a Janczowa plot 100 km
+  from its village, and a Skotniki plot on the Kraków Rynek, so the comp set,
+  the centre-zone distance and the fair value were all fiction);
+  `implausible_discount` (55% or more below the median, which was a 1000 m²
+  village plot "94% below" central building land and a 156 m² industrial
+  plot at 85%); `unverified_discount` (35-55% below needs at least 15 comps
+  and a 25% interquartile spread, because the ordinary estate flats carried
+  33-44% "discounts" built from wide sets); and `broken_index_factor` (the
+  median factor that carries comps to today outside 0.9-2.0, which was
+  x5.07, x2.20 and x1.92 on 2021-2022 house comps and x0.85 on a three-year
+  Katowice span). A factor between 1.6 and 2.0 costs `high_index_factor`
+  risk points without rejecting the offer. The placeholder set
+  (`src/lib/scoring/placeholder-points.ts`) is one aggregate query per run:
+  a point shared by five or more street-less, building-less sale listings,
+  keyed to five decimals (about a metre).
+- **The daily cut is deduplicated and diversified** (selection, not score):
+  the same offer syndicated twice (`city + street + area + 1% price` band)
+  keeps its best row only, and one investment fills at most
+  `ALERT_MAX_PER_INVESTMENT` (2) of a segment's 25 slots. A developer price
+  list is not 25 opportunities: half a live column was five units of
+  "Park Matecznego" plus six of "Stańczyka II".
 - **Gates are evaluated independently** (`gateFailures`, first one kept as
   `gateReason`), which is what makes `fallback_eligible` possible: a flat
   that failed *only* on `no_heating_evidence` or `no_tenement_evidence`
@@ -498,6 +523,11 @@ the component breakdown and rationale.
   distances. Because an alert keeps the score row that raised it, the
   alert feed reads the listing's current-version row for these two fields
   when the alert's own row predates them.
+- **Re-score after a gate change**: `bun run rescore:candidates` re-scores
+  the offers that can actually alert (every house and plot, the flats inside
+  the centre zone) at the current `SCORE_VERSION`; `--all` widens it to the
+  pool, `--limit N` bounds it, `--dry-run` reports without writing. A full
+  pool re-score is hours of comparable queries.
 - **Policy constants are versioned** (`src/lib/scoring/config.ts`):
   weights, curves, distance bands and gates sit behind `SCORE_VERSION`,
   and any change to a policy value requires a `SCORE_VERSION` bump so
