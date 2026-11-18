@@ -556,6 +556,7 @@ async function storeScore(
 			totalScore: score.totalScore,
 			confidence: score.confidence,
 			eligible: score.eligible,
+			fallbackEligible: score.fallbackEligible,
 			discountPct: score.discountPct,
 			fairPrice: score.fairPrice,
 			fairM2: score.fairM2,
@@ -581,6 +582,7 @@ async function storeScore(
 				totalScore: score.totalScore,
 				confidence: score.confidence,
 				eligible: score.eligible,
+				fallbackEligible: score.fallbackEligible,
 				discountPct: score.discountPct,
 				fairPrice: score.fairPrice,
 				fairM2: score.fairM2,
@@ -643,13 +645,19 @@ async function createAlerts(now: Date): Promise<number> {
 			discountPct: listingScores.discountPct,
 			confidence: listingScores.confidence,
 			valueScore: listingScores.valueScore,
+			eligible: listingScores.eligible,
 		})
 		.from(listingScores)
 		.innerJoin(listings, eq(listingScores.listingId, listings.id))
 		.where(
 			and(
 				eq(listingScores.scoreVersion, SCORE_VERSION),
-				eq(listingScores.eligible, true),
+				// A fully eligible offer always outranks a fallback one, whatever
+				// the score says (see the orderBy below).
+				or(
+					eq(listingScores.eligible, true),
+					eq(listingScores.fallbackEligible, true),
+				),
 				eq(listings.isActive, true),
 				eq(listings.isVisible, true),
 				gte(listingScores.valueScore, ALERT_GATES.minValueScore),
@@ -657,7 +665,7 @@ async function createAlerts(now: Date): Promise<number> {
 				gte(listingScores.discountPct, ALERT_GATES.minDiscountPct),
 			),
 		)
-		.orderBy(desc(listingScores.totalScore));
+		.orderBy(desc(listingScores.eligible), desc(listingScores.totalScore));
 
 	// Group the FULL eligible pool, then keep the best `ALERT_TOP_OFFERS` per
 	// segment (flats, houses, plots across both regions). The group is the
@@ -716,6 +724,9 @@ async function createAlerts(now: Date): Promise<number> {
 					cut: `top${ALERT_TOP_OFFERS}`,
 					discountPct: row.discountPct,
 					confidence: row.confidence,
+					// Set for the offers that fill a short section: every gate
+					// passed except proof of municipal heating.
+					heatingUnknown: !row.eligible,
 				}),
 			})
 			.onConflictDoUpdate({

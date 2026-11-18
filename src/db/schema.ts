@@ -851,6 +851,14 @@ export const listingScores = sqliteTable(
 		confidence: real().notNull(),
 		/** False when a segment eligibility rule rejects the offer. */
 		eligible: integer({ mode: "boolean" }).notNull().default(true),
+		/**
+		 * Passes every alert gate except proof of municipal heating. A section
+		 * that cannot fill `ALERT_TOP_OFFERS` with fully eligible offers is
+		 * completed from this pool, ranked below them and marked on the card.
+		 */
+		fallbackEligible: integer("fallback_eligible", { mode: "boolean" })
+			.notNull()
+			.default(false),
 		rankPct: real("rank_pct"),
 		discountPct: real("discount_pct"),
 		fairPrice: real("fair_price"),

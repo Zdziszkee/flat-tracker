@@ -1,0 +1,1 @@
+ALTER TABLE `listing_scores` ADD `fallback_eligible` integer DEFAULT false NOT NULL;

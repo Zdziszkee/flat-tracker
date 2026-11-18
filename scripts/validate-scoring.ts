@@ -7,7 +7,7 @@
  * Part 2 checks the stored scores and alerts in the database.
  */
 
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, or, sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { listingAlerts, listingScores, listings } from "#/db/schema";
@@ -188,7 +188,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.12",
+		SCORE_VERSION === "2027.13",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -335,8 +335,13 @@ const gasHeated = scoreAlert(
 );
 check(
 	"a gas-heated flat is excluded from alerts",
-	!gasHeated.eligible && gasHeated.gateReason === "no_district_heating",
+	!gasHeated.eligible && gasHeated.gateReason === "non_municipal_heating",
 	gasHeated.gateReason,
+);
+check(
+	"a gas-heated flat never fills a short section either",
+	!gasHeated.fallbackEligible,
+	gasHeated.fallbackEligible,
 );
 const unknownHeating = scoreAlert(
 	{ ...flat, heatingType: null },
@@ -346,8 +351,13 @@ const unknownHeating = scoreAlert(
 check(
 	"a flat with unknown heating is excluded (municipal must be proven)",
 	!unknownHeating.eligible &&
-		unknownHeating.gateReason === "no_district_heating",
+		unknownHeating.gateReason === "no_heating_evidence",
 	unknownHeating.gateReason,
+);
+check(
+	"a flat with unknown heating may fill a short section, marked",
+	unknownHeating.fallbackEligible,
+	unknownHeating.fallbackEligible,
 );
 const blockFlatGate = scoreAlert(
 	{ ...flat, buildingType: "block" },
@@ -396,7 +406,7 @@ const proseGas = scoreAlert(
 );
 check(
 	"prose saying gas heating is excluded",
-	!proseGas.eligible && proseGas.gateReason === "no_district_heating",
+	!proseGas.eligible && proseGas.gateReason === "non_municipal_heating",
 	proseGas.gateReason,
 );
 const proseNegated = scoreAlert(
@@ -411,7 +421,7 @@ const proseNegated = scoreAlert(
 check(
 	"a negated municipal mention does not pass the gate",
 	!proseNegated.eligible &&
-		proseNegated.gateReason === "no_district_heating",
+		proseNegated.gateReason === "non_municipal_heating",
 	proseNegated.gateReason,
 );
 const attributeDistrict = scoreAlert(
@@ -1217,21 +1227,26 @@ check(
 	mismatchedAlerts[0],
 );
 
-// The eligible pool exactly as createAlerts() builds it for the current
-// version: active, visible, gate-passing scores.
+// The leaderboard pool exactly as createAlerts() builds it for the current
+// version: active, visible, gate-passing scores, with the fallback tier
+// (everything passed except proof of municipal heating) ranked after them.
 const pool = await db
 	.select({
 		listingId: listingScores.listingId,
 		segment: listingScores.segment,
 		region: listingScores.region,
 		totalScore: listingScores.totalScore,
+		eligible: listingScores.eligible,
 	})
 	.from(listingScores)
 	.innerJoin(listings, eq(listingScores.listingId, listings.id))
 	.where(
 		and(
 			eq(listingScores.scoreVersion, SCORE_VERSION),
-			eq(listingScores.eligible, true),
+			or(
+				eq(listingScores.eligible, true),
+				eq(listingScores.fallbackEligible, true),
+			),
 			eq(listings.isActive, true),
 			eq(listings.isVisible, true),
 			gte(listingScores.valueScore, ALERT_GATES.minValueScore),
@@ -1239,7 +1254,7 @@ const pool = await db
 			gte(listingScores.discountPct, ALERT_GATES.minDiscountPct),
 		),
 	)
-	.orderBy(desc(listingScores.totalScore));
+	.orderBy(desc(listingScores.eligible), desc(listingScores.totalScore));
 
 const poolGroups = new Map<string, typeof pool>();
 for (const row of pool) {
@@ -1328,6 +1343,31 @@ check(
 	`every listing in the latest top-${ALERT_TOP_OFFERS} cut has an alert`,
 	uncovered.length === 0,
 	uncovered.slice(0, 5),
+);
+
+// The fallback tier never jumps the queue: inside a segment, every fallback
+// alert ranks below every fully eligible one for the same date.
+const rankMix = await db
+	.select({
+		segment: listingAlerts.segment,
+		alertDate: listingAlerts.alertDate,
+		maxFallbackRank: sql<number | null>`max(case when ${listingScores.eligible} = 0 then ${listingAlerts.rank} end)`,
+		minEligibleRank: sql<number | null>`min(case when ${listingScores.eligible} = 1 then ${listingAlerts.rank} end)`,
+	})
+	.from(listingAlerts)
+	.innerJoin(listingScores, eq(listingAlerts.scoreId, listingScores.id))
+	.where(eq(listingScores.scoreVersion, SCORE_VERSION))
+	.groupBy(listingAlerts.segment, listingAlerts.alertDate);
+const rankViolations = rankMix.filter(
+	(row) =>
+		row.maxFallbackRank != null &&
+		row.minEligibleRank != null &&
+		row.maxFallbackRank < row.minEligibleRank,
+);
+check(
+	"a fallback offer never ranks above a fully eligible one",
+	rankViolations.length === 0,
+	rankViolations.slice(0, 5),
 );
 
 // The incremental not-exists predicate must select exactly the offers the

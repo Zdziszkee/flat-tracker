@@ -307,7 +307,7 @@ const PROCESSING_SOURCES: SourceDescriptor[] = [
 	},
 	{
 		id: "scoring",
-		name: "Alert scoring — top 5% offers (flats, houses, plots)",
+		name: "Alert scoring — top 25 ofert na segment (mieszkania, domy, działki)",
 		kind: "scoring",
 		group: "processing",
 	},

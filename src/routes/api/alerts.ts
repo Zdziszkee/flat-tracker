@@ -77,6 +77,7 @@ export const Route = createFileRoute("/api/alerts")({
 						flagsJson: listingScores.flagsJson,
 						compCount: listingScores.compCount,
 						compRcnCount: listingScores.compRcnCount,
+						eligible: listingScores.eligible,
 						/**
 						 * Comparable evidence from the listing's current-version score row.
 						 * An alert computed under an older SCORE_VERSION keeps its own
@@ -156,6 +157,9 @@ export const Route = createFileRoute("/api/alerts")({
 						alertCreatedAt: createdAt ?? generatedAt.toISOString(),
 						rank: row.rank,
 						score: row.score,
+						/** True for an offer that fills a section without heating proof. */
+						heatingUnknown: payload.heatingUnknown === true,
+						eligible: row.eligible ?? true,
 						segment: row.segment as AlertDto["segment"],
 						region: row.region,
 						discountPct: row.discountPct,
@@ -264,9 +268,9 @@ function parseAmenities(value: string | null): AlertAmenities | null {
  * fresh-arrival extras), and the page promises a readable leaderboard per
  * category, so the feed enforces the same ceiling.
  */
-function capPerSegment<T extends { segment: string; score: number }>(
-	rows: readonly T[],
-): T[] {
+function capPerSegment<
+	T extends { segment: string; score: number; eligible?: boolean },
+>(rows: readonly T[]): T[] {
 	const bySegment = new Map<string, T[]>();
 	for (const row of rows) {
 		const group = bySegment.get(row.segment) ?? [];
@@ -275,9 +279,15 @@ function capPerSegment<T extends { segment: string; score: number }>(
 	}
 	const kept = new Set<T>();
 	for (const group of bySegment.values()) {
+		// A fully eligible offer keeps its rank over a fallback one that fills
+		// a short section, whatever the score says.
 		for (const row of group
 			.slice()
-			.sort((left, right) => right.score - left.score)
+			.sort(
+				(left, right) =>
+					Number(right.eligible ?? true) - Number(left.eligible ?? true) ||
+					right.score - left.score,
+			)
 			.slice(0, ALERT_TOP_OFFERS)) {
 			kept.add(row);
 		}

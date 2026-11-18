@@ -119,6 +119,8 @@ export interface AlertScore {
 	/** RCN transactions among those comparables. */
 	compRcnCount: number;
 	eligible: boolean;
+	/** Passes every gate except `no_heating_evidence`; fills a short section. */
+	fallbackEligible: boolean;
 	gateReason: string | null;
 	reasons: ScoreReason[];
 	flags: string[];
@@ -947,37 +949,59 @@ export function scoreAlert(
 			? (1 - asking / fair) * 100
 			: null;
 
-	let gateReason: string | null = null;
+	// Every gate is evaluated, not just until the first failure: the
+	// leaderboard needs to know whether a flat failed *only* on missing
+	// heating evidence, which is the one failure it may fill a section with
+	// (clearly marked) when the municipal-heated pool is short.
+	const gateFailures: string[] = [];
 	if (
 		SEGMENT_ELIGIBILITY.flatExcludesLargePanel &&
 		input.segment === "flat" &&
 		isLargePanelFlat(input)
 	) {
-		gateReason = "large_panel_block";
-	} else if (
+		gateFailures.push("large_panel_block");
+	}
+	if (
 		SEGMENT_ELIGIBILITY.flatRequiresDistrictHeating &&
 		input.segment === "flat" &&
 		!hasDistrictHeating(input)
 	) {
-		gateReason = "no_district_heating";
-	} else if (
+		// Gas, electric, coal and oil are a statement against municipal
+		// heating; no evidence at all is merely unknown.
+		gateFailures.push(
+			heatingEvidence(input).kind === "unknown"
+				? "no_heating_evidence"
+				: "non_municipal_heating",
+		);
+	}
+	if (
 		SEGMENT_ELIGIBILITY.plotRequiresBuildingEvidence &&
 		input.segment === "plot" &&
 		!isBuildingPlot(input)
 	) {
-		gateReason = "not_building_plot";
-	} else if (estimate == null || fair == null || fair <= 0)
-		gateReason = "no_comparable_estimate";
-	else if (estimate.confidence.totalCount < 3) {
-		// The valuation itself refuses fewer than three comps; an estimate
-		// that still reaches here is too thin to alert on.
-		gateReason = "thin_comps";
-	} else if (discountPct == null || discountPct < ALERT_GATES.minDiscountPct) {
-		gateReason = "discount_below_gate";
-	} else if (value.score < ALERT_GATES.minValueScore)
-		gateReason = "value_score_below_gate";
-	else if (confidence < ALERT_GATES.minConfidence)
-		gateReason = "confidence_below_gate";
+		gateFailures.push("not_building_plot");
+	}
+	if (estimate == null || fair == null || fair <= 0)
+		gateFailures.push("no_comparable_estimate");
+	else {
+		if (estimate.confidence.totalCount < 3) {
+			// The valuation itself refuses fewer than three comps; an estimate
+			// that still reaches here is too thin to alert on.
+			gateFailures.push("thin_comps");
+		}
+		if (discountPct == null || discountPct < ALERT_GATES.minDiscountPct) {
+			gateFailures.push("discount_below_gate");
+		}
+		if (value.score < ALERT_GATES.minValueScore) {
+			gateFailures.push("value_score_below_gate");
+		}
+		if (confidence < ALERT_GATES.minConfidence) {
+			gateFailures.push("confidence_below_gate");
+		}
+	}
+	const gateReason = gateFailures[0] ?? null;
+	const fallbackEligible =
+		gateFailures.length === 1 && gateFailures[0] === "no_heating_evidence";
 
 	return {
 		scoreVersion: SCORE_VERSION,
@@ -996,7 +1020,9 @@ export function scoreAlert(
 		askingPrice: asking,
 		compCount: estimate?.confidence.totalCount ?? 0,
 		compRcnCount: estimate?.confidence.rcnCount ?? 0,
-		eligible: gateReason == null,
+		eligible: gateFailures.length === 0,
+		/** All gates pass except proof of municipal heating. */
+		fallbackEligible,
 		gateReason,
 		reasons,
 		flags,

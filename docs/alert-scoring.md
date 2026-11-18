@@ -1,4 +1,4 @@
-# Alert scoring 2027.11
+# Alert scoring 2027.13
 
 Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
 model participates in the score. The job stores every component, reason
@@ -65,13 +65,24 @@ scored and kept in the table, but it can never enter the leaderboard
 (`listing_scores.eligible = false`):
 
 - **Flats**: no large-panel block (`blok` / `wielka płyta` / `block`), and
-  district heating or a heat pump. Gas, electric, coal and unknown heating
-  are excluded.
+  district heating or a heat pump. Gas, electric, coal and oil fail as
+  `non_municipal_heating`; a flat whose ad never states the heating fails as
+  `no_heating_evidence`, which is the one failure a short section may fill
+  from (see below).
 - **Plots**: building evidence only. An explicit building plot type, a
   built-up EGiB land-use class, a zoning decision (WZ) or a zoning plan
   qualifies; farmland, recreational land and plots with no such evidence do
   not.
 - **Comparable sample**: fewer than three comps in the estimate.
+
+Gates are evaluated independently, so a score records every failure rather
+than stopping at the first one. Two consequences: a flat can fail both
+heating and the discount, and the leaderboard can tell a flat that failed
+*only* on missing heating evidence from one that failed on gas. The first
+case is `fallback_eligible`: when a section cannot fill `ALERT_TOP_OFFERS`
+(25) with fully eligible offers, the remainder comes from this pool, ranked
+below every eligible offer and marked "Ogrzewanie niepotwierdzone" on the
+card. A gas-, electric-, coal- or oil-heated flat is never a fallback.
 
 Heating and building style are read from three places, in order of
 authority: the structured column, the portal attribute blob

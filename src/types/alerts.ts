@@ -95,6 +95,14 @@ export interface AlertDto {
 	firstSeenAt: string | null;
 	/** True when the alert row is younger than 24 hours. */
 	isFresh: boolean;
+	/**
+	 * True when the offer fills a short section: every gate passed except
+	 * proof of municipal heating, so the card marks it instead of claiming
+	 * heating it cannot show.
+	 */
+	heatingUnknown: boolean;
+	/** False for a fallback offer (see `heatingUnknown`). */
+	eligible: boolean;
 	/** Why the alert was raised (for example "fresh_arrival"); null when the
 	 * stored payload does not say. */
 	reason: string | null;

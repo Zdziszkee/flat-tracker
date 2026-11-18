@@ -452,6 +452,14 @@ function AlertCard({
 							Nowa (24h)
 						</Badge>
 					)}
+					{alert.heatingUnknown && alert.segment === "flat" && (
+						<Badge
+							variant="outline"
+							className="px-1.5 py-0 text-[10px] uppercase tracking-wide"
+						>
+							Ogrzewanie niepotwierdzone
+						</Badge>
+					)}
 				</CardDescription>
 				<CardTitle className="leading-snug">
 					<a

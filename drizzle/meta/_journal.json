@@ -239,6 +239,13 @@
       "when": 1795011706735,
       "tag": "0033_black_vargas",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1795014472252,
+      "tag": "0034_volatile_trish_tilby",
+      "breakpoints": true
     }
   ]
 }
