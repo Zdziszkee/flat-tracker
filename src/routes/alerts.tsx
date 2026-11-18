@@ -237,6 +237,87 @@ function comparableNote(alert: AlertDto): string | null {
 	return `Wycena z ${offerCount(alert.compCount)}${rcn}`;
 }
 
+/** Risk codes the extractor emits, rendered as short Polish labels. */
+const RISK_LABELS: Record<string, string> = {
+	damp: "zawilgocenie",
+	no_lift: "brak windy",
+	roof_to_renovation: "dach do remontu",
+	media_missing: "brak mediów",
+	no_access: "brak dojazdu",
+	flood_risk: "zagrożenie powodziowe",
+	noise: "hałas",
+	tenanted: "wynajęte",
+	mortgage: "hipoteka",
+	easement: "służebność",
+	claims: "roszczenia",
+	life_estate: "dożywocie",
+};
+
+function riskLabel(code: string): string {
+	return RISK_LABELS[code] ?? humanizeToken(code);
+}
+
+/**
+ * Why the offer is on the list: the fast-rail station (plots and houses) or
+ * the centre-zone anchor (flats). A distance without a station name is never
+ * shown, because the payload always carries the name when it carries a match.
+ */
+function locationEntries(
+	alert: AlertDto,
+): Array<{ label: string; value: string }> {
+	const out: Array<{ label: string; value: string }> = [];
+	const rail = alert.location?.fastRail;
+	if (rail) {
+		out.push({
+			label: rail.kdpPlanned ? "KDP (plan)" : "Kolej 200+",
+			value: `${rail.name} · ${formatDistance(rail.distanceM)}`,
+		});
+	}
+	const zone = alert.location?.centreZone;
+	if (zone) {
+		out.push({
+			label: "Centrum",
+			value: `${zone.name} · ${formatDistance(zone.distanceM)}`,
+		});
+	}
+	return out;
+}
+
+/**
+ * The correction line: what moved the comparable median, and how the comps
+ * were brought to today. Values are the ones stored with the score, so an old
+ * alert shows the evidence of the version that raised it.
+ */
+function valuationNote(alert: AlertDto): string | null {
+	const valuation = alert.valuation;
+	if (!valuation) return null;
+	const parts: string[] = [];
+	if (valuation.qualityKnown && Math.abs(valuation.qualityPct) >= 0.5) {
+		const sign = valuation.qualityPct > 0 ? "+" : "";
+		const top = valuation.qualityReasons
+			.slice()
+			.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+			.slice(0, 2)
+			.map((reason) => reason.label)
+			.join(", ");
+		parts.push(
+			`korekta stanu ${sign}${valuation.qualityPct.toFixed(1)}%${top ? ` (${top})` : ""}`,
+		);
+	}
+	if (valuation.timeFactorMedian != null && valuation.indexSpan) {
+		parts.push(
+			`indeks ${valuation.indexSpan.from} → ${valuation.indexSpan.to} ×${valuation.timeFactorMedian.toFixed(2)}`,
+		);
+	}
+	if (
+		valuation.askingRatio != null &&
+		valuation.askingRatioSource === "fallback"
+	) {
+		parts.push(`komp. z ofert ×${valuation.askingRatio.toFixed(2)}`);
+	}
+	return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 /**
  * Fresh arrivals lead their region group; rank order decides inside each
  * part, so the standing top-5% list keeps its original ordering.
@@ -440,6 +521,8 @@ function AlertCard({
 	const amenities = amenityLabels(alert.properties);
 	const nearby = nearestFeatures(alert.amenities);
 	const valuation = comparableNote(alert);
+	const location = locationEntries(alert);
+	const correction = valuationNote(alert);
 	return (
 		<Card className="gap-4 py-4">
 			<CardHeader className="px-4">
@@ -452,12 +535,14 @@ function AlertCard({
 							Nowa (24h)
 						</Badge>
 					)}
-					{alert.heatingUnknown && alert.segment === "flat" && (
+					{alert.fallbackReason != null && (
 						<Badge
 							variant="outline"
 							className="px-1.5 py-0 text-[10px] uppercase tracking-wide"
 						>
-							Ogrzewanie niepotwierdzone
+							{alert.fallbackReason === "heating"
+								? "Ogrzewanie niepotwierdzone"
+								: "Możliwość zabudowy niepotwierdzona"}
 						</Badge>
 					)}
 				</CardDescription>
@@ -506,6 +591,20 @@ function AlertCard({
 					/>
 				</div>
 
+				{location.length > 0 && (
+					<dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+						{location.map((entry) => (
+							<div
+								key={entry.label}
+								className="flex items-baseline gap-1 whitespace-nowrap"
+							>
+								<dt className="text-muted-foreground">{entry.label}</dt>
+								<dd className="font-medium">{entry.value}</dd>
+							</div>
+						))}
+					</dl>
+				)}
+
 				{facts.length > 0 && (
 					<dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
 						{facts.map((fact) => (
@@ -548,6 +647,22 @@ function AlertCard({
 
 				{valuation && (
 					<p className="text-xs text-muted-foreground">{valuation}</p>
+				)}
+
+				{alert.facts.setting.length > 0 && (
+					<p className="text-xs text-muted-foreground">
+						Otoczenie: {alert.facts.setting.join(", ")}
+					</p>
+				)}
+
+				{alert.facts.risks.length > 0 && (
+					<p className="text-xs text-destructive">
+						Ryzyka: {alert.facts.risks.map(riskLabel).join(", ")}
+					</p>
+				)}
+
+				{correction && (
+					<p className="text-xs text-muted-foreground">{correction}</p>
 				)}
 
 				<div className="grid grid-cols-5 gap-1 text-center text-xs">

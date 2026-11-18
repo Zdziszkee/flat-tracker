@@ -29,6 +29,7 @@ import {
 	listings,
 	parcelFeatures,
 } from "#/db/schema";
+import { loadScoredFacts, type ScoredFacts } from "#/lib/llm/fact-access";
 import { propertyKindOf } from "#/lib/property-kind";
 import {
 	type AlertScore,
@@ -147,6 +148,7 @@ const SCORE_ROW_COLUMNS = {
 	parcelRoadDistanceM: parcelFeatures.roadDistanceM,
 	parcelRoadClass: parcelFeatures.roadClass,
 	parcelBuildingCoverage: parcelFeatures.buildingCoverage,
+	parcelBuildingCount: parcelFeatures.buildingCount,
 	parcelLandUseClass: parcelFeatures.landUseClass,
 	parcelZoningWz: parcelFeatures.zoningWz,
 	parcelZoningNoPlan: parcelFeatures.zoningNoPlan,
@@ -219,6 +221,7 @@ interface ScoredListing {
 async function scoreListingRow(
 	row: ScoreRow,
 	now: Date,
+	facts: Map<number, ScoredFacts>,
 ): Promise<ScoredListing | null> {
 	const kind = propertyKindOf({
 		source: row.source,
@@ -238,6 +241,7 @@ async function scoreListingRow(
 			? await geoUniqueness(row.lat, row.lng)
 			: null;
 
+	const rowFacts = facts.get(row.id) ?? null;
 	const estimateResult = await estimateSaleValue(
 		{
 			id: row.id,
@@ -255,6 +259,23 @@ async function scoreListingRow(
 			market: row.market,
 			plotType: row.plotType,
 			kind: segment,
+			// Quality/condition inputs. The estimate applies the facts to its
+			// median (a "do remontu" tenement is valued below a renovated one)
+			// and records the correction with the score.
+			facts: rowFacts,
+			buildYear: row.buildYear,
+			buildingType: row.buildingType,
+			buildingMaterial: row.buildingMaterial,
+			condition: row.condition,
+			hasElevator: row.hasElevator,
+			floor: row.floor,
+			floorCount: row.floorCount,
+			landUseClass: row.parcelLandUseClass,
+			zoningWz: row.parcelZoningWz,
+			zoningPlanCount: row.parcelZoningPlanCount,
+			roadDistanceM: row.parcelRoadDistanceM,
+			slopeDeg: row.parcelSlopeDeg,
+			floodRisk: row.parcelFloodRisk,
 		},
 		now,
 		{ includeUpside: false },
@@ -268,6 +289,7 @@ async function scoreListingRow(
 		city: row.city,
 		title: row.title,
 		description: row.description,
+		facts: rowFacts,
 		price: row.price,
 		pricePerM2: row.pricePerM2,
 		areaM2: row.areaM2,
@@ -301,6 +323,7 @@ async function scoreListingRow(
 					roadDistanceM: row.parcelRoadDistanceM,
 					roadClass: row.parcelRoadClass,
 					buildingCoverage: row.parcelBuildingCoverage,
+					buildingCount: row.parcelBuildingCount,
 					landUseClass: row.parcelLandUseClass,
 					zoningWz: row.parcelZoningWz,
 					zoningNoPlan: row.parcelZoningNoPlan,
@@ -370,10 +393,14 @@ export async function runAlertScoring(
 
 	const rows = await loadScoreRows(filters, options.limit);
 	scanned = rows.length;
+	// One chunked read for the whole batch: the score needs the facts the
+	// extractor read out of every description (heating, building style,
+	// tenement age, plot zoning, utilities).
+	const facts = await loadScoredFacts(rows.map((row) => row.id));
 
 	for (const row of rows) {
 		try {
-			const entry = await scoreListingRow(row, now);
+			const entry = await scoreListingRow(row, now, facts);
 			if (!entry) continue;
 			scored++;
 			bySegment[entry.segment] = (bySegment[entry.segment] ?? 0) + 1;
@@ -453,9 +480,10 @@ export async function scoreArrivals(
 			inArray(listings.id, ids),
 			missingCurrentScoreFilter(),
 		]);
+		const facts = await loadScoredFacts(rows.map((row) => row.id));
 		for (const row of rows) {
 			try {
-				const entry = await scoreListingRow(row, now);
+				const entry = await scoreListingRow(row, now, facts);
 				if (!entry) continue;
 				summary.scored++;
 				// ALERT_GATES live inside the score: an ineligible offer is
@@ -566,6 +594,7 @@ async function storeScore(
 			reasonsJson: JSON.stringify(score.reasons),
 			amenitiesJson: JSON.stringify(score.amenities),
 			flagsJson: JSON.stringify(score.flags),
+			valuationJson: JSON.stringify(score.valuation ?? {}),
 			computedAt: new Date(),
 			expiresAt,
 		})
@@ -592,6 +621,7 @@ async function storeScore(
 				reasonsJson: JSON.stringify(score.reasons),
 				amenitiesJson: JSON.stringify(score.amenities),
 				flagsJson: JSON.stringify(score.flags),
+				valuationJson: JSON.stringify(score.valuation ?? {}),
 				computedAt: new Date(),
 				expiresAt,
 			},

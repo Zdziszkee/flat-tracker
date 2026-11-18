@@ -61,6 +61,57 @@ export interface AlertReason {
 	direction: "positive" | "negative";
 }
 
+/**
+ * Why this offer is on the list: the fast-rail access point (plots and
+ * houses), the centre-zone anchor (flats) and the valuation corrections.
+ * Recomputed from the listing coordinates on every request, so a station or
+ * anchor added to the dataset shows up without a re-score.
+ */
+export interface AlertLocation {
+	/** Nearest 200 km/h+ station and distance, null for flats or no match. */
+	fastRail: {
+		name: string;
+		city: string;
+		distanceM: number;
+		/** True when the station carries the planned KDP service (2035+). */
+		kdpPlanned: boolean;
+		kdpYear: number | null;
+	} | null;
+	/** Nearest centre-zone anchor and distance, null for houses and plots. */
+	centreZone: { name: string; distanceM: number } | null;
+}
+
+/** Facts the extractor read out of the description, shown as a card line. */
+export interface AlertFacts {
+	/** Named defects and legal encumbrances ("damp", "no_lift", ...). */
+	risks: string[];
+	/** Setting the ad claims: lake, river, forest, mountains, view. */
+	setting: string[];
+	/** Plot utilities connected (0-5) and the road access the ad states. */
+	plotMedia: number | null;
+	plotAccess: string | null;
+	/** Monthly rent and fundusz remontowy quoted in the ad, PLN. */
+	monthlyRent: number | null;
+	funduszRemontowy: number | null;
+	legalStatus: string | null;
+}
+
+/** Evidence behind the stored fair value. */
+export interface AlertValuation {
+	/** Condition/quality correction applied to the comp median, percent. */
+	qualityPct: number;
+	/** False when no facts were available (correction is then neutral). */
+	qualityKnown: boolean;
+	qualityReasons: Array<{ code: string; label: string; pct: number }>;
+	/** Median index factor that brought the comparables to today. */
+	timeFactorMedian: number | null;
+	/** Index period span of the comp set ("2019Q2" -> "2026Q4"). */
+	indexSpan: { from: string; to: string } | null;
+	askingRatio: number | null;
+	askingRatioSource: "measured" | "fallback" | null;
+	compAgeMedianYears: number | null;
+}
+
 export interface AlertDto {
 	id: number;
 	alertDate: string;
@@ -93,6 +144,12 @@ export interface AlertDto {
 	listedAt: string | null;
 	/** When the crawler first stored the offer, ISO 8601. */
 	firstSeenAt: string | null;
+	/** Fast-rail / centre-zone evidence for this offer. */
+	location: AlertLocation;
+	/** Description facts behind the score. */
+	facts: AlertFacts;
+	/** Comparable and correction evidence behind the fair value. */
+	valuation: AlertValuation | null;
 	/** True when the alert row is younger than 24 hours. */
 	isFresh: boolean;
 	/**
@@ -101,8 +158,14 @@ export interface AlertDto {
 	 * heating it cannot show.
 	 */
 	heatingUnknown: boolean;
-	/** False for a fallback offer (see `heatingUnknown`). */
+	/** False for a fallback offer (see `fallbackReason`). */
 	eligible: boolean;
+	/**
+	 * Why a fallback row is on the list: the extractor found no heating
+	 * evidence (`heating`) or no buildability evidence (`evidence`). Null for
+	 * a fully eligible offer.
+	 */
+	fallbackReason: "heating" | "evidence" | null;
 	/** Why the alert was raised (for example "fresh_arrival"); null when the
 	 * stored payload does not say. */
 	reason: string | null;

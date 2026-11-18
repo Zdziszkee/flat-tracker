@@ -32,6 +32,7 @@ import {
 	TRAM_TARGET_M,
 	valueCurveScore,
 } from "#/lib/scoring/config";
+import { scoredFactsOf } from "#/lib/llm/fact-access";
 import type { GeoUniqueness } from "#/lib/valuation/uniqueness-geo";
 import type { ValuationEstimate } from "#/types/listing";
 
@@ -72,6 +73,16 @@ function estimate(fairPrice: number, rcnCount = 20): ValuationEstimate {
 		comparables: [],
 		compSets: { buildingRcn: null, nearbyRcn: null, listing: null },
 		index: null,
+		qualityAdjustmentPct: 0,
+		qualityAdjustmentKnown: false,
+		qualityAdjustmentReasons: [],
+		statistics: {
+			timeFactorMedian: null,
+			indexSpan: null,
+			askingRatio: null,
+			askingRatioSource: null,
+			compAgeMedianYears: null,
+		},
 		upside: null,
 	};
 }
@@ -124,6 +135,16 @@ const flat: ScoreListingInput = {
 	heatingType: "district",
 	hasElevator: true,
 	hasBalcony: true,
+	// Kazimierz, inside the 4 km centre zone.
+	lat: 50.0515,
+	lng: 19.9448,
+	// A pre-war tenement with municipal heating: the target flat profile.
+	facts: scoredFactsOf({
+		heating: "district",
+		buildingType: "tenement",
+		condition: "good",
+		buildYear: 1930,
+	}),
 };
 
 const plot: ScoreListingInput = {
@@ -138,6 +159,14 @@ const plot: ScoreListingInput = {
 	areaM2: 1000,
 	plotAreaM2: 1000,
 	plotType: "budowlana",
+	// 1.1 km from Kraków Główny: inside the 3 km fast-rail gate.
+	lat: 50.0616,
+	lng: 19.9373,
+	facts: scoredFactsOf({
+		plotType: "budowlana",
+		utilities: { power: true, water: true, gas: true, sewer: true },
+		roadAccess: "public",
+	}),
 	parcelFeatures: {
 		roadDistanceM: 20,
 		roadClass: "asphalt",
@@ -159,6 +188,25 @@ const house: ScoreListingInput = {
 	buildingType: "detached",
 	hasGarden: true,
 	hasGarage: true,
+	// A house alerts only when something can still be built on its parcel, so
+	// the fixture carries residential zoning and utilities.
+	facts: scoredFactsOf({
+		heating: "gas",
+		buildingType: "house",
+		plotType: "budowlana",
+		utilities: { power: true, water: true, gas: true, sewer: true },
+		roadAccess: "public",
+	}),
+	parcelFeatures: {
+		roadDistanceM: 15,
+		roadClass: "asphalt",
+		landUseClass: "MN",
+		zoningWz: false,
+		zoningPlanCount: 1,
+		buildingCoverage: 0.2,
+		floodRisk: false,
+		slopeDeg: 2,
+	},
 };
 
 function total(
@@ -188,7 +236,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.13",
+		SCORE_VERSION === "2027.14",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -205,7 +253,7 @@ check(
 	},
 );
 const katowiceFlat = scoreAlert(
-	{ ...flat, city: "Katowice" },
+	{ ...flat, city: "Katowice", lat: 50.2593, lng: 19.0216 },
 	estimate(800000),
 	geo({ tramM: 100 }),
 );
@@ -344,7 +392,11 @@ check(
 	gasHeated.fallbackEligible,
 );
 const unknownHeating = scoreAlert(
-	{ ...flat, heatingType: null },
+	{
+		...flat,
+		heatingType: null,
+		facts: scoredFactsOf({ buildingType: "tenement", buildYear: 1930 }),
+	},
 	estimate(800000),
 	geo(),
 );
@@ -360,17 +412,45 @@ check(
 	unknownHeating.fallbackEligible,
 );
 const blockFlatGate = scoreAlert(
-	{ ...flat, buildingType: "block" },
+	{
+		...flat,
+		facts: scoredFactsOf({
+			heating: "district",
+			buildingType: "block",
+			buildYear: 1995,
+		}),
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"a modern block fails the tenement gate",
+	!blockFlatGate.eligible && blockFlatGate.gateReason === "not_tenement",
+	blockFlatGate.gateReason,
+);
+const panelFlatGate = scoreAlert(
+	{
+		...flat,
+		facts: scoredFactsOf({
+			heating: "district",
+			buildingType: "block",
+			largePanel: true,
+			buildYear: 1978,
+		}),
+	},
 	estimate(800000),
 	geo(),
 );
 check(
 	"a large-panel block is excluded from alerts",
-	!blockFlatGate.eligible && blockFlatGate.gateReason === "large_panel_block",
-	blockFlatGate.gateReason,
+	!panelFlatGate.eligible && panelFlatGate.gateReason === "large_panel_block",
+	panelFlatGate.gateReason,
 );
 const tenementFlatGate = scoreAlert(
-	{ ...flat, buildingType: "tenement" },
+	{
+		...flat,
+		facts: scoredFactsOf({ heating: "district", buildingType: "tenement" }),
+	},
 	estimate(800000),
 	geo(),
 );
@@ -379,50 +459,33 @@ check(
 	tenementFlatGate.eligible,
 	tenementFlatGate.gateReason,
 );
-// The heating column is mostly empty on the bulk portals, so prose and the
-// portal attribute blob carry the evidence.
-const proseDistrict = scoreAlert(
+// Prose is read by the extractor, not by the score: a description that names
+// municipal heating must NOT satisfy the gate on its own, because that is the
+// false-positive path the regexes were removed for.
+const proseIgnored = scoreAlert(
 	{
 		...flat,
 		heatingType: null,
+		facts: scoredFactsOf({ buildingType: "tenement", buildYear: 1930 }),
 		description: "Rozkładowe, po remoncie. Ogrzewanie: miejskie, niski czynsz.",
 	},
 	estimate(800000),
 	geo(),
 );
 check(
-	"prose saying municipal heating satisfies the flat gate",
-	proseDistrict.eligible,
-	proseDistrict.gateReason,
+	"prose alone no longer satisfies the heating gate",
+	!proseIgnored.eligible && proseIgnored.gateReason === "no_heating_evidence",
+	proseIgnored.gateReason,
 );
-const proseGas = scoreAlert(
-	{
-		...flat,
-		heatingType: null,
-		description: "Do mieszkania należy piec gazowy dwufunkcyjny.",
-	},
+const factsGas = scoreAlert(
+	{ ...flat, heatingType: null, facts: scoredFactsOf({ heating: "gas" }) },
 	estimate(800000),
 	geo(),
 );
 check(
-	"prose saying gas heating is excluded",
-	!proseGas.eligible && proseGas.gateReason === "non_municipal_heating",
-	proseGas.gateReason,
-);
-const proseNegated = scoreAlert(
-	{
-		...flat,
-		heatingType: null,
-		description: "Brak ogrzewania miejskiego, grzejniki elektryczne.",
-	},
-	estimate(800000),
-	geo(),
-);
-check(
-	"a negated municipal mention does not pass the gate",
-	!proseNegated.eligible &&
-		proseNegated.gateReason === "non_municipal_heating",
-	proseNegated.gateReason,
+	"an extracted gas heating fact excludes the flat",
+	!factsGas.eligible && factsGas.gateReason === "non_municipal_heating",
+	factsGas.gateReason,
 );
 const attributeDistrict = scoreAlert(
 	{ ...flat, heatingType: null, featuresHeating: "urban" },
@@ -437,8 +500,11 @@ check(
 const heatPumpFlat = scoreAlert(
 	{
 		...flat,
-		heatingType: null,
-		description: "Nowy budynek z pompą ciepła i rekuperacją.",
+		facts: scoredFactsOf({
+			heating: "heatPump",
+			buildingType: "tenement",
+			buildYear: 1930,
+		}),
 	},
 	estimate(800000),
 	geo(),
@@ -452,14 +518,15 @@ const proseBlock = scoreAlert(
 	{
 		...flat,
 		buildingType: null,
+		facts: scoredFactsOf({ heating: "district", buildingType: "tenement" }),
 		description: "Mieszkanie w wielkiej płycie, po termomodernizacji.",
 	},
 	estimate(800000),
 	geo(),
 );
 check(
-	"prose saying large-panel construction excludes the flat",
-	!proseBlock.eligible && proseBlock.gateReason === "large_panel_block",
+	"a prose panel claim no longer drives the gate",
+	proseBlock.eligible,
 	proseBlock.gateReason,
 );
 const farmland = scoreAlert(
@@ -470,6 +537,7 @@ const farmland = scoreAlert(
 		title: "Działka rolna 1000 m2",
 		description: "Łąka z dostępem do drogi gminnej.",
 		plotType: "rolna",
+		facts: scoredFactsOf({ plotType: "rolna" }),
 		parcelFeatures: {
 			...plot.parcelFeatures,
 			zoningWz: false,
@@ -764,48 +832,56 @@ check(
 check("flood risk is flagged", plotFlood.flags.includes("flood_risk"), plotFlood.flags);
 
 // --- Flat building style -------------------------------------------------
+// The extracted facts outrank the portal column, so the fixtures set the style
+// explicitly and one check pins that precedence.
 const baselineFlat = {
 	...flat,
 	heatingType: "gazowe",
+	facts: scoredFactsOf({ heating: "gas" }),
 };
 const baselineProperty = scoreAlert(
 	baselineFlat,
 	estimate(800000),
 	geo(),
 ).propertyScore;
-const blockFlat = scoreAlert(
-	{ ...baselineFlat, buildingType: "block", buildingMaterial: null },
-	estimate(800000),
-	geo(),
-);
 const panelFlat = scoreAlert(
 	{
 		...baselineFlat,
-		buildingType: "apartment",
-		buildingMaterial: "wielka płyta",
+		facts: scoredFactsOf({
+			heating: "gas",
+			buildingType: "block",
+			largePanel: true,
+			buildYear: 1978,
+		}),
 	},
 	estimate(800000),
 	geo(),
 );
 const tenementFlat = scoreAlert(
-	{ ...baselineFlat, buildingType: "tenement", buildingMaterial: null },
+	{
+		...baselineFlat,
+		facts: scoredFactsOf({ heating: "gas", buildingType: "tenement" }),
+	},
 	estimate(800000),
 	geo(),
 );
 const apartmentFlat = scoreAlert(
-	{ ...baselineFlat, buildingType: "apartment", buildingMaterial: null },
+	{
+		...baselineFlat,
+		facts: scoredFactsOf({ heating: "gas", buildingType: "apartment" }),
+	},
 	estimate(800000),
 	geo(),
 );
 check(
-	"large-panel block lowers flat property score",
-	blockFlat.propertyScore < baselineProperty &&
-		panelFlat.propertyScore < baselineProperty &&
-		blockFlat.propertyScore === panelFlat.propertyScore,
+	"large-panel facts lower the flat property score and block the alert",
+	panelFlat.propertyScore < baselineProperty &&
+		!panelFlat.eligible &&
+		panelFlat.gateReason === "large_panel_block",
 	{
 		baseline: baselineProperty,
-		block: blockFlat.propertyScore,
 		panel: panelFlat.propertyScore,
+		gate: panelFlat.gateReason,
 		delta: FLAT_BUILDING_DELTAS.largePanel,
 	},
 );
@@ -822,28 +898,32 @@ check(
 		apartmentDelta: FLAT_BUILDING_DELTAS.apartmentBuilding,
 	},
 );
-const blockInTitle = scoreAlert(
-	{ ...baselineFlat, title: "Mieszkanie w bloku 60 m2" },
+const factsBeatColumn = scoreAlert(
+	{
+		...baselineFlat,
+		buildingType: "block",
+		facts: scoredFactsOf({ heating: "gas", buildingType: "tenement" }),
+	},
 	estimate(800000),
 	geo(),
 );
-const tenementWithBlockInTitle = scoreAlert(
+const columnWins = scoreAlert(
 	{
 		...baselineFlat,
-		title: "Kamienica blisko bloku 60 m2",
 		buildingType: "tenement",
+		facts: scoredFactsOf({ heating: "gas", buildingType: "apartment" }),
 	},
 	estimate(800000),
 	geo(),
 );
 check(
-	"building type text fallback works and structured type wins",
-	blockInTitle.propertyScore < baselineProperty &&
-		tenementWithBlockInTitle.propertyScore === tenementFlat.propertyScore,
+	"extracted building style outranks the portal column",
+	factsBeatColumn.propertyScore === tenementFlat.propertyScore &&
+		columnWins.propertyScore === apartmentFlat.propertyScore,
 	{
 		baseline: baselineProperty,
-		blockTitle: blockInTitle.propertyScore,
-		tenementStructured: tenementWithBlockInTitle.propertyScore,
+		factsBeatColumn: factsBeatColumn.propertyScore,
+		columnWins: columnWins.propertyScore,
 	},
 );
 
@@ -1084,6 +1164,210 @@ const weights = SEGMENT_WEIGHTS.flat;
 const weightSum =
 	weights.value + weights.transit + weights.green + weights.property + weights.risk;
 check("flat weights sum to 1", Math.abs(weightSum - 1) < 1e-9, weightSum);
+
+// --- Fast-rail gate (plots and houses) ----------------------------------
+// Kraków Główny is at 50.06842/19.94789. 1.9 km south-west of it is inside the
+// 3 km gate, 3.4 km is outside it.
+const insideRailPlot = scoreAlert(
+	{ ...plot, lat: 50.0525, lng: 19.935 },
+	estimate(300000),
+	geo(),
+);
+const outsideRailPlot = scoreAlert(
+	{ ...plot, lat: 50.0385, lng: 19.9351 },
+	estimate(300000),
+	geo(),
+);
+check(
+	"a plot inside the 3 km fast-rail gate is eligible",
+	insideRailPlot.eligible,
+	insideRailPlot.gateReason,
+);
+check(
+	"a plot outside the gate fails with outside_fast_rail",
+	!outsideRailPlot.eligible &&
+		outsideRailPlot.gateReason === "outside_fast_rail",
+	outsideRailPlot.gateReason,
+);
+const houseNearRail = scoreAlert(
+	{ ...house, lat: 50.0525, lng: 19.935 },
+	estimate(900000),
+	geo(),
+);
+const houseFarFromRail = scoreAlert(
+	{ ...house, lat: 50.0385, lng: 19.9351 },
+	estimate(900000),
+	geo(),
+);
+check(
+	"a house inside the gate with buildable land is eligible",
+	houseNearRail.eligible,
+	houseNearRail.gateReason,
+);
+check(
+	"a house outside the gate fails with outside_fast_rail",
+	!houseFarFromRail.eligible &&
+		houseFarFromRail.gateReason === "outside_fast_rail",
+	houseFarFromRail.gateReason,
+);
+const closerRailPlot = scoreAlert(
+	{ ...plot, lat: 50.062, lng: 19.9405 },
+	estimate(300000),
+	geo(),
+);
+const fartherRailPlot = scoreAlert(
+	{ ...plot, lat: 50.0445, lng: 19.934 },
+	estimate(300000),
+	geo(),
+);
+check(
+	"the fast-rail band scores a closer station higher",
+	closerRailPlot.transitScore > fartherRailPlot.transitScore &&
+		closerRailPlot.totalScore > fartherRailPlot.totalScore,
+	{
+		closer: closerRailPlot.transitScore,
+		farther: fartherRailPlot.transitScore,
+	},
+);
+
+// --- Buildable parcel gate (plots and houses) ---------------------------
+const houseUnbuildable = scoreAlert(
+	{
+		...house,
+		lat: 50.0525,
+		lng: 19.935,
+		parcelFeatures: {
+			roadDistanceM: 20,
+			landUseClass: "RIIIa",
+			zoningWz: false,
+			zoningPlanCount: 0,
+		},
+		facts: scoredFactsOf({ plotType: "rolna" }),
+	},
+	estimate(900000),
+	geo(),
+);
+check(
+	"a house without buildable-land evidence is excluded",
+	!houseUnbuildable.eligible &&
+		houseUnbuildable.gateReason === "not_buildable_parcel",
+	houseUnbuildable.gateReason,
+);
+const houseNoParcelData = scoreAlert(
+	{
+		...house,
+		lat: 50.0525,
+		lng: 19.935,
+		parcelFeatures: null,
+		facts: scoredFactsOf({ heating: "gas", buildingType: "house" }),
+	},
+	estimate(900000),
+	geo(),
+);
+check(
+	"a house with no parcel record is a marked fallback, not a rejection",
+	!houseNoParcelData.eligible &&
+		houseNoParcelData.gateReason === "no_buildable_evidence" &&
+		houseNoParcelData.fallbackEligible,
+	{
+		gate: houseNoParcelData.gateReason,
+		fallback: houseNoParcelData.fallbackEligible,
+	},
+);
+const houseOverbuilt = scoreAlert(
+	{
+		...house,
+		lat: 50.0525,
+		lng: 19.935,
+		parcelFeatures: { ...plot.parcelFeatures, buildingCoverage: 0.75 },
+	},
+	estimate(900000),
+	geo(),
+);
+check(
+	"a house on an almost fully built parcel is excluded",
+	!houseOverbuilt.eligible && houseOverbuilt.gateReason === "parcel_overbuilt",
+	houseOverbuilt.gateReason,
+);
+
+// --- Centre-zone and tenement gates (flats) -----------------------------
+const nowaHutaFlat = scoreAlert(
+	{ ...flat, lat: 50.0725, lng: 20.0345 },
+	estimate(800000),
+	geo(),
+);
+check(
+	"a flat outside the 4 km centre zone is excluded",
+	!nowaHutaFlat.eligible && nowaHutaFlat.gateReason === "outside_centre_zone",
+	nowaHutaFlat.gateReason,
+);
+const wolaJustowskaFlat = scoreAlert(
+	{ ...flat, lat: 50.0635, lng: 19.8835 },
+	estimate(800000),
+	geo(),
+);
+check(
+	"Wola Justowska is inside the centre zone",
+	wolaJustowskaFlat.eligible,
+	wolaJustowskaFlat.gateReason,
+);
+const unknownStyleFlat = scoreAlert(
+	{
+		...flat,
+		buildYear: null,
+		buildingType: null,
+		facts: scoredFactsOf({ heating: "district" }),
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"a flat with no tenement evidence fails with no_tenement_evidence",
+	!unknownStyleFlat.eligible &&
+		unknownStyleFlat.gateReason === "no_tenement_evidence",
+	unknownStyleFlat.gateReason,
+);
+check(
+	"missing tenement evidence is a fallback, never a proof",
+	unknownStyleFlat.fallbackEligible,
+	unknownStyleFlat.fallbackEligible,
+);
+const gasModernFlat = scoreAlert(
+	{
+		...flat,
+		facts: scoredFactsOf({
+			heating: "gas",
+			buildingType: "block",
+			buildYear: 2005,
+		}),
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"a gas-heated modern block is never a fallback",
+	!gasModernFlat.eligible && !gasModernFlat.fallbackEligible,
+	gasModernFlat.gateReason,
+);
+const closerZoneFlat = scoreAlert(
+	{ ...flat, lat: 50.0616, lng: 19.9373 },
+	estimate(800000),
+	geo(),
+);
+const fartherZoneFlat = scoreAlert(
+	// ~3.6 km from the nearest anchor: inside the gate, low band.
+	{ ...flat, lat: 50.0950, lng: 19.9900 },
+	estimate(800000),
+	geo(),
+);
+check(
+	"the centre-zone band scores a closer flat higher",
+	closerZoneFlat.transitScore > fartherZoneFlat.transitScore,
+	{
+		closer: closerZoneFlat.transitScore,
+		farther: fartherZoneFlat.transitScore,
+	},
+);
 
 // --- Stored scores and alerts ------------------------------------------
 const scoreRows = await db

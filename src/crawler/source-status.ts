@@ -254,6 +254,13 @@ const DATA_SOURCES: SourceDescriptor[] = [
 		group: "data",
 		static: true,
 	},
+	{
+		id: "planned-rail",
+		name: "Kolej 200+ i planowana KDP (statyczne)",
+		kind: "layer",
+		group: "data",
+		static: true,
+	},
 ];
 
 const PROCESSING_SOURCES: SourceDescriptor[] = [

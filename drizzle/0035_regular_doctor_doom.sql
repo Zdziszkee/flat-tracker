@@ -1,0 +1,1 @@
+ALTER TABLE `listing_scores` ADD `valuation_json` text DEFAULT '{}' NOT NULL;

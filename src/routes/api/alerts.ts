@@ -5,13 +5,19 @@ import { alias } from "drizzle-orm/sqlite-core";
 
 import { db } from "#/db/index";
 import { listingAlerts, listingScores, listings } from "#/db/schema";
+import { loadScoredFacts, type ScoredFacts } from "#/lib/llm/fact-access";
+import { nearestCentreAnchor } from "#/lib/scoring/centre-zone";
 import { ALERT_TOP_OFFERS, SCORE_VERSION } from "#/lib/scoring/config";
+import { nearestFastRail } from "#/lib/scoring/fast-rail";
 import { HEATING_LABELS, resolveHeatingEvidence } from "#/lib/scoring/heating";
 import type {
 	AlertAmenities,
 	AlertDto,
+	AlertFacts,
+	AlertLocation,
 	AlertProperties,
 	AlertsResponse,
+	AlertValuation,
 } from "#/types/alerts";
 
 /** An alert is "fresh" while its row is younger than this window. */
@@ -75,6 +81,7 @@ export const Route = createFileRoute("/api/alerts")({
 						reasonsJson: listingScores.reasonsJson,
 						amenitiesJson: listingScores.amenitiesJson,
 						flagsJson: listingScores.flagsJson,
+						valuationJson: listingScores.valuationJson,
 						compCount: listingScores.compCount,
 						compRcnCount: listingScores.compRcnCount,
 						eligible: listingScores.eligible,
@@ -145,7 +152,13 @@ export const Route = createFileRoute("/api/alerts")({
 						asc(listingAlerts.rank),
 					);
 
-				const alerts: AlertDto[] = capPerSegment(rows).map((row) => {
+				const kept = capPerSegment(rows);
+				// One chunked read for the whole page: the projection below turns
+				// the extracted facts into the card's risk/setting/cost lines.
+				const factsById = await loadScoredFacts(
+					kept.map((row) => row.listingId),
+				);
+				const alerts: AlertDto[] = kept.map((row) => {
 					const createdAt = row.alertCreatedAt?.toISOString() ?? null;
 					const payload = parseJson<Record<string, unknown>>(
 						row.payloadJson,
@@ -160,6 +173,12 @@ export const Route = createFileRoute("/api/alerts")({
 						/** True for an offer that fills a section without heating proof. */
 						heatingUnknown: payload.heatingUnknown === true,
 						eligible: row.eligible ?? true,
+						fallbackReason:
+							row.eligible === false
+								? row.segment === "flat"
+									? "heating"
+									: "evidence"
+								: null,
 						segment: row.segment as AlertDto["segment"],
 						region: row.region,
 						discountPct: row.discountPct,
@@ -186,6 +205,9 @@ export const Route = createFileRoute("/api/alerts")({
 						),
 						listedAt: row.listedAt?.toISOString() ?? null,
 						firstSeenAt: row.firstSeenAt?.toISOString() ?? null,
+						location: toLocation(row),
+						facts: toFacts(factsById.get(row.listingId) ?? null),
+						valuation: parseValuation(row.valuationJson),
 						isFresh:
 							createdAt != null &&
 							generatedAt.getTime() - Date.parse(createdAt) < FRESH_WINDOW_MS,
@@ -366,12 +388,11 @@ function toProperties(listing: ListingFactColumns): AlertProperties {
 	const heating = resolveHeatingEvidence({
 		heatingType: listing.heatingType,
 		featuresHeating: listing.featuresHeating,
-		description: listing.description,
 	});
 	const heatingLabel =
 		heating.kind === "unknown"
 			? null
-			: heating.source === "description"
+			: heating.source === "facts"
 				? `${HEATING_LABELS[heating.kind]} (z opisu)`
 				: HEATING_LABELS[heating.kind];
 	return {
@@ -392,5 +413,101 @@ function toProperties(listing: ListingFactColumns): AlertProperties {
 		hasBalcony: Boolean(listing.hasBalcony),
 		hasTerrace: Boolean(listing.hasTerrace),
 		hasGarden: Boolean(listing.hasGarden),
+	};
+}
+
+/**
+ * Where the offer sits relative to the two location rules: fast-rail access
+ * (plots and houses) and the centre zone (flats). Recomputed per request from
+ * the listing coordinates and the curated datasets, so editing a station or an
+ * anchor never requires a re-score.
+ */
+function toLocation(row: {
+	segment: string;
+	lat: number | null;
+	lng: number | null;
+	city: string | null;
+}): AlertLocation {
+	if (row.segment === "apartment" || row.segment === "flat") {
+		const zone = nearestCentreAnchor(row.lat, row.lng, row.city);
+		return {
+			fastRail: null,
+			centreZone:
+				zone == null
+					? null
+					: { name: zone.anchor.name, distanceM: Math.round(zone.distanceM) },
+		};
+	}
+	const rail = nearestFastRail(row.lat, row.lng);
+	return {
+		fastRail:
+			rail == null
+				? null
+				: {
+						name: rail.station.name,
+						city: rail.station.city,
+						distanceM: Math.round(rail.distanceM),
+						kdpPlanned: rail.kdpPlanned,
+						kdpYear: rail.station.kdpYear,
+					},
+		centreZone: null,
+	};
+}
+
+/** Card projection of the extracted facts; empty arrays when nothing was read. */
+function toFacts(facts: ScoredFacts | null): AlertFacts {
+	const plot = facts?.plot ?? null;
+	const context = facts?.context ?? null;
+	const setting: string[] = [];
+	if (context?.lake) setting.push("jezioro");
+	if (context?.river) setting.push("rzeka");
+	if (context?.forest) setting.push("las");
+	if (context?.mountains) setting.push("góry");
+	if (context?.view != null && context.view.length > 0) {
+		setting.push(`widok: ${context.view}`);
+	}
+	return {
+		risks: [...(facts?.defects ?? []), ...(facts?.encumbrances ?? [])],
+		setting,
+		plotMedia: plot?.mediaCount ?? null,
+		plotAccess: plot?.roadAccess ?? null,
+		monthlyRent: facts?.monthlyCosts?.rent ?? null,
+		funduszRemontowy: facts?.monthlyCosts?.funduszRemontowy ?? null,
+		legalStatus: facts?.legalStatus ?? null,
+	};
+}
+
+/** Stored valuation evidence; `{}` (a pre-column score row) yields null. */
+function parseValuation(value: string | null): AlertValuation | null {
+	if (value == null) return null;
+	const parsed = parseJson<Record<string, unknown> | null>(value, null);
+	if (parsed == null || typeof parsed !== "object") return null;
+	if (parsed.qualityPct == null && parsed.statistics == null) return null;
+	const stats = (parsed.statistics ?? {}) as Record<string, unknown>;
+	return {
+		qualityPct: Number(parsed.qualityPct ?? 0),
+		qualityKnown: parsed.qualityKnown === true,
+		qualityReasons: Array.isArray(parsed.qualityReasons)
+			? (parsed.qualityReasons as AlertValuation["qualityReasons"])
+			: [],
+		timeFactorMedian:
+			typeof stats.timeFactorMedian === "number"
+				? stats.timeFactorMedian
+				: null,
+		indexSpan:
+			stats.indexSpan != null
+				? (stats.indexSpan as AlertValuation["indexSpan"])
+				: null,
+		askingRatio:
+			typeof stats.askingRatio === "number" ? stats.askingRatio : null,
+		askingRatioSource:
+			stats.askingRatioSource === "measured" ||
+			stats.askingRatioSource === "fallback"
+				? stats.askingRatioSource
+				: null,
+		compAgeMedianYears:
+			typeof stats.compAgeMedianYears === "number"
+				? stats.compAgeMedianYears
+				: null,
 	};
 }

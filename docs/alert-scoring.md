@@ -1,4 +1,4 @@
-# Alert scoring 2027.13
+# Alert scoring 2027.14
 
 Transparent scoring for sale offers in Małopolskie and Śląskie. No ML
 model participates in the score. The job stores every component, reason
@@ -64,34 +64,62 @@ Three hard rules sit before the discount gate. A failing offer is still
 scored and kept in the table, but it can never enter the leaderboard
 (`listing_scores.eligible = false`):
 
-- **Flats**: no large-panel block (`blok` / `wielka płyta` / `block`), and
-  district heating or a heat pump. Gas, electric, coal and oil fail as
-  `non_municipal_heating`; a flat whose ad never states the heating fails as
-  `no_heating_evidence`, which is the one failure a short section may fill
-  from (see below).
-- **Plots**: building evidence only. An explicit building plot type, a
-  built-up EGiB land-use class, a zoning decision (WZ) or a zoning plan
-  qualifies; farmland, recreational land and plots with no such evidence do
-  not.
+- **Flats**: no large-panel block (`wielka płyta`, `prefabrykat`), district
+  heating or a heat pump, a tenement (kamienica or a pre-1945 building), and a
+  position inside the centre zone (4 km from any anchor in
+  `src/lib/scoring/centre-zone.ts`: Rynek Główny, Kazimierz, Podgórze,
+  Krowodrza, Grzegórzki, Dębniki, Zwierzyniec, Wola Justowska, Katowice
+  Rynek). Gas, electric, coal and oil fail as `non_municipal_heating`; a
+  building that is proved modern fails as `not_tenement`; missing evidence
+  fails as `no_heating_evidence` / `no_tenement_evidence`, and those two are
+  the only failures a short section may fill from (see below).
+- **Plots and houses**: buildable land only, and inside 3 km of a fast-rail
+  station. Building evidence is the portal plot type (budowlana /
+  inwestycyjna), an EGiB land-use class in B*, MN, MW or RM, a WZ decision, a
+  zoning plan, or the same evidence read out of the ad by the extractor
+  (WZ, MPZP symbol or purpose, declared plot type). A plot fails as
+  `not_building_plot`; a house fails as `not_buildable_parcel`, and a house
+  whose parcel coverage is 60% or more fails as `parcel_overbuilt`.
+- **Fast rail**: plots and houses must sit within `FAST_RAIL.gateRadiusM`
+  (3 km) of a `FAST_RAIL_STATIONS` entry, otherwise `outside_fast_rail`.
 - **Comparable sample**: fewer than three comps in the estimate.
 
 Gates are evaluated independently, so a score records every failure rather
 than stopping at the first one. Two consequences: a flat can fail both
 heating and the discount, and the leaderboard can tell a flat that failed
-*only* on missing heating evidence from one that failed on gas. The first
-case is `fallback_eligible`: when a section cannot fill `ALERT_TOP_OFFERS`
-(25) with fully eligible offers, the remainder comes from this pool, ranked
-below every eligible offer and marked "Ogrzewanie niepotwierdzone" on the
-card. A gas-, electric-, coal- or oil-heated flat is never a fallback.
+*only* on evidence the extractor could not find from one that failed on a
+fact the ad states. The first case is `fallback_eligible`: when a section
+cannot fill `ALERT_TOP_OFFERS` (25) with fully eligible offers, the remainder
+comes from this pool, ranked below every eligible offer and marked on the
+card. A gas-, electric-, coal- or oil-heated flat, or a flat proved to sit in
+a modern block, is never a fallback.
 
 Heating and building style are read from three places, in order of
 authority: the structured column, the portal attribute blob
-(`features.heating`), and the prose. The prose is covered twice: the cheap
-regular-expression pass in `src/lib/scoring/heating.ts` (runs during
-scoring, so every offer gets it) and the model extraction in
-`src/lib/llm/` (phase `listing-facts`), which fills the columns for the
-corpus. Neither guesses: no evidence means unknown, and unknown fails the
-municipal-heating gate.
+(`features.heating`), and the LLM facts (`listing_facts`, phase
+`listing-facts`). Prose is read by the extractor only. The regular-expression
+pass over the description was removed in 2027.14: it matched negations and
+neighbourhood mentions ("bez ogrzewania miejskiego", "blisko miejskiej
+pływalni"), and the model reads the same sentence with the ad's context. A
+regression check pins that a description alone no longer satisfies the
+heating gate.
+
+### Location targets
+
+Two curated datasets, both listed on /sources as static layers
+(`planned-rail`) and both pinned by `bun run validate:planned-stations`:
+
+- **Fast rail** (`src/data/fast-rail-stations.ts`): stations served by
+  200 km/h+ trains in Małopolska and Śląskie (Kraków Główny, Katowice,
+  Zawiercie, Tychy, Bielsko-Biała Główna, Gliwice), each tagged with the
+  services it carries. The planned KDP service reaches Kraków and Katowice
+  through the modernised CMK from 2035, so those stops carry `kdp_2035`.
+  160 km/h corridors are deliberately excluded: they would make the 3 km gate
+  meaningless. Coordinates are the OSM station nodes the map already renders.
+- **Centre zone** (`src/lib/scoring/centre-zone.ts`): explicit anchors for the
+  target neighbourhoods, because only about a third of the Kraków rows carry a
+  district name and "Podgórze" spans 15 km of the city. Distances are measured
+  to the nearest anchor in the listing's own city.
 
 ### Plot green/water tiers
 
@@ -135,6 +163,35 @@ mathematically unreachable. For plots with fewer than three RCN comps:
 Flats and houses keep the generic treatment (0.45 base, 0.85 factor, no
 spread floor). The constants live in `config.ts` with the full rationale.
 
+**The comparable median is nominal and quality-corrected (2027.14).** Two
+corrections sit between the comps and the number the card shows:
+
+- **Time**: every RCN comparable is brought to today with the chain-linked
+  quarterly index (`timeFactor`), which is nominal, so inflation and real
+  market growth are both inside it. A comp from 2019 is multiplied by the
+  index ratio between its quarter and the current one; the median factor and
+  the index period span are stored with the score
+  (`listing_scores.valuation_json`) and shown on the card.
+- **Quality**: `src/lib/valuation/quality-factor.ts` adjusts the comp median
+  for the subject's own condition and building quality, read from the
+  extracted facts (condition, build year, technology, insulation, floor
+  heating, heat pump, AC, PV, parking, legal status, defects, encumbrances,
+  tenanted) and, for plots, the media/access/plan/shape/slope evidence. The
+  deck is two-sided and balanced (a "do remontu" flat about -11%, an
+  "excellent" one about +9%), the total is clamped to +-15%, no facts means a
+  neutral 0%, and every component is a named reason on the card. The
+  correction is applied to `fairM2`, `fairPrice` and the low/high band before
+  the discount and the upside are computed, so the score and the forecast see
+  the same value.
+
+Asking-price comparables (used only when fewer than three RCN comps survive)
+are converted to the transaction level with a measured asking-to-transaction
+ratio (`src/lib/valuation/asking-ratio.ts`): the median asking zl/m2 of
+visible offers against the median RCN zl/m2 of the same quarter and region,
+with a minimum sample per side and a documented fallback when the sample is
+thin. The ratio and its provenance ("measured" or "fallback") travel with the
+estimate.
+
 ### Transit
 
 Tram and train are deliberately different signals. Tram counts only for flats
@@ -148,10 +205,16 @@ train, bus and the city centre.
 
 Train station distance has its own bands and applies to every segment. It
 peaks at 300-800 m, stays preferred below 2000 m, and is penalized under 150 m
-because a station at the doorstep is noise rather than convenience. Houses and
-plots give the station 70% of their transit component because they are not tram
-markets; flats keep a train contribution but rely mainly on tram where one
-exists. A heavy-rail line within 200 m still lowers the transit score and adds
+because a station at the doorstep is noise rather than convenience.
+
+Fast-rail access (`FAST_RAIL.bands`) is the house and plot signal: full credit
+at 1.5 km, still strong at 2 km, 70 at the 3 km gate edge, and it carries half
+of their transit component (25% trains, 10% bus, 15% centre). Flats use the
+centre-zone band instead (full credit within 500 m of an anchor, 55 at the
+4 km gate edge) and keep the tram signal, which owns 45% of their transit
+score inside a tram city.
+
+A heavy-rail line within 200 m still lowers the transit score and adds
 `rail_noise`; tram tracks are stored separately and never create that flag.
 
 ### Green
@@ -265,7 +328,12 @@ hours in the same region and segment.
 
 ## Validation
 
-`bun run validate:scoring` checks the pure scoring rules (plus stored-data invariants):
+`bun run validate:scoring` checks the pure scoring rules (plus stored-data
+invariants). `bun run validate:planned-stations` pins the station and anchor
+datasets (coordinates inside the tracked regions, unique ids, hand-computed
+distances, target anchors present). `bun run validate:quality` pins the
+condition deck, the clamp, monotonicity and the asking-ratio rules, and
+`bun run measure:asking-ratio` prints the measured ratio table for audit.
 
 - discount, park, forest and water are monotonic; tram improves inside its
   300 m target band
@@ -276,9 +344,22 @@ hours in the same region and segment.
   still penalized
 - media, WZ and MPZP increase plot score
 - flood risk lowers plot score and is flagged
-- building style: block/wielka płyta lowers flat property score, kamienica
-  and apartamentowiec raise it, structured values beat title text
+- building style: large-panel facts lower flat property score and block the
+  alert, kamienica and apartamentowiec raise it, extracted style beats the
+  portal column
 - heating cost order: district > gas > electric
+- heating and building style come from the extracted facts: a description
+  that names municipal heating no longer satisfies the gate on its own
+- fast rail: a plot or house inside 3 km is eligible, 3.4 km fails as
+  `outside_fast_rail`, a closer station scores higher, and a house without
+  buildability proof fills a short section as a marked fallback
+- centre zone: a flat in Nowa Huta fails as `outside_centre_zone`, Wola
+  Justowska passes, a proved modern block fails as `not_tenement`, a flat
+  with no tenement evidence is a fallback, and a gas-heated modern block is
+  never a fallback
+- buildability: a house on agricultural/forest land fails, a house with no
+  parcel record is a fallback, and a parcel at 75% coverage fails as
+  `parcel_overbuilt`
 - gates reject missing comps, thin comps and near-fair offers
 - fresh arrivals: above the cohort cut alerts, below does not, the boundary
   holds for 5-of-100 and 1-of-20 cohorts, a lone arrival alerts, ties are

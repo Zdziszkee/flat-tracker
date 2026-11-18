@@ -876,6 +876,13 @@ export const listingScores = sqliteTable(
 		amenitiesJson: text("amenities_json").notNull().default(sql`'{}'`),
 		/** Risk and data-quality flags, JSON array. */
 		flagsJson: text("flags_json").notNull().default(sql`'[]'`),
+		/**
+		 * Valuation evidence behind the stored fair value: the condition/quality
+		 * correction (percentage, whether it was known, the named reasons) and the
+		 * comparable statistics (median time factor, index span, asking-to-
+		 * transaction ratio). `{}` for rows scored before the column existed.
+		 */
+		valuationJson: text("valuation_json").notNull().default(sql`'{}'`),
 		computedAt: integer("computed_at", { mode: "timestamp" })
 			.notNull()
 			.default(sql`(unixepoch())`),

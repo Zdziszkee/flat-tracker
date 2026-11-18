@@ -100,6 +100,9 @@ bun run validate:powiats  # dataset sanity: counts, city centres, overlaps
 bun run validate:finwire  # finwire page parsing + chain-index math
 bun run validate:upside   # forward-looking upside/risk math
 bun run validate:scoring  # alert-score rules, gates and stored-alert invariants
+bun run validate:planned-stations # fast-rail station + centre-zone anchor datasets
+bun run validate:quality  # condition/quality correction and asking-vs-transaction ratio
+bun run measure:asking-ratio # audit the measured asking-to-transaction ratio table
 bun run extract:facts     # LLM listing facts (heating, building style, condition) from prose
 bun run validate:facts    # extraction prompt, parsing and normalization rules
 bun run build:forecasts   # refresh data/forecasts/models.json (price/rent/STR paths + calibrated bands)
@@ -405,24 +408,60 @@ the component breakdown and rationale.
   scaled by the remaining headroom, `* min(1, (100 - weighted) / 30)`, so a
   strong offer still gains without every top candidate collapsing into the
   same 100; the score stays strictly increasing in the weighted
-  components. This changes stored scores, hence `SCORE_VERSION` 2027.13
+  components. Fast rail and the centre zone add their own points (see the
+  next bullets). This changes stored scores, hence `SCORE_VERSION` 2027.14
   (a re-score is required).
+- **Fast-rail and centre-zone layers decide who can alert**:
+  `src/data/fast-rail-stations.ts` lists the 200 km/h+ stations in both
+  regions (Kraków Główny, Katowice, Zawiercie, Tychy, Bielsko-Biała Główna,
+  Gliwice) with the services each carries; the documented planned KDP call
+  (2035+, via the modernised CMK) is `kdp_2035` on Kraków Główny, Katowice
+  and Zawiercie. 160 km/h corridors are deliberately excluded. Plots and
+  houses must sit inside 3 km of one of those stations (measured from the
+  listing point) or fail as `outside_fast_rail`.
+  `src/lib/scoring/centre-zone.ts` holds explicit anchors for the target
+  Kraków neighbourhoods (Rynek Główny, Kazimierz, Podgórze, Krowodrza,
+  Grzegórzki, Dębniki, Zwierzyniec, Wola Justowska) plus the Katowice Rynek;
+  flats must sit inside 4 km of one of them (`outside_centre_zone`). Both
+  datasets are pinned by `bun run validate:planned-stations` and appear on
+  /sources as the static `planned-rail` layer. Coordinates are the OSM
+  station nodes the map already draws; a wrong entry can only shift a score.
 - **Eligibility is a hard filter before the discount gate**: flats must not
-  be large-panel blocks and must prove district heating or a heat pump (gas,
+  be large-panel blocks, must prove district heating or a heat pump (gas,
   electric, coal and oil fail as `non_municipal_heating`, an ad that never
-  says fails as `no_heating_evidence`); plots need building evidence (a
-  building plot type or built-up land-use class, a WZ decision or a zoning
-  plan); an estimate built from fewer than three comps fails. The score row
-  stores `eligible` and the leaderboard filters on it, so a rejected offer
-  stays in the table and is rarely alerted. Plot forest/lake points are
-  tiered: on or next to the parcel (radius + 20 m) three times the base
-  value, within 3 km a third, beyond that nothing.
+  says fails as `no_heating_evidence`), must be a tenement or a pre-1945
+  building (`not_tenement` when proved modern, `no_tenement_evidence` when
+  unknown) and must sit in the centre zone. Plots AND houses need evidence
+  that something can still be built on the parcel: a building plot type or
+  built-up land-use class (B*, MN, MW, RM), a WZ decision, a zoning plan, or
+  the same evidence read from the ad by the extractor; a house on a parcel
+  with 60%+ building coverage fails as `parcel_overbuilt`. An estimate built
+  from fewer than three comps fails. The score row stores `eligible` and the
+  leaderboard filters on it, so a rejected offer stays in the table and is
+  rarely alerted. Plot forest/lake points are tiered: on or next to the
+  parcel (radius + 20 m) three times the base value, within 3 km a third,
+  beyond that nothing.
 - **Gates are evaluated independently** (`gateFailures`, first one kept as
   `gateReason`), which is what makes `fallback_eligible` possible: a flat
-  that failed *only* on `no_heating_evidence` fills a section that cannot
-  reach `ALERT_TOP_OFFERS` 25 with fully eligible offers. Fallbacks rank
-  below every eligible offer and the card marks them "Ogrzewanie
-  niepotwierdzone"; a gas/electric/coal/oil flat is never a fallback.
+  that failed *only* on `no_heating_evidence` or `no_tenement_evidence`
+  fills a section that cannot reach `ALERT_TOP_OFFERS` 25 with fully eligible
+  offers. Fallbacks rank below every eligible offer and the card marks them;
+  a gas/electric/coal/oil flat, or a flat proved to be in a modern block, is
+  never a fallback.
+- **Prose is read by the LLM, not by regexes**: the description-derived
+  heating, building style, tenement age, plot zoning/media and defect
+  evidence all come from `listing_facts` (`src/lib/llm/`, prompt v2). The
+  old regular expressions were removed in 2027.14 (they matched negations and
+  neighbourhood mentions), and `validate:scoring` now pins that a
+  description alone cannot satisfy the heating gate.
+- **The fair value carries two corrections** (`listing_scores.valuation_json`):
+  the time factor that brings each RCN comp to today through the chain-linked
+  index (nominal, so inflation is inside it) and the condition/quality
+  correction from `src/lib/valuation/quality-factor.ts` (balanced two-sided
+  deck, +-15% clamp, named reasons, neutral when no facts). Listing-only comp
+  sets are converted to the transaction level with a measured
+  asking-to-transaction ratio (`src/lib/valuation/asking-ratio.ts`,
+  `bun run measure:asking-ratio` audits it) rather than face value.
 - **/alerts always renders three fixed sections**, even when empty:
   Mieszkania, Domy z działką and Działki, fed by `/api/alerts` (latest
   alert date by default, optional `region`/`segment`/`date` filters). Rows

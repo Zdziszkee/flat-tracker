@@ -1,4 +1,6 @@
 import type { PropertyKind } from "#/lib/property-kind";
+import type { ValuationStatistics } from "#/lib/valuation/estimate-statistics";
+import type { QualityReason } from "#/lib/valuation/quality-factor";
 import type { UpsidePotential } from "#/lib/valuation/upside";
 import type { OfferForecastDto } from "#/types/forecast";
 
@@ -278,6 +280,8 @@ export interface ValuationComparable {
 	indexGeography: string | null;
 	indexFromPeriod: string | null;
 	indexToPeriod: string | null;
+	/** Asking-to-transaction ratio applied to a listing comp, when used. */
+	askingRatio?: number | null;
 }
 
 export interface ValuationCompSet {
@@ -321,6 +325,12 @@ export interface ValuationEstimate {
 		fromPeriod: string;
 		toPeriod: string;
 	} | null;
+	/** Condition/quality correction applied to the comparable median. */
+	qualityAdjustmentPct: number;
+	qualityAdjustmentKnown: boolean;
+	qualityAdjustmentReasons: QualityReason[];
+	/** Evidence behind the correction factors, for audit and the detail card. */
+	statistics: ValuationStatistics;
 	/** Forward-looking 12-month expectation; null when fair value is unusable. */
 	upside: UpsidePotential | null;
 }

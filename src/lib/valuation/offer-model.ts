@@ -5,7 +5,12 @@ import { db } from "#/db/index";
 import { priceIndexSeries } from "#/db/queries/price-indices";
 import { regionOf } from "#/db/region";
 import { listings, transactions } from "#/db/schema";
+import type { ScoredFacts } from "#/lib/llm/fact-access";
 import { propertyKindOf } from "#/lib/property-kind";
+import type { AskingRatio } from "#/lib/valuation/asking-ratio";
+import { askingToTransactionRatio } from "#/lib/valuation/asking-ratio";
+import { convertCompPrice } from "#/lib/valuation/comp-price";
+import { estimateStatistics } from "#/lib/valuation/estimate-statistics";
 import { externalCityFor } from "#/lib/valuation/external-city";
 import {
 	currentQuarter,
@@ -17,6 +22,7 @@ import {
 	timeAdjustment,
 	weightedQuantile,
 } from "#/lib/valuation/price-index";
+import { qualityAdjustment } from "#/lib/valuation/quality-factor";
 import type {
 	ValuationComparable,
 	ValuationCompSet,
@@ -43,6 +49,21 @@ export interface OfferForValuation {
 	market: string | null;
 	plotType: string | null;
 	kind: ValuationSegment;
+	/** Physical facts used by the condition/quality correction. */
+	facts?: ScoredFacts | null;
+	buildYear?: number | null;
+	buildingType?: string | null;
+	buildingMaterial?: string | null;
+	condition?: string | null;
+	hasElevator?: boolean | null;
+	floor?: string | null;
+	floorCount?: number | null;
+	landUseClass?: string | null;
+	zoningWz?: boolean | null;
+	zoningPlanCount?: number | null;
+	roadDistanceM?: number | null;
+	slopeDeg?: number | null;
+	floodRisk?: boolean | null;
 }
 
 interface RcnRow {
@@ -106,6 +127,8 @@ interface WorkingComp {
 	adjustedPriceM2: number;
 	weight: number;
 	indexSource: string | null;
+	/** Asking-to-transaction ratio applied to a listing comp. */
+	askingRatio: number | null;
 	indexGeography: string | null;
 	indexFromPeriod: string | null;
 	indexToPeriod: string | null;
@@ -420,6 +443,7 @@ function toComparable(comp: WorkingComp): ValuationComparable {
 		timeFactor: Math.round(comp.timeFactor * 1000) / 1000,
 		adjustedPriceM2: Math.round(comp.adjustedPriceM2),
 		indexSource: comp.indexSource,
+		askingRatio: comp.askingRatio,
 		indexGeography: comp.indexGeography,
 		indexFromPeriod: comp.indexFromPeriod,
 		indexToPeriod: comp.indexToPeriod,
@@ -492,6 +516,7 @@ function makeListingComp(
 	row: ListingRow,
 	offer: OfferForValuation,
 	nowSeconds: number,
+	askingRatio: number | null,
 ): WorkingComp | null {
 	if (row.pricePerM2 == null || row.areaM2 == null || row.areaM2 <= 0) {
 		return null;
@@ -512,6 +537,11 @@ function makeListingComp(
 			? haversineM(offer.lat, offer.lng, row.lat, row.lng)
 			: null;
 	const date = row.listedAt ?? row.firstSeenAt;
+	const converted = convertCompPrice({
+		source: "listing",
+		pricePerM2: row.pricePerM2,
+		askingRatio,
+	});
 	const comp: WorkingComp = {
 		id: `listing:${row.source}:${row.externalId}`,
 		source: "listing",
@@ -529,10 +559,11 @@ function makeListingComp(
 		region: null,
 		market: null,
 		distanceM,
-		timeFactor: 1,
-		adjustedPriceM2: row.pricePerM2,
+		timeFactor: converted.timeFactor,
+		adjustedPriceM2: converted.adjustedPriceM2,
 		weight: 0,
-		indexSource: null,
+		indexSource: converted.indexSource,
+		askingRatio: converted.indexSource == null ? null : askingRatio,
 		indexGeography: null,
 		indexFromPeriod: null,
 		indexToPeriod: null,
@@ -545,6 +576,7 @@ function makeListingComp(
 async function listingComps(
 	offer: OfferForValuation,
 	nowSeconds: number,
+	askingRatio: number | null,
 ): Promise<WorkingComp[]> {
 	const area = offer.areaM2 as number;
 	const [minM2, maxM2] = validM2(offer.kind);
@@ -592,7 +624,7 @@ async function listingComps(
 		.orderBy(desc(listings.scrapedAt))
 		.limit(400);
 	return rows
-		.map((row) => makeListingComp(row, offer, nowSeconds))
+		.map((row) => makeListingComp(row, offer, nowSeconds, askingRatio))
 		.filter((comp): comp is WorkingComp => comp != null)
 		.filter((comp) => matchesOffer(comp, offer, 2));
 }
@@ -717,6 +749,7 @@ function toRcnComp(
 		adjustedPriceM2: row.pricePerM2,
 		weight: 0,
 		indexSource: null,
+		askingRatio: null,
 		indexGeography: null,
 		indexFromPeriod: null,
 		indexToPeriod: null,
@@ -793,7 +826,9 @@ async function adjustComps(
 function indexSummary(
 	comps: readonly WorkingComp[],
 ): ValuationEstimate["index"] {
-	const withIndex = comps.filter((comp) => comp.indexSource != null);
+	const withIndex = comps.filter(
+		(comp) => comp.source === "rcn" && comp.indexSource != null,
+	);
 	const first = withIndex.sort((a, b) => b.weight - a.weight)[0];
 	if (!first) return null;
 	return {
@@ -877,11 +912,17 @@ export async function estimateSaleValue(
 	const asOfPeriod = currentQuarter(asOf);
 	const rcn = await gatherRcnComps(offer, nowSeconds);
 	let comps = await adjustComps(rcn, asOfPeriod);
+	let asking: AskingRatio | null = null;
 	if (
 		options.includeListings !== false &&
 		comps.filter((comp) => comp.source === "rcn").length < 3
 	) {
-		const fallback = await listingComps(offer, nowSeconds);
+		const offerRegion =
+			offer.lat != null && offer.lng != null
+				? regionOf(offer.lat, offer.lng)
+				: null;
+		asking = await askingToTransactionRatio(offer.kind, offerRegion);
+		const fallback = await listingComps(offer, nowSeconds, asking.ratio);
 		const existing = new Set(comps.map((comp) => comp.id));
 		comps = [...comps, ...fallback.filter((comp) => !existing.has(comp.id))];
 	}
@@ -891,9 +932,29 @@ export async function estimateSaleValue(
 	comps = comps.sort((a, b) => b.weight - a.weight).slice(0, 140);
 	const overall = stats(comps);
 	if (!overall) return { estimate: null, reason: "insufficient_comps" };
-	const fairM2 = overall.medianM2;
-	const lowM2 = Math.min(overall.p25M2, fairM2);
-	const highM2 = Math.max(overall.p75M2, fairM2);
+	const quality = qualityAdjustment({
+		segment: offer.kind,
+		facts: offer.facts ?? null,
+		buildYear: offer.buildYear,
+		buildingType: offer.buildingType,
+		buildingMaterial: offer.buildingMaterial,
+		condition: offer.condition,
+		hasElevator: offer.hasElevator,
+		floor: offer.floor,
+		floorCount: offer.floorCount,
+		plotType: offer.plotType,
+		landUseClass: offer.landUseClass,
+		zoningWz: offer.zoningWz,
+		zoningPlanCount: offer.zoningPlanCount,
+		roadDistanceM: offer.roadDistanceM,
+		slopeDeg: offer.slopeDeg,
+		floodRisk: offer.floodRisk,
+		asOfYear: asOf.getUTCFullYear(),
+	});
+	const qualityFactor = 1 + quality.pct / 100;
+	const fairM2 = overall.medianM2 * qualityFactor;
+	const lowM2 = Math.min(overall.p25M2, overall.medianM2) * qualityFactor;
+	const highM2 = Math.max(overall.p75M2, overall.medianM2) * qualityFactor;
 	const offerM2 = compareToOffer ? offer.pricePerM2 : null;
 	const overUnderPct =
 		compareToOffer && offerM2 != null && fairM2 > 0
@@ -931,6 +992,10 @@ export async function estimateSaleValue(
 			listing: stats(comps.filter((comp) => comp.set === "listing")),
 		},
 		index,
+		qualityAdjustmentPct: quality.pct,
+		qualityAdjustmentKnown: quality.known,
+		qualityAdjustmentReasons: quality.reasons,
+		statistics: estimateStatistics(comps, asking, nowSeconds),
 		upside,
 	};
 	return { estimate, reason: null };

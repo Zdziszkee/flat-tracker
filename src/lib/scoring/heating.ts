@@ -1,19 +1,25 @@
 /**
  * Heating evidence for offer scoring.
  *
- * Portals almost never publish a structured heating field for the bulk
- * sources: of ~11.6k visible flats only a few hundred carry
- * `listings.heating_type`, and the otodom detail attribute
- * (`features.heating = "urban" | "gas" | ...`) covers only detail-crawled
- * rows because the CDN rate-limits bulk detail fetches. Most sellers do
- * state the heating in the description ("ogrzewanie miejskie", "MPEC",
- * "piec gazowy"), so the classifier reads all three sources and returns one
- * kind plus the phrase it matched. The matched phrase is what the property
- * component scores, so a description claim and a structured attribute are
- * weighted identically.
+ * Portals almost never publish a heating field for the bulk sources: of
+ * ~11.6k visible flats only a few hundred carry `listings.heating_type`, and
+ * the otodom detail attribute (`features.heating = "urban" | "gas" | ...`)
+ * covers only detail-crawled rows because the CDN rate-limits bulk detail
+ * fetches. The descriptions do state it ("ogrzewanie miejskie", "MPEC",
+ * "piec gazowy"), but prose is read by the LLM fact extractor
+ * (`src/lib/llm/`), not by regexes here: a pattern list produced false
+ * positives ("bez ogrzewania miejskiego", "w sąsiedztwie miejskiego basenu")
+ * and could not tell a heat pump mention from a recommendation to install one.
  *
- * The classifier never guesses: nothing found means `unknown`, which fails
- * the municipal-heating gate rather than counting as a pass.
+ * Resolution order, most authoritative first:
+ *   1. `listings.heating_type` (portal detail attribute, or the LLM value the
+ *      extractor promoted into the column)
+ *   2. `features.heating` (portal attribute blob)
+ *   3. the LLM's `heating` fact for this listing, read straight from
+ *      `listing_facts` so a row the column promotion has not reached yet still
+ *      counts
+ * Nothing found means `unknown`, which fails the municipal-heating gate rather
+ * than counting as a pass.
  */
 import { HEATING_DELTAS } from "./config";
 
@@ -26,7 +32,7 @@ export type HeatingKind =
 	| "oil"
 	| "unknown";
 
-export type HeatingSource = "column" | "features" | "description" | "none";
+export type HeatingSource = "column" | "features" | "facts" | "none";
 
 export interface HeatingEvidence {
 	kind: HeatingKind;
@@ -48,83 +54,45 @@ const KIND_DELTA: Record<HeatingKind, number> = {
 };
 
 /**
- * Free-text patterns, most specific first. Prose mentions are matched with
- * a negation guard below, so "bez ogrzewania miejskiego" cannot pass as
- * municipal heating.
+ * Structured values are short portal codes, human labels or the extractor's
+ * enum names, so the match stays loose. `district` covers "miejskie", "MPEC",
+ * "sieć miejska", the English "urban"/"district", the extractor's
+ * `district`, and the Polish enum aliases it normalizes to.
  */
-const TEXT_PATTERNS: ReadonlyArray<readonly [HeatingKind, RegExp]> = [
-	["heatPump", /pomp\S*\s*ciep[łl]a|\bheat[ _-]?pump/iu],
-	[
-		"district",
-		/\bmpec\b|ciep[łl]o\s+systemowe|systemowe\s+ciep[łl]o|sie[ćc]\s+miejska|miejsk\w*\s+sie[ćc]\s+ciep[łl]ownicz|miejskie\s+ogrzewanie|ogrzewanie[\s:–-]+(?:z\s+)?(?:sieci\s+)?miejsk|do\s+sieci\s+miejskiej|z\s+sieci\s+miejskiej|elektrociep[łl]own|district[ _-]?heating|\burban\b/iu,
-	],
-	[
-		"electric",
-		/ogrzewanie\s+elektryczn|elektryczn\w*\s+ogrzewanie|grzejnik\w*\s+elektryczn|\belectric(?:al)?\b/iu,
-	],
-	[
-		"gas",
-		/ogrzewanie\s+gazow|piec\s+gazow|kocio[łl]\w*\s+gazow|gazow\w*\s+ogrzewanie|\bgas\b/iu,
-	],
-	[
-		"coalWood",
-		/ogrzewanie\s+w[ęe]glow|piec\s+w[ęe]glow|kocio[łl]\w*\s+w[ęe]glow|kominek|drewn\w*|\bcoal\b|\bwood\b/iu,
-	],
-	["oil", /olejow\w*|\boil\b/iu],
-];
-
-/** Structured values are short codes or labels, so the match stays loose. */
-function kindFromValue(value: string): HeatingKind {
+export function heatingKindFromValue(value: string): HeatingKind {
 	const text = value.toLowerCase();
 	if (/pompa|heat[ _-]?pump/u.test(text)) return "heatPump";
-	if (/miejsk|urban|district|sie[ćc]|c\.?o\./u.test(text)) return "district";
+	if (
+		/miejsk|urban|district|sie[ćc]\s*miejsk|mpec|systemow|c\.?o\./u.test(text)
+	) {
+		return "district";
+	}
 	if (/elektr|electric/u.test(text)) return "electric";
 	if (/gaz|gas/u.test(text)) return "gas";
-	if (/w[ęe]g|coal|drewno|wood/u.test(text)) return "coalWood";
+	if (/w[ęe]g|coal|drewno|wood|kominek/u.test(text)) return "coalWood";
 	if (/olej|oil/u.test(text)) return "oil";
 	return "unknown";
-}
-
-const NEGATION = /(?:^|\W)(?:bez|brak|nie\s+ma|niedost[ęe]pn\w*)\s*$/iu;
-
-/**
- * First positive mention in prose. A negated mention ("brak ogrzewania
- * miejskiego") is skipped, not counted either way: it rules district
- * heating out but does not prove a different kind.
- */
-export function heatingKindFromText(
-	text: string,
-): { kind: HeatingKind; text: string } | null {
-	const haystack = text.toLowerCase();
-	for (const [kind, pattern] of TEXT_PATTERNS) {
-		const global = new RegExp(pattern.source, "giu");
-		for (const match of haystack.matchAll(global)) {
-			const index = match.index ?? 0;
-			const before = haystack.slice(Math.max(0, index - 24), index);
-			if (NEGATION.test(before)) continue;
-			return { kind, text: match[0] };
-		}
-	}
-	return null;
 }
 
 export interface HeatingSources {
 	heatingType?: string | null;
 	featuresHeating?: string | null;
-	title?: string | null;
-	description?: string | null;
+	/** LLM-extracted heating fact (`listing_facts.facts_json.heating`). */
+	factsHeating?: string | null;
 }
 
 /**
  * Resolve one kind from the structured column, the portal attribute blob and
- * the prose, in that order of authority.
+ * the LLM fact, in that order of authority. The first non-empty source wins,
+ * even when it resolves to `unknown`: a portal field that says "none" must not
+ * be overridden by a model reading of the ad text.
  */
 export function resolveHeatingEvidence(
 	sources: HeatingSources,
 ): HeatingEvidence {
 	const structured = sources.heatingType?.trim();
 	if (structured) {
-		const kind = kindFromValue(structured);
+		const kind = heatingKindFromValue(structured);
 		return {
 			kind,
 			text: structured,
@@ -134,7 +102,7 @@ export function resolveHeatingEvidence(
 	}
 	const attribute = sources.featuresHeating?.trim();
 	if (attribute) {
-		const kind = kindFromValue(attribute);
+		const kind = heatingKindFromValue(attribute);
 		return {
 			kind,
 			text: attribute,
@@ -142,15 +110,10 @@ export function resolveHeatingEvidence(
 			delta: KIND_DELTA[kind],
 		};
 	}
-	const prose = `${sources.title ?? ""}\n${sources.description ?? ""}`;
-	const match = heatingKindFromText(prose);
-	if (match) {
-		return {
-			kind: match.kind,
-			text: match.text,
-			source: "description",
-			delta: KIND_DELTA[match.kind],
-		};
+	const fact = sources.factsHeating?.trim();
+	if (fact) {
+		const kind = heatingKindFromValue(fact);
+		return { kind, text: fact, source: "facts", delta: KIND_DELTA[kind] };
 	}
 	return { kind: "unknown", text: null, source: "none", delta: 0 };
 }

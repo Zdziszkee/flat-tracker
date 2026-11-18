@@ -1,72 +1,334 @@
 /**
- * Typed readers over the extra facts prompt v2 extracts from prose.
+ * Typed reader over the model-extracted facts prompt v2 stores in
+ * `listing_facts.facts_json`.
  *
- * `listing_facts.facts_json` holds the whole answer, including fields the
- * listing table has no column for (plot utilities, road access, defects,
- * monthly costs, the setting around a plot). Scoring and valuation should
- * not parse that JSON themselves: this module owns the shape and gives them
- * small, named projections.
+ * Scoring and valuation should not parse that JSON themselves: this module
+ * owns the shape and exposes one small projection (`ScoredFacts`) with the
+ * facts those layers reason about, plus the id-based loader they call once
+ * per run.
  *
- * The readers are synchronous and memoized in-process. A scoring run calls
- * `preloadListingFacts(ids)` once (one chunked query), then every projection
- * is a map lookup; `clearFactCache()` at the start of a run makes a changed
- * corpus visible to a long-lived process.
- *
- * Pure projections (`...Of(facts)`) are exported next to the id-based
- * readers so `validate:facts` can pin the rules without a database, and so
- * a caller that already holds the facts never touches the cache.
+ * Mapping notes:
+ * - `heating` keeps the extraction vocabulary; `FactsHeating` is the same
+ *   set minus "unknown", which normalization already turns into null.
+ * - `buildingStyle` folds the extraction's finer `buildingType` into the
+ *   five styles scoring distinguishes. A block whose technology is prefab
+ *   (wielka płyta) becomes `largePanel`; detached/semi/townhouse are houses.
+ * - `plot` is present only when the text carries plot evidence. Utilities
+ *   alone do not make a flat a plot.
+ * - A row that projects to nothing meaningful is dropped, so a caller can
+ *   treat "no entry" as "no facts".
  */
 import { inArray } from "drizzle-orm";
 
 import { listingFacts } from "#/db/schema";
-import {
-	type FactContext,
-	type ListingFacts,
-	type MonthlyCosts,
-	normalizeFacts,
-	type PlotUtilities,
-} from "./listing-facts.ts";
+import { type ListingFacts, normalizeFacts } from "./listing-facts.ts";
 
-const factCache = new Map<number, ListingFacts | null>();
+export type FactsHeating =
+	| "district"
+	| "heatPump"
+	| "gas"
+	| "electric"
+	| "coalWood"
+	| "oil";
 
-/** Drop every memoized row. Call at the start of a scoring/valuation run. */
-export function clearFactCache(): void {
-	factCache.clear();
+export type FactsBuildingStyle =
+	| "tenement"
+	| "block"
+	| "largePanel"
+	| "apartment"
+	| "house";
+
+export interface FactsPlot {
+	type: string | null;
+	media: {
+		power: boolean;
+		water: boolean;
+		gas: boolean;
+		sewer: boolean;
+		internet: boolean;
+	};
+	mediaCount: number;
+	roadAccess: "public" | "private" | "none" | null;
+	wz: boolean | null;
+	mpzpPurpose: string | null;
+	mpzpSymbol: string | null;
+	shape: "regular" | "irregular" | "narrow" | null;
+	dimensions: string | null;
+	slope: "flat" | "gentle" | "steep" | null;
 }
 
-/** Rows currently memoized (loaded or explicitly absent). */
-export function factCacheSize(): number {
-	return factCache.size;
+export interface FactsContext {
+	lake: boolean;
+	river: boolean;
+	forest: boolean;
+	mountains: boolean;
+	view: string | null;
 }
 
-/** Parse a stored `facts_json` value; malformed JSON yields null. */
-export function parseFactsJson(
-	json: string | null | undefined,
-): ListingFacts | null {
-	if (!json) return null;
-	try {
-		return normalizeFacts(JSON.parse(json));
-	} catch {
-		return null;
+export interface ScoredFacts {
+	heating: FactsHeating | null;
+	buildingStyle: FactsBuildingStyle | null;
+	condition: "excellent" | "veryGood" | "good" | "toRenovation" | null;
+	buildYear: number | null;
+	floor: number | null;
+	floorCount: number | null;
+	technology: string | null;
+	insulation: boolean | null;
+	floorHeating: boolean | null;
+	heatPump: boolean | null;
+	recuperation: boolean | null;
+	airConditioning: boolean | null;
+	photovoltaics: boolean | null;
+	parkingSpots: number | null;
+	plotAreaM2: number | null;
+	gardenM2: number | null;
+	legalStatus:
+		| "own"
+		| "cooperative"
+		| "perpetual_usufruct"
+		| "share"
+		| "unknown"
+		| null;
+	encumbrances: string[];
+	defects: string[];
+	tenanted: boolean | null;
+	plot: FactsPlot | null;
+	context: FactsContext | null;
+	monthlyCosts: {
+		rent: number | null;
+		funduszRemontowy: number | null;
+		advance: number | null;
+		mediaIncluded: boolean | null;
+		agencyFeePct: number | null;
+	} | null;
+}
+
+const HEATING: readonly FactsHeating[] = [
+	"district",
+	"heatPump",
+	"gas",
+	"electric",
+	"coalWood",
+	"oil",
+];
+
+const LEGAL: readonly NonNullable<ScoredFacts["legalStatus"]>[] = [
+	"own",
+	"cooperative",
+	"perpetual_usufruct",
+	"share",
+	"unknown",
+];
+
+const CONDITIONS: readonly NonNullable<ScoredFacts["condition"]>[] = [
+	"excellent",
+	"veryGood",
+	"good",
+	"toRenovation",
+];
+
+const CONDITION_MAP: Record<string, NonNullable<ScoredFacts["condition"]>> = {
+	excellent: "excellent",
+	very_good: "veryGood",
+	good: "good",
+	to_renovation: "toRenovation",
+};
+
+const ROAD_ACCESS: readonly NonNullable<FactsPlot["roadAccess"]>[] = [
+	"public",
+	"private",
+	"none",
+];
+
+const SHAPES: readonly NonNullable<FactsPlot["shape"]>[] = [
+	"regular",
+	"irregular",
+	"narrow",
+];
+
+const SLOPES: readonly NonNullable<FactsPlot["slope"]>[] = [
+	"flat",
+	"gentle",
+	"steep",
+];
+
+function pick<T extends string>(
+	value: string | null | undefined,
+	allowed: readonly T[],
+): T | null {
+	if (typeof value !== "string") return null;
+	return (allowed as readonly string[]).includes(value) ? (value as T) : null;
+}
+
+function heatingOf(facts: ListingFacts): FactsHeating | null {
+	return pick(facts.heating, HEATING);
+}
+
+function styleOf(facts: ListingFacts): FactsBuildingStyle | null {
+	// A direct wielka płyta answer wins over the derived guess.
+	if (facts.largePanel === true) return "largePanel";
+	switch (facts.buildingType) {
+		case "tenement":
+			return "tenement";
+		case "block":
+			return facts.technology === "prefab" ? "largePanel" : "block";
+		case "apartment":
+			return "apartment";
+		case "house":
+		case "detached":
+		case "semi_detached":
+		case "townhouse":
+			return "house";
+		default:
+			return null;
 	}
 }
 
+function conditionOf(facts: ListingFacts): ScoredFacts["condition"] {
+	if (!facts.condition) return null;
+	return pick(CONDITION_MAP[facts.condition], CONDITIONS);
+}
+
+function plotOf(facts: ListingFacts): FactsPlot | null {
+	const hasPlotEvidence =
+		facts.plotType != null ||
+		facts.roadAccess != null ||
+		facts.mpzpSymbol != null ||
+		facts.mpzpPurpose != null ||
+		facts.buildingPermitWz != null ||
+		facts.plotShape != null ||
+		facts.plotDimensions != null ||
+		facts.plotSlope != null ||
+		facts.fencing != null;
+	if (!hasPlotEvidence) return null;
+	const media = {
+		power: facts.utilities?.power ?? false,
+		water: facts.utilities?.water ?? false,
+		gas: facts.utilities?.gas ?? false,
+		sewer: facts.utilities?.sewer ?? false,
+		internet: facts.utilities?.internet ?? false,
+	};
+	const mediaCount = Object.values(media).filter(Boolean).length;
+	return {
+		type: facts.plotType,
+		media,
+		mediaCount,
+		roadAccess: pick(facts.roadAccess, ROAD_ACCESS),
+		wz: facts.buildingPermitWz,
+		mpzpPurpose: facts.mpzpPurpose,
+		mpzpSymbol: facts.mpzpSymbol,
+		shape: pick(facts.plotShape, SHAPES),
+		dimensions: facts.plotDimensions,
+		slope: pick(facts.plotSlope, SLOPES),
+	};
+}
+
+function contextOf(facts: ListingFacts): FactsContext | null {
+	const context = facts.context;
+	if (!context) return null;
+	return {
+		lake: context.lake,
+		river: context.river,
+		forest: context.forest,
+		mountains: context.mountains,
+		view: context.view,
+	};
+}
+
+/** Whether the projection says anything at all. */
+function hasContent(facts: ScoredFacts): boolean {
+	const scalars = [
+		facts.heating,
+		facts.buildingStyle,
+		facts.condition,
+		facts.buildYear,
+		facts.floor,
+		facts.floorCount,
+		facts.technology,
+		facts.insulation,
+		facts.floorHeating,
+		facts.heatPump,
+		facts.recuperation,
+		facts.airConditioning,
+		facts.photovoltaics,
+		facts.parkingSpots,
+		facts.plotAreaM2,
+		facts.gardenM2,
+		facts.legalStatus,
+		facts.tenanted,
+		facts.plot,
+		facts.context,
+		facts.monthlyCosts,
+	];
+	if (scalars.some((value) => value != null)) return true;
+	return facts.encumbrances.length > 0 || facts.defects.length > 0;
+}
+
 /**
- * Load facts for the given listing ids in chunks. Ids without a row are
- * memoized as null so a second preload does not query them again.
- * Returns how many ids were newly looked up.
+ * Project a raw `facts_json` object (or a freshly normalized answer) onto
+ * the scoring view. Malformed input yields null.
  */
-export async function preloadListingFacts(
+export function scoredFactsOf(
+	raw: Record<string, unknown> | null | undefined,
+): ScoredFacts | null {
+	if (!raw) return null;
+	const facts = normalizeFacts(raw);
+	if (!facts) return null;
+	const scored: ScoredFacts = {
+		heating: heatingOf(facts),
+		buildingStyle: styleOf(facts),
+		condition: conditionOf(facts),
+		buildYear: facts.buildYear,
+		floor: facts.floor,
+		floorCount: facts.floorCount,
+		technology: facts.technology,
+		insulation: facts.insulation,
+		floorHeating: facts.floorHeating,
+		heatPump: facts.heatPump,
+		recuperation: facts.recuperation,
+		airConditioning: facts.airConditioning,
+		photovoltaics: facts.photovoltaics,
+		parkingSpots: facts.parkingSpots,
+		plotAreaM2: facts.plotAreaM2,
+		gardenM2: facts.gardenM2,
+		legalStatus: pick(facts.legalStatus, LEGAL),
+		encumbrances: facts.encumbrances ?? [],
+		defects: facts.defects ?? [],
+		tenanted: facts.tenanted,
+		plot: plotOf(facts),
+		context: contextOf(facts),
+		monthlyCosts: facts.monthlyCosts
+			? {
+					rent: facts.monthlyCosts.rent,
+					funduszRemontowy: facts.monthlyCosts.funduszRemontowy,
+					advance: facts.monthlyCosts.advance,
+					mediaIncluded: facts.monthlyCosts.mediaIncluded,
+					agencyFeePct: facts.monthlyCosts.agencyFeePct,
+				}
+			: null,
+	};
+	return hasContent(scored) ? scored : null;
+}
+
+/** Ids per query: SQLite's bound-parameter limit is ~900, so stay well under. */
+const ID_CHUNK = 500;
+
+/**
+ * Load the parsed facts for the given listings. Ids without a row (or with a
+ * row that no longer parses) are simply absent from the map. Never throws on
+ * a malformed row.
+ */
+export async function loadScoredFacts(
 	ids: readonly number[],
-): Promise<number> {
+): Promise<Map<number, ScoredFacts>> {
 	const wanted = [
 		...new Set(ids.filter((id) => Number.isInteger(id) && id > 0)),
 	];
-	const missing = wanted.filter((id) => !factCache.has(id));
-	if (missing.length === 0) return 0;
+	const out = new Map<number, ScoredFacts>();
+	if (wanted.length === 0) return out;
 	const { db } = await import("#/db/index");
-	for (let start = 0; start < missing.length; start += 500) {
-		const chunk = missing.slice(start, start + 500);
+	for (let start = 0; start < wanted.length; start += ID_CHUNK) {
+		const chunk = wanted.slice(start, start + ID_CHUNK);
 		const rows = await db
 			.select({
 				listingId: listingFacts.listingId,
@@ -74,245 +336,18 @@ export async function preloadListingFacts(
 			})
 			.from(listingFacts)
 			.where(inArray(listingFacts.listingId, chunk));
-		const found = new Set<number>();
 		for (const row of rows) {
-			found.add(row.listingId);
-			factCache.set(row.listingId, parseFactsJson(row.factsJson));
-		}
-		for (const id of chunk) {
-			if (!found.has(id)) factCache.set(id, null);
+			try {
+				const parsed: unknown = JSON.parse(row.factsJson);
+				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+					continue;
+				}
+				const facts = scoredFactsOf(parsed as Record<string, unknown>);
+				if (facts) out.set(row.listingId, facts);
+			} catch {
+				// A corrupt row is skipped, not fatal for the batch.
+			}
 		}
 	}
-	return missing.length;
-}
-
-/** Memoized facts for one listing, or null when absent/not preloaded. */
-export function factsFor(id: number): ListingFacts | null {
-	return factCache.get(id) ?? null;
-}
-
-/** Whether `preloadListingFacts` has already seen this id. */
-export function factsLoaded(id: number): boolean {
-	return factCache.has(id);
-}
-
-// --- Plot media ---------------------------------------------------------
-
-export interface PlotMediaFacts {
-	power: boolean | null;
-	water: boolean | null;
-	gas: boolean | null;
-	sewer: boolean | null;
-	internet: boolean | null;
-	/** Utilities the text says are connected (true, not unknown). */
-	connectedCount: number;
-	anyConnected: boolean;
-	/** Power + water + (sewer or gas): the usual "media pełne" claim. */
-	coreConnected: boolean;
-}
-
-export function plotMediaOf(
-	facts: ListingFacts | null | undefined,
-): PlotMediaFacts {
-	const utilities: PlotUtilities | null = facts?.utilities ?? null;
-	const flags = [
-		utilities?.power,
-		utilities?.water,
-		utilities?.gas,
-		utilities?.sewer,
-		utilities?.internet,
-	];
-	const connectedCount = flags.filter((flag) => flag === true).length;
-	return {
-		power: utilities?.power ?? null,
-		water: utilities?.water ?? null,
-		gas: utilities?.gas ?? null,
-		sewer: utilities?.sewer ?? null,
-		internet: utilities?.internet ?? null,
-		connectedCount,
-		anyConnected: connectedCount > 0,
-		coreConnected:
-			utilities?.power === true &&
-			utilities?.water === true &&
-			(utilities?.sewer === true || utilities?.gas === true),
-	};
-}
-
-export function plotMediaFacts(id: number): PlotMediaFacts {
-	return plotMediaOf(factsFor(id));
-}
-
-// --- Plot access and buildability --------------------------------------
-
-const ACCESS_ROADS = new Set(["asphalt", "paved", "gravel"]);
-
-export interface PlotAccessFacts {
-	roadAccess: string | null;
-	roadPublic: boolean | null;
-	mpzpSymbol: string | null;
-	mpzpPurpose: string | null;
-	buildingPermitWz: boolean | null;
-	plotShape: string | null;
-	plotDimensions: string | null;
-	plotSlope: string | null;
-	fencing: boolean | null;
-	mediaConnected: boolean;
-	hasPublicAccess: boolean;
-	hasPlanEvidence: boolean;
-	/** Any LLM evidence that the parcel can be built on. */
-	buildableEvidence: boolean;
-}
-
-export function plotAccessOf(
-	facts: ListingFacts | null | undefined,
-): PlotAccessFacts {
-	const roadAccess = facts?.roadAccess ?? null;
-	const roadPublic = facts?.roadPublic ?? null;
-	const mediaConnected = plotMediaOf(facts).anyConnected;
-	const hasPublicAccess =
-		roadPublic === true ||
-		(roadPublic !== false &&
-			roadAccess != null &&
-			ACCESS_ROADS.has(roadAccess));
-	const hasPlanEvidence =
-		facts?.buildingPermitWz === true ||
-		(facts?.mpzpSymbol != null && facts.mpzpSymbol.length > 0) ||
-		facts?.mpzpPurpose != null;
-	return {
-		roadAccess,
-		roadPublic,
-		mpzpSymbol: facts?.mpzpSymbol ?? null,
-		mpzpPurpose: facts?.mpzpPurpose ?? null,
-		buildingPermitWz: facts?.buildingPermitWz ?? null,
-		plotShape: facts?.plotShape ?? null,
-		plotDimensions: facts?.plotDimensions ?? null,
-		plotSlope: facts?.plotSlope ?? null,
-		fencing: facts?.fencing ?? null,
-		mediaConnected,
-		hasPublicAccess,
-		hasPlanEvidence,
-		buildableEvidence: mediaConnected || hasPublicAccess || hasPlanEvidence,
-	};
-}
-
-export function plotAccessFacts(id: number): PlotAccessFacts {
-	return plotAccessOf(factsFor(id));
-}
-
-// --- Condition / quality signals ---------------------------------------
-
-export interface ConditionSignals {
-	condition: string | null;
-	buildingType: string | null;
-	buildingMaterial: string | null;
-	buildYear: number | null;
-	technology: string | null;
-	insulation: boolean | null;
-	windows: string | null;
-	floorHeating: boolean | null;
-	heatPump: boolean | null;
-	recuperation: boolean | null;
-	ac: boolean | null;
-	pv: boolean | null;
-	kitchen: string | null;
-	exposure: string | null;
-	legalStatus: string | null;
-	tenanted: boolean | null;
-	monthlyCosts: MonthlyCosts | null;
-	defects: string[];
-	encumbrances: string[];
-	defectCount: number;
-}
-
-export function conditionOf(
-	facts: ListingFacts | null | undefined,
-): ConditionSignals {
-	const defects = facts?.defects ?? [];
-	const encumbrances = facts?.encumbrances ?? [];
-	return {
-		condition: facts?.condition ?? null,
-		buildingType: facts?.buildingType ?? null,
-		buildingMaterial: facts?.buildingMaterial ?? null,
-		buildYear: facts?.buildYear ?? null,
-		technology: facts?.technology ?? null,
-		insulation: facts?.insulation ?? null,
-		windows: facts?.windows ?? null,
-		floorHeating: facts?.floorHeating ?? null,
-		heatPump: facts?.heatPump ?? null,
-		recuperation: facts?.recuperation ?? null,
-		ac: facts?.ac ?? null,
-		pv: facts?.pv ?? null,
-		kitchen: facts?.kitchen ?? null,
-		exposure: facts?.exposure ?? null,
-		legalStatus: facts?.legalStatus ?? null,
-		tenanted: facts?.tenanted ?? null,
-		monthlyCosts: facts?.monthlyCosts ?? null,
-		defects,
-		encumbrances,
-		defectCount: defects.length + encumbrances.length,
-	};
-}
-
-export function conditionSignals(id: number): ConditionSignals {
-	return conditionOf(factsFor(id));
-}
-
-/** Named risks for the "Ryzyka" line: defects first, then encumbrances. */
-export function defectListOf(facts: ListingFacts | null | undefined): string[] {
-	return [...(facts?.defects ?? []), ...(facts?.encumbrances ?? [])];
-}
-
-export function defectList(id: number): string[] {
-	return defectListOf(factsFor(id));
-}
-
-/** Exact monthly costs when the ad quotes them. */
-export function monthlyCostOf(
-	facts: ListingFacts | null | undefined,
-): MonthlyCosts | null {
-	return facts?.monthlyCosts ?? null;
-}
-
-export function monthlyCostFacts(id: number): MonthlyCosts | null {
-	return monthlyCostOf(factsFor(id));
-}
-
-// --- Setting around a plot or house ------------------------------------
-
-export interface ContextFacts {
-	lake: boolean | null;
-	river: boolean | null;
-	forest: boolean | null;
-	mountains: boolean | null;
-	view: boolean | null;
-	/** Number of settings the text explicitly affirms. */
-	settingCount: number;
-	hasSetting: boolean;
-}
-
-export function contextOf(
-	facts: ListingFacts | null | undefined,
-): ContextFacts {
-	const context: FactContext | null = facts?.context ?? null;
-	const flags = [
-		context?.lake,
-		context?.river,
-		context?.forest,
-		context?.mountains,
-		context?.view,
-	];
-	const settingCount = flags.filter((flag) => flag === true).length;
-	return {
-		lake: context?.lake ?? null,
-		river: context?.river ?? null,
-		forest: context?.forest ?? null,
-		mountains: context?.mountains ?? null,
-		view: context?.view ?? null,
-		settingCount,
-		hasSetting: settingCount > 0,
-	};
-}
-
-export function contextFacts(id: number): ContextFacts {
-	return contextOf(factsFor(id));
+	return out;
 }

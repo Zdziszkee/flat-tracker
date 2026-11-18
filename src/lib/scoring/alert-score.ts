@@ -7,19 +7,23 @@
  * never reduce that component.
  */
 
+import type { ScoredFacts } from "#/lib/llm/fact-access";
 import { clamp } from "#/lib/stats";
 import type { GeoUniqueness } from "#/lib/valuation/uniqueness-geo";
 import { textUniqueness } from "#/lib/valuation/uniqueness-text";
 import type { ValuationEstimate } from "#/types/listing";
+import { centreLabel, nearestCentreAnchor } from "./centre-zone";
 import {
 	ALERT_GATES,
 	type AlertSegment,
 	AMENITY_BONUS_RANGE,
 	AMENITY_BONUSES,
 	AMENITY_HEADROOM_SCALE,
+	CENTRE_ZONE,
 	DISTANCE_BANDS,
 	distanceScore,
 	ESTIMATE_CONFIDENCE,
+	FAST_RAIL,
 	FLAT_BUILDING_DELTAS,
 	PLOT_GREEN,
 	PLOT_LISTING_BASE_CONFIDENCE,
@@ -38,6 +42,7 @@ import {
 	TRANSIT_MIX,
 	valueCurveScore,
 } from "./config";
+import { fastRailLabel, nearestFastRail } from "./fast-rail";
 import { type HeatingEvidence, resolveHeatingEvidence } from "./heating";
 
 export interface ScoreParcelFeatures {
@@ -46,6 +51,8 @@ export interface ScoreParcelFeatures {
 	roadDistanceM?: number | null;
 	roadClass?: string | null;
 	buildingCoverage?: number | null;
+	/** Buildings already standing on the parcel (EGiB / OSM count). */
+	buildingCount?: number | null;
 	landUseClass?: string | null;
 	zoningWz?: boolean | null;
 	zoningNoPlan?: boolean | null;
@@ -91,6 +98,13 @@ export interface ScoreListingInput {
 	lat?: number | null;
 	lng?: number | null;
 	parcelFeatures?: ScoreParcelFeatures | null;
+	/**
+	 * Facts the LLM read out of the title and description (prompt v2). This is
+	 * the only prose channel: heating, building style, tenement evidence, plot
+	 * zoning/media and the setting around a plot all come from here instead of
+	 * regexes over the ad text.
+	 */
+	facts?: ScoredFacts | null;
 }
 
 export interface ScoreReason {
@@ -125,6 +139,47 @@ export interface AlertScore {
 	reasons: ScoreReason[];
 	flags: string[];
 	amenities: GeoUniqueness | null;
+	/**
+	 * Evidence behind the fair value: the condition/quality correction and the
+	 * comparable statistics. Stored with the score so the alert card can show
+	 * *why* the median moved instead of only the resulting number.
+	 */
+	valuation: ScoreValuation | null;
+}
+
+/** The estimate evidence a stored score keeps for the card. */
+export interface ScoreValuation {
+	/** Condition/quality correction applied to the comp median, percent. */
+	qualityPct: number;
+	/** False when no facts were available, so the correction is neutral. */
+	qualityKnown: boolean;
+	qualityReasons: Array<{ code: string; label: string; pct: number }>;
+	/** Median index factor that brought the comps to today. */
+	timeFactorMedian: number | null;
+	indexSpan: { from: string; to: string } | null;
+	askingRatio: number | null;
+	askingRatioSource: "measured" | "fallback" | null;
+	compAgeMedianYears: number | null;
+}
+
+function scoreValuation(
+	estimate: ValuationEstimate | null,
+): ScoreValuation | null {
+	if (estimate == null) return null;
+	return {
+		qualityPct: estimate.qualityAdjustmentPct,
+		qualityKnown: estimate.qualityAdjustmentKnown,
+		qualityReasons: estimate.qualityAdjustmentReasons.map((reason) => ({
+			code: reason.code,
+			label: reason.label,
+			pct: reason.pct,
+		})),
+		timeFactorMedian: estimate.statistics.timeFactorMedian,
+		indexSpan: estimate.statistics.indexSpan,
+		askingRatio: estimate.statistics.askingRatio,
+		askingRatioSource: estimate.statistics.askingRatioSource,
+		compAgeMedianYears: estimate.statistics.compAgeMedianYears,
+	};
 }
 
 interface Component {
@@ -268,9 +323,32 @@ function transitComponent(
 		TRAIN_FALLBACK,
 	);
 	const bus = distanceScore(geo.busM, DISTANCE_BANDS.bus);
-	const center = distanceScore(geo.centerM, DISTANCE_BANDS.center);
+	// Flats measure the walkable core against the anchor set; houses and plots
+	// measure fast-rail access instead (the reason they are on the list).
+	const zoneMatch =
+		input.segment === "flat"
+			? nearestCentreAnchor(input.lat, input.lng, input.city)
+			: null;
+	const centre =
+		zoneMatch != null
+			? distanceScore(
+					zoneMatch.distanceM,
+					CENTRE_ZONE.bands,
+					CENTRE_ZONE.fallback,
+				)
+			: distanceScore(geo.centerM, DISTANCE_BANDS.center);
+	const railMatch =
+		input.segment === "flat" ? null : nearestFastRail(input.lat, input.lng);
+	const fastRail =
+		railMatch != null
+			? distanceScore(railMatch.distanceM, FAST_RAIL.bands, FAST_RAIL.fallback)
+			: 0;
 	let score =
-		tram * mix.tram + train * mix.train + bus * mix.bus + center * mix.center;
+		tram * mix.tram +
+		train * mix.train +
+		bus * mix.bus +
+		centre * mix.center +
+		fastRail * mix.fastRail;
 	const reasons: Array<{ label: string; impact: number }> = [];
 	const flags: string[] = [];
 	if (tramFlat && geo.tramM != null && geo.tramM <= TRAM_TARGET_M) {
@@ -294,10 +372,21 @@ function transitComponent(
 			impact: 8,
 		});
 	}
-	if (geo.centerM != null && geo.centerM <= 2500) {
+	if (zoneMatch != null && zoneMatch.distanceM <= CENTRE_ZONE.radiusM) {
+		reasons.push({
+			label: centreLabel(zoneMatch),
+			impact: zoneMatch.distanceM <= 1000 ? 10 : 6,
+		});
+	} else if (geo.centerM != null && geo.centerM <= 2500) {
 		reasons.push({
 			label: `${(geo.centerM / 1000).toFixed(1)} km to the city centre`,
 			impact: 6,
+		});
+	}
+	if (railMatch != null && railMatch.distanceM <= FAST_RAIL.gateRadiusM) {
+		reasons.push({
+			label: `${railMatch.kdpPlanned ? "KDP" : "kolej 200+ "}${fastRailLabel(railMatch)}`,
+			impact: railMatch.kdpPlanned ? 10 : 7,
 		});
 	}
 	if (geo.railM != null) {
@@ -391,6 +480,18 @@ function flatBuildingStyle(input: ScoreListingInput): {
 	style: FlatBuildingStyle;
 	label: string;
 } | null {
+	// The LLM read of the ad text comes first: portals label almost every
+	// Kraków flat "apartament" or "blok", while the description says kamienica.
+	const factStyle = input.facts?.buildingStyle ?? null;
+	if (factStyle === "tenement")
+		return { style: "tenement", label: "kamienica" };
+	if (factStyle === "largePanel") {
+		return { style: "largePanel", label: "wielka płyta" };
+	}
+	if (factStyle === "apartment") {
+		return { style: "apartmentBuilding", label: "apartamentowiec" };
+	}
+	if (factStyle === "block") return { style: "concrete", label: "blok" };
 	const type = (input.buildingType ?? "").toLowerCase();
 	const material = (input.buildingMaterial ?? "").toLowerCase();
 	const structured = `${type} ${material}`;
@@ -415,17 +516,6 @@ function flatBuildingStyle(input: ScoreListingInput): {
 	}
 	if (/drewno|wood/u.test(material)) {
 		return { style: "wood", label: "drewno" };
-	}
-	// No structured signal: the title is the only honest evidence left.
-	const text = `${input.title} ${input.description ?? ""}`.toLowerCase();
-	if (/wielka[ _-]?p[ył]yta|wielkopłyta|blok(?:u|i|ów)?\b/u.test(text)) {
-		return { style: "largePanel", label: "blok / wielka płyta (z opisu)" };
-	}
-	if (/kamienic/u.test(text)) {
-		return { style: "tenement", label: "kamienica (z opisu)" };
-	}
-	if (/apartamentowiec/u.test(text)) {
-		return { style: "apartmentBuilding", label: "apartamentowiec (z opisu)" };
 	}
 	return null;
 }
@@ -466,8 +556,7 @@ function heatingEvidence(input: ScoreListingInput): HeatingEvidence {
 	return resolveHeatingEvidence({
 		heatingType: input.heatingType,
 		featuresHeating: input.featuresHeating,
-		title: input.title,
-		description: input.description,
+		factsHeating: input.facts?.heating ?? null,
 	});
 }
 
@@ -730,14 +819,41 @@ function riskComponent(
 }
 
 function isLargePanelFlat(input: ScoreListingInput): boolean {
-	if (flatBuildingStyle(input)?.style === "largePanel") return true;
-	// Detail pages are rate-limited, so most rows carry the building style only
-	// in the prose ("wielka płyta", "w bloku z lat 80.").
-	const prose = `${input.title}\n${input.description ?? ""}`.toLowerCase();
-	return /wielk[aeąy]\s*p[łl]yt|wielkiej\s*p[łl]ycie|p[łl]yt[aey]\s+prefabrykowan|prefabrykat|\bw\s+bloku\b|blok\w*\s+mieszkaln/u.test(
-		prose,
-	);
+	return flatBuildingStyle(input)?.style === "largePanel";
 }
+
+/** Tenement evidence: proved, contradicted, or simply unknown. */
+function tenementEvidence(
+	input: ScoreListingInput,
+): "tenement" | "not_tenement" | "unknown" {
+	const facts = input.facts ?? null;
+	if (facts?.buildingStyle === "tenement") return "tenement";
+	const years = [input.buildYear ?? null, facts?.buildYear ?? null].filter(
+		(year): year is number => year != null,
+	);
+	if (years.some((year) => year <= CENTRE_ZONE.tenementMaxBuildYear)) {
+		return "tenement";
+	}
+	const structured = `${input.buildingType ?? ""} ${input.buildingMaterial ?? ""}`;
+	if (/kamienic|tenement/iu.test(structured)) return "tenement";
+	if (facts?.buildingStyle != null) return "not_tenement";
+	if (years.length > 0) return "not_tenement";
+	if (/blok|block|apartament|apartment|wielka/iu.test(structured)) {
+		return "not_tenement";
+	}
+	return "unknown";
+}
+
+/** MPZP purposes that allow a house. */
+const PLAN_PURPOSES = new Set([
+	"residential",
+	"residential_services",
+	"multi_family",
+	"mixed",
+]);
+
+/** MPZP symbol prefixes that allow a house (MN, MW, U, RM, ...). */
+const PLAN_SYMBOL = /^(mn|mw|uz|uc|u|p|rm)/iu;
 
 /**
  * District heating or a heat pump. Gas, electric, coal, oil and unknown fail:
@@ -750,26 +866,98 @@ function hasDistrictHeating(input: ScoreListingInput): boolean {
 }
 
 /**
- * A plot only qualifies when the data says a house can be built: an explicit
- * building plot type or building-land class, a zoning decision (WZ), a zoning
- * plan, or a description that calls it a building plot. A plot with no such
- * evidence is kept in the table but never alerted.
+ * Buildable-land evidence, used as the gate for BOTH plots and houses: the
+ * question a buyer asks of a parcel is "can I build something here", and a
+ * house that already stands on it does not answer that. Evidence, in order of
+ * authority:
+ *   1. the portal's plot type (budowlana / inwestycyjna)
+ *   2. the parcel record: a WZ decision, a zoning plan, or a built-up /
+ *      residential EGiB land-use class (B*, MN, MW, RM)
+ *   3. the LLM facts: the WZ/MPZP paragraph, the plan symbol and the declared
+ *      purpose the description stated
+ * Nothing found means no evidence, and the offer never alerts.
  */
-function isBuildingPlot(input: ScoreListingInput): boolean {
+function hasBuildableEvidence(input: ScoreListingInput): boolean {
 	const type = (input.plotType ?? "").toLowerCase();
-	if (type.includes("budowl") || type.includes("build")) return true;
+	if (
+		type.includes("budowl") ||
+		type.includes("build") ||
+		type.includes("inwesty")
+	) {
+		return true;
+	}
 	const parcel = input.parcelFeatures;
 	if (parcel?.zoningWz === true || (parcel?.zoningPlanCount ?? 0) > 0) {
 		return true;
 	}
-	// EGiB land-use class: "B" (budowlane) and its subclasses are built-up
-	// land; agricultural and forest classes are not treated as evidence.
 	const landUse = (parcel?.landUseClass ?? "").trim().toLowerCase();
-	if (landUse.startsWith("b")) return true;
-	const prose = `${input.title}\n${input.description ?? ""}`.toLowerCase();
-	return /dzia[łl]k[aęi]\s+budowlan|budowlan[aey]\s+dzia[łl]|warunki\s+zabudowy|\bwz\b|plan\s+miejscow|\bmpzp\b/u.test(
-		prose,
-	);
+	if (landUse.length > 0 && /^(b|mn|mw|rm)/u.test(landUse)) return true;
+	const plot = input.facts?.plot ?? null;
+	if (plot == null) return false;
+	if (plot.wz === true) return true;
+	if (plot.type === "budowlana" || plot.type === "inwestycyjna") return true;
+	if (plot.mpzpPurpose != null && PLAN_PURPOSES.has(plot.mpzpPurpose)) {
+		return true;
+	}
+	if (plot.mpzpSymbol != null && PLAN_SYMBOL.test(plot.mpzpSymbol.trim())) {
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Buildability backed by three states instead of a boolean. A house ad rarely
+ * discusses zoning (the house already stands), and most parcels are not in the
+ * local `parcels` index yet, so "no data" must not read the same as "the
+ * register says farmland":
+ *
+ * - `proved`      someone's data says a house may stand there
+ * - `contradicted` the register or the ad says agricultural, forest or
+ *                 recreational land, with no WZ/plan to override it
+ * - `unknown`     nothing on file
+ *
+ * Plots require `proved` (the whole point of a plot alert). Houses alert on
+ * `proved`, fail on `contradicted`, and fill a short section on `unknown`,
+ * marked on the card like the heating fallback.
+ */
+function buildabilityEvidence(
+	input: ScoreListingInput,
+): "proved" | "contradicted" | "unknown" {
+	if (hasBuildableEvidence(input)) return "proved";
+	const landUse = (input.parcelFeatures?.landUseClass ?? "")
+		.trim()
+		.toLowerCase();
+	if (landUse.length > 0 && /^(r|z|ls|lsr|lz|w|wr|n|ps)/u.test(landUse)) {
+		return "contradicted";
+	}
+	const factType = (input.facts?.plot?.type ?? "").toLowerCase();
+	if (
+		factType.includes("roln") ||
+		factType.includes("le[śs]") ||
+		factType.includes("rekreac")
+	) {
+		return "contradicted";
+	}
+	const listedType = (input.plotType ?? "").toLowerCase();
+	if (
+		listedType.includes("roln") ||
+		listedType.includes("les") ||
+		listedType.includes("rekreac")
+	) {
+		return "contradicted";
+	}
+	return "unknown";
+}
+
+/**
+ * A standing house can leave too little room for anything else. The parcel
+ * record carries the building coverage, so a parcel that is almost entirely
+ * built over fails the "can I build here" question even though its zoning is
+ * residential.
+ */
+function isOverbuilt(input: ScoreListingInput): boolean {
+	const coverage = input.parcelFeatures?.buildingCoverage;
+	return coverage != null && coverage >= 0.6;
 }
 
 /**
@@ -788,6 +976,31 @@ function amenityBonusReasons(
 			label: heatingKind === "heatPump" ? "heat pump" : "municipal heating",
 			impact: AMENITY_BONUSES.districtHeating,
 		});
+	}
+	if (input.segment === "flat") {
+		const zone = nearestCentreAnchor(input.lat, input.lng, input.city);
+		if (zone != null && zone.distanceM <= CENTRE_ZONE.radiusM) {
+			reasons.push({
+				label: `centre zone: ${centreLabel(zone)}`,
+				impact: CENTRE_ZONE.bonus,
+			});
+		}
+	} else {
+		const rail = nearestFastRail(input.lat, input.lng);
+		if (rail != null && rail.distanceM <= FAST_RAIL.gateRadiusM) {
+			reasons.push({
+				label: rail.kdpPlanned
+					? `planned KDP station: ${fastRailLabel(rail)}`
+					: `200 km/h+ station: ${fastRailLabel(rail)}`,
+				impact: FAST_RAIL.bonus,
+			});
+			if (rail.kdpPlanned) {
+				reasons.push({
+					label: `KDP train service from ${rail.station.kdpYear ?? 2035}`,
+					impact: FAST_RAIL.kdpBonus,
+				});
+			}
+		}
 	}
 	if (
 		input.segment === "flat" &&
@@ -950,36 +1163,82 @@ export function scoreAlert(
 			: null;
 
 	// Every gate is evaluated, not just until the first failure: the
-	// leaderboard needs to know whether a flat failed *only* on missing
-	// heating evidence, which is the one failure it may fill a section with
-	// (clearly marked) when the municipal-heated pool is short.
+	// leaderboard needs to know whether a flat failed *only* on evidence the
+	// extractor could not find (heating, tenement age/style), which are the
+	// failures it may fill a section with (clearly marked) when the strict
+	// pool is short. A gate proved against the offer (gas heating, panel block,
+	// a confirmed modern block) is never a fallback.
 	const gateFailures: string[] = [];
-	if (
-		SEGMENT_ELIGIBILITY.flatExcludesLargePanel &&
-		input.segment === "flat" &&
-		isLargePanelFlat(input)
-	) {
-		gateFailures.push("large_panel_block");
-	}
-	if (
-		SEGMENT_ELIGIBILITY.flatRequiresDistrictHeating &&
-		input.segment === "flat" &&
-		!hasDistrictHeating(input)
-	) {
-		// Gas, electric, coal and oil are a statement against municipal
-		// heating; no evidence at all is merely unknown.
-		gateFailures.push(
-			heatingEvidence(input).kind === "unknown"
-				? "no_heating_evidence"
-				: "non_municipal_heating",
-		);
+	const zone = nearestCentreAnchor(input.lat, input.lng, input.city);
+	const rail = nearestFastRail(input.lat, input.lng);
+	if (input.segment === "flat") {
+		if (SEGMENT_ELIGIBILITY.flatExcludesLargePanel && isLargePanelFlat(input)) {
+			gateFailures.push("large_panel_block");
+		}
+		if (
+			SEGMENT_ELIGIBILITY.flatRequiresDistrictHeating &&
+			!hasDistrictHeating(input)
+		) {
+			// Gas, electric, coal and oil are a statement against municipal
+			// heating; no evidence at all is merely unknown.
+			gateFailures.push(
+				heatingEvidence(input).kind === "unknown"
+					? "no_heating_evidence"
+					: "non_municipal_heating",
+			);
+		}
+		if (
+			SEGMENT_ELIGIBILITY.flatRequiresCentreZone &&
+			(zone == null || zone.distanceM > CENTRE_ZONE.radiusM)
+		) {
+			gateFailures.push("outside_centre_zone");
+		}
+		if (SEGMENT_ELIGIBILITY.flatRequiresTenement) {
+			const tenement = tenementEvidence(input);
+			if (tenement === "not_tenement") gateFailures.push("not_tenement");
+			else if (tenement === "unknown") {
+				gateFailures.push("no_tenement_evidence");
+			}
+		}
 	}
 	if (
 		SEGMENT_ELIGIBILITY.plotRequiresBuildingEvidence &&
 		input.segment === "plot" &&
-		!isBuildingPlot(input)
+		!hasBuildableEvidence(input)
 	) {
 		gateFailures.push("not_building_plot");
+	}
+	if (input.segment === "house") {
+		if (SEGMENT_ELIGIBILITY.houseRequiresBuildingEvidence) {
+			const buildability = buildabilityEvidence(input);
+			// A parcel that already carries a building is built-up land in
+			// practice, which is also what EGiB would class as B*; the register
+			// class is frequently missing for house parcels, so a standing
+			// building plus room left over is accepted as proof that something
+			// can be built there. Coverage alone (isOverbuilt) still stops a
+			// parcel that is filled up.
+			const hasStructure =
+				(input.parcelFeatures?.buildingCount ?? 0) >= 1 ||
+				(input.parcelFeatures?.buildingCoverage ?? 0) > 0;
+			if (buildability === "contradicted") {
+				gateFailures.push("not_buildable_parcel");
+			} else if (buildability === "unknown" && !hasStructure) {
+				gateFailures.push("no_buildable_evidence");
+			}
+		}
+		if (isOverbuilt(input)) gateFailures.push("parcel_overbuilt");
+	}
+	if (input.segment !== "flat") {
+		const requiresRail =
+			input.segment === "plot"
+				? SEGMENT_ELIGIBILITY.plotRequiresFastRail
+				: SEGMENT_ELIGIBILITY.houseRequiresFastRail;
+		if (
+			requiresRail &&
+			(rail == null || rail.distanceM > FAST_RAIL.gateRadiusM)
+		) {
+			gateFailures.push("outside_fast_rail");
+		}
 	}
 	if (estimate == null || fair == null || fair <= 0)
 		gateFailures.push("no_comparable_estimate");
@@ -1000,8 +1259,16 @@ export function scoreAlert(
 		}
 	}
 	const gateReason = gateFailures[0] ?? null;
+	// The one failure a section may fill with, clearly marked on the card. Both
+	// entries mean "the extractor found no evidence", never "the offer says no".
+	const FALLBACK_GATES = new Set([
+		"no_heating_evidence",
+		"no_tenement_evidence",
+		"no_buildable_evidence",
+	]);
 	const fallbackEligible =
-		gateFailures.length === 1 && gateFailures[0] === "no_heating_evidence";
+		gateFailures.length > 0 &&
+		gateFailures.every((failure) => FALLBACK_GATES.has(failure));
 
 	return {
 		scoreVersion: SCORE_VERSION,
@@ -1027,5 +1294,6 @@ export function scoreAlert(
 		reasons,
 		flags,
 		amenities: geo,
+		valuation: scoreValuation(estimate),
 	};
 }

@@ -1,36 +1,27 @@
 /**
- * Validation for model-extracted listing facts (pure, no network, no DB).
+ * Validation for model-extracted listing facts (pure, no network; the only
+ * DB touch is a `loadScoredFacts([])` call that returns before it queries).
  *
  *   bun run validate:facts
  *
  * The model is a data source, not a trusted one, so the parsing and
  * normalization rules are pinned here: enum vocabulary, Polish aliases,
  * range checks, unknown ids, code fences, nested v2 objects (utilities,
- * monthly costs, context), list sanitation, the fact-access projections the
- * scoring/valuation layers read, and the prompt contract the model is asked
- * to follow.
+ * monthly costs, context), code lists, exposure, the `ScoredFacts`
+ * projection the scoring layer imports, and the prompt contract.
  */
 import {
+	EXPOSURE_TOKENS,
 	FACT_PROMPT_VERSION,
 	FACT_VALUES,
+	asExposure,
 	extractJsonObject,
 	factPrompt,
 	isEmptyFacts,
 	normalizeFacts,
 	parseFactsResponse,
 } from "#/lib/llm/listing-facts.ts";
-import {
-	clearFactCache,
-	conditionOf,
-	contextOf,
-	defectListOf,
-	factCacheSize,
-	factsFor,
-	monthlyCostOf,
-	parseFactsJson,
-	plotAccessOf,
-	plotMediaOf,
-} from "#/lib/llm/fact-access.ts";
+import { loadScoredFacts, scoredFactsOf } from "#/lib/llm/fact-access.ts";
 
 let passed = 0;
 let failed = 0;
@@ -69,14 +60,81 @@ for (const [field, values] of Object.entries(FACT_VALUES)) {
 	);
 }
 check(
+	"the system prompt lists every exposure token",
+	EXPOSURE_TOKENS.every((token) => system.includes(`"${token}"`)),
+	EXPOSURE_TOKENS,
+);
+check(
 	"the system prompt describes the v2 nested objects",
 	["utilities", "monthlyCosts", "context", "defects", "encumbrances"].every(
 		(key) => system.includes(key),
 	),
 );
+const schemaKeys = [
+	"heating",
+	"buildingType",
+	"largePanel",
+	"plotType",
+	"buildingMaterial",
+	"condition",
+	"ownership",
+	"buildYear",
+	"plotAreaM2",
+	"floor",
+	"floorCount",
+	"hasBalcony",
+	"hasTerrace",
+	"hasGarden",
+	"hasElevator",
+	"hasParking",
+	"hasGarage",
+	"hasBasement",
+	"utilities",
+	"roadAccess",
+	"mpzpSymbol",
+	"mpzpPurpose",
+	"buildingPermitWz",
+	"plotShape",
+	"plotDimensions",
+	"plotSlope",
+	"fencing",
+	"kitchen",
+	"exposure",
+	"windows",
+	"technology",
+	"insulation",
+	"floorHeating",
+	"heatPump",
+	"recuperation",
+	"airConditioning",
+	"photovoltaics",
+	"parkingSpots",
+	"balconyM2",
+	"terraceM2",
+	"gardenM2",
+	"garageM2",
+	"legalStatus",
+	"encumbrances",
+	"defects",
+	"context",
+	"tenanted",
+	"urgency",
+	"monthlyCosts",
+];
 check(
-	"the system prompt forbids guessing",
-	/nie zgaduj/iu.test(system) && /unknown/iu.test(system),
+	"the answer schema names every fact key",
+	schemaKeys.every((key) => system.includes(`"${key}":`)),
+	schemaKeys.filter((key) => !system.includes(`"${key}":`)),
+);
+check(
+	"the system prompt asks for JSON only, no prose",
+	/tylko|wyłącznie/iu.test(system) &&
+		/bez prozy/iu.test(system) &&
+		/json/iu.test(system),
+);
+check(
+	"the system prompt forbids guessing and defaults to null/false",
+	/nie zgaduj/iu.test(system) && /\bfalse\b/u.test(system) && /null/u.test(system),
 );
 check(
 	"the user prompt carries the id and the title",
@@ -99,10 +157,10 @@ check(
 	parseFactsResponse(prose, ids).get(101)?.heating === "gas",
 	parseFactsResponse(prose, ids).get(101),
 );
-const topLevelArray = '[{"id":102,"heating":"district"}]';
 check(
 	"a bare array answer is parsed",
-	parseFactsResponse(topLevelArray, ids).get(102)?.heating === "district",
+	parseFactsResponse('[{"id":102,"heating":"district"}]', ids).get(102)
+		?.heating === "district",
 );
 check(
 	"an answer for a listing that was not requested is dropped",
@@ -125,13 +183,24 @@ check(
 		isEmptyFacts(missingRow.get(101) ?? ({} as never)),
 );
 
-// --- Enum normalization -------------------------------------------------
+// --- Normalization ------------------------------------------------------
 function factsOf(raw: Record<string, unknown>) {
 	return normalizeFacts({ id: 1, ...raw });
 }
 check(
 	"unknown means null, not a stored value",
-	factsOf({ heating: "unknown" })?.heating === null,
+	factsOf({ heating: "unknown" })?.heating === null &&
+		factsOf({ windows: "unknown" })?.windows === null &&
+		factsOf({ urgency: "unknown" })?.urgency === null,
+);
+check(
+	"v1 vocabularies keep their ids",
+	factsOf({ heating: "district" })?.heating === "district" &&
+		factsOf({ buildingType: "block" })?.buildingType === "block" &&
+		factsOf({ plotType: "budowlana" })?.plotType === "budowlana" &&
+		factsOf({ buildingMaterial: "brick" })?.buildingMaterial === "brick" &&
+		factsOf({ condition: "to_renovation" })?.condition === "to_renovation" &&
+		factsOf({ ownership: "full_ownership" })?.ownership === "full_ownership",
 );
 check(
 	"Polish words are mapped to their tokens",
@@ -142,24 +211,26 @@ check(
 );
 check(
 	"v2 enums map their Polish aliases",
-	factsOf({ roadAccess: "asfalt" })?.roadAccess === "asphalt" &&
-		factsOf({ mpzpPurpose: "MN/U" })?.mpzpPurpose ===
-			"residential_services" &&
+	factsOf({ roadAccess: "droga prywatna" })?.roadAccess === "private" &&
+		factsOf({ mpzpPurpose: "MN/U" })?.mpzpPurpose === "residential_services" &&
 		factsOf({ legalStatus: "spółdzielcze własnościowe" })?.legalStatus ===
 			"cooperative" &&
 		factsOf({ kitchen: "aneks" })?.kitchen === "annex" &&
-		factsOf({ windows: "3-szybowe" })?.windows === "triple_glazed" &&
-		factsOf({ technology: "murowana" })?.technology === "traditional",
+		factsOf({ windows: "wymienione" })?.windows === "new" &&
+		factsOf({ technology: "murowana" })?.technology === "traditional" &&
+		factsOf({ urgency: "pilne" })?.urgency === "urgent",
 );
 check(
 	"an unrecognized enum value becomes null",
 	factsOf({ condition: "swietny" })?.condition === null &&
 		factsOf({ heating: "geotermia" })?.heating === null &&
-		factsOf({ roadAccess: "autostrada" })?.roadAccess === null,
+		factsOf({ roadAccess: "autostrada" })?.roadAccess === null &&
+		factsOf({ windows: "pvc" })?.windows === "new",
 );
 check(
 	"enum matching is case and whitespace insensitive",
-	factsOf({ heating: "  District " })?.heating === "district",
+	factsOf({ heating: "  District " })?.heating === "district" &&
+		factsOf({ windows: " NEW " })?.windows === "new",
 );
 check(
 	"booleans parse from JSON booleans and strings",
@@ -183,7 +254,7 @@ check(
 	normalizeFacts([]) === null && normalizeFacts("x") === null,
 );
 
-// --- v2 nested fields ---------------------------------------------------
+// --- v2 fields ----------------------------------------------------------
 const rich = factsOf({
 	utilities: {
 		power: true,
@@ -201,21 +272,20 @@ const rich = factsOf({
 	},
 	context: {
 		lake: true,
-		river: false,
+		river: "false",
 		forest: "true",
 		mountains: null,
-		view: true,
+		view: "widok na jezioro",
 	},
 	defects: [
 		"4. piętro bez windy",
-		"<b>media do doprowadzenia</b>",
+		"<b>Media do doprowadzenia</b>",
 		"4. piętro bez windy",
 		"",
 		42,
 	],
-	encumbrances: ["hipoteka"],
-	roadAccess: "asfalt",
-	roadPublic: true,
+	encumbrances: ["hipoteka", "służebność"],
+	roadAccess: "publiczna",
 	mpzpSymbol: "MN/U",
 	mpzpPurpose: "mieszkaniowa",
 	buildingPermitWz: true,
@@ -224,15 +294,15 @@ const rich = factsOf({
 	plotSlope: "płaska",
 	fencing: true,
 	kitchen: "aneks",
-	exposure: "wschód-zachód",
-	windows: "trzy szybowe",
-	technology: "murowana",
+	exposure: ["S", "W"],
+	windows: "wymienione",
+	technology: "prefabrykowana",
 	insulation: true,
 	floorHeating: true,
 	heatPump: true,
 	recuperation: true,
-	ac: true,
-	pv: true,
+	airConditioning: true,
+	photovoltaics: true,
 	parkingSpots: "2 miejsca",
 	balconyM2: "6",
 	terraceM2: 0,
@@ -241,15 +311,27 @@ const rich = factsOf({
 	legalStatus: "spółdzielcze własnościowe",
 	tenanted: false,
 	urgency: "pilne",
+	heating: "miejskie",
+	buildingType: "blok",
+	plotType: "budowlana",
+	condition: "po remoncie",
+	buildYear: 2019,
+	floor: 3,
+	floorCount: 10,
+	plotAreaM2: 800,
 });
 check(
-	"utilities parse per utility and keep false",
+	"utilities parse per utility, unstated means false",
 	rich?.utilities?.power === true &&
 		rich.utilities.water === false &&
-		rich.utilities.gas === null &&
+		rich.utilities.gas === false &&
 		rich.utilities.sewer === true &&
-		rich.utilities.internet === null,
+		rich.utilities.internet === false,
 	rich?.utilities,
+);
+check(
+	"utility objects with every value null become null",
+	factsOf({ utilities: { power: null, water: null } })?.utilities === null,
 );
 check(
 	"monthly costs parse amounts and the commission",
@@ -261,26 +343,49 @@ check(
 	rich?.monthlyCosts,
 );
 check(
-	"context parses the setting flags",
+	"monthly cost ranges reject impossible values",
+	factsOf({ monthlyCosts: { rent: 50_000 } })?.monthlyCosts === null &&
+		factsOf({ monthlyCosts: { agencyFeePct: 40 } })?.monthlyCosts === null &&
+		factsOf({ monthlyCosts: { advance: -1 } })?.monthlyCosts === null,
+);
+check(
+	"context parses the setting flags and the view text",
 	rich?.context?.lake === true &&
 		rich.context.river === false &&
 		rich.context.forest === true &&
-		rich.context.mountains === null &&
-		rich.context.view === true,
+		rich.context.mountains === false &&
+		rich.context.view === "widok na jezioro",
 	rich?.context,
 );
 check(
-	"defects are sanitized, deduped and limited",
+	"an empty context becomes null",
+	factsOf({ context: { lake: null, view: "" } })?.context === null,
+);
+check(
+	"defects are slugged, sanitized and deduped",
 	rich?.defects?.length === 2 &&
-		rich.defects[0] === "4. piętro bez windy" &&
-		rich.defects[1] === "media do doprowadzenia",
+		rich.defects[0] === "4_pietro_bez_windy" &&
+		rich.defects[1] === "media_do_doprowadzenia",
 	rich?.defects,
 );
 check(
-	"encumbrances parse as a list",
-	rich?.encumbrances?.length === 1 &&
-		rich.encumbrances[0] === "hipoteka",
+	"encumbrances parse as a code list",
+	rich?.encumbrances?.length === 2 &&
+		rich.encumbrances[0] === "hipoteka" &&
+		rich.encumbrances[1] === "sluzebnosc",
 	rich?.encumbrances,
+);
+const longDefects = factsOf({
+	defects: Array.from({ length: 20 }, (_, index) => `wada ${index}`),
+});
+check(
+	"at most eight list entries are kept",
+	longDefects?.defects?.length === 8,
+	longDefects?.defects,
+);
+check(
+	"a single string list entry is kept whole",
+	factsOf({ defects: "brak windy" })?.defects?.[0] === "brak_windy",
 );
 check(
 	"v2 strings are bounded",
@@ -297,23 +402,11 @@ check(
 		rich.garageM2 === 18,
 );
 check(
-	"nested objects with no stated value become null",
-	factsOf({ utilities: { power: null } })?.utilities === null &&
-		factsOf({ monthlyCosts: {} })?.monthlyCosts === null &&
-		factsOf({ context: { lake: null } })?.context === null,
-);
-check(
-	"a string list entry is not split on commas",
-	factsOf({ defects: "4. piętro, bez windy" })?.defects?.[0] ===
-		"4. piętro, bez windy",
-);
-const longDefects = factsOf({
-	defects: Array.from({ length: 20 }, (_, index) => `wada ${index}`),
-});
-check(
-	"at most eight list entries are kept",
-	longDefects?.defects?.length === 8,
-	longDefects?.defects,
+	"count and area ranges reject impossible values",
+	factsOf({ parkingSpots: 400 })?.parkingSpots === null &&
+		factsOf({ parkingSpots: 2.6 })?.parkingSpots === 3 &&
+		factsOf({ balconyM2: 9000 })?.balconyM2 === null &&
+		factsOf({ gardenM2: -3 })?.gardenM2 === null,
 );
 check(
 	"a non-empty nested object counts as facts",
@@ -321,87 +414,132 @@ check(
 		isEmptyFacts(factsOf({}) ?? ({} as never)),
 );
 
-// --- Fact-access projections -------------------------------------------
-const media = plotMediaOf(rich);
+// --- Exposure -----------------------------------------------------------
 check(
-	"plot media counts connected utilities",
-	media.connectedCount === 2 &&
-		media.anyConnected === true &&
-		media.coreConnected === false,
-	media,
-);
-const access = plotAccessOf(rich);
-check(
-	"plot access reads road, plan and WZ evidence",
-	access.hasPublicAccess === true &&
-		access.hasPlanEvidence === true &&
-		access.mediaConnected === true &&
-		access.buildableEvidence === true,
-	access,
-);
-const noEvidence = plotAccessOf(
-	factsOf({
-		utilities: { power: false, water: false },
-		roadAccess: "none",
-		roadPublic: false,
-		buildingPermitWz: false,
-	}),
+	"exposure keeps a subset of N/S/E/W",
+	JSON.stringify(asExposure(["S", "W", "N", "S"])) === '["N","S","W"]',
+	asExposure(["S", "W", "N", "S"]),
 );
 check(
-	"a plot with no media, access or plan has no buildable evidence",
-	noEvidence.mediaConnected === false &&
-		noEvidence.hasPublicAccess === false &&
-		noEvidence.hasPlanEvidence === false &&
-		noEvidence.buildableEvidence === false,
-	noEvidence,
-);
-const context = contextOf(rich);
-check(
-	"context facts count the affirmed settings",
-	context.settingCount === 3 && context.hasSetting === true,
-	context,
+	"exposure accepts Polish compass words in one entry",
+	JSON.stringify(asExposure("wschód-zachód")) === '["E","W"]',
+	asExposure("wschód-zachód"),
 );
 check(
-	"defect list merges defects and encumbrances",
-	defectListOf(rich).length === 3 &&
-		defectListOf(rich).includes("hipoteka"),
-	defectListOf(rich),
-);
-const signals = conditionOf(rich);
-check(
-	"condition signals carry quality and legal fields",
-	signals.condition === null &&
-		signals.technology === "traditional" &&
-		signals.insulation === true &&
-		signals.floorHeating === true &&
-		signals.legalStatus === "cooperative" &&
-		signals.defectCount === 3,
-	signals,
+	"exposure accepts a single string and compact letters",
+	JSON.stringify(asExposure("południowa")) === '["S"]' &&
+		JSON.stringify(asExposure("NS")) === '["N","S"]',
 );
 check(
-	"monthly cost reader returns the nested object",
-	monthlyCostOf(rich)?.rent === 1200,
-	monthlyCostOf(rich),
-);
-check(
-	"projections tolerate absent facts",
-	plotMediaOf(null).anyConnected === false &&
-		plotAccessOf(null).buildableEvidence === false &&
-		contextOf(null).hasSetting === false &&
-		defectListOf(null).length === 0 &&
-		conditionOf(null).defectCount === 0,
+	"exposure drops unknown tokens",
+	asExposure(["up", "down"]) === null &&
+		asExposure(null) === null &&
+		asExposure("") === null,
 );
 
-// --- Stored JSON and cache ---------------------------------------------
+// --- ScoredFacts projection --------------------------------------------
+const scored = scoredFactsOf(rich as unknown as Record<string, unknown>);
 check(
-	"stored facts JSON is normalized on read",
-	parseFactsJson(JSON.stringify({ heating: "miejskie" }))?.heating ===
-		"district" && parseFactsJson("{bad") === null,
+	"heating and building style project",
+	scored?.heating === "district" && scored.buildingStyle === "largePanel",
+	scored,
 );
-clearFactCache();
 check(
-	"the cache starts empty and an unloaded id reads as null",
-	factCacheSize() === 0 && factsFor(101) === null,
+	"condition and build year project",
+	scored?.condition === "excellent" &&
+		scored.buildYear === 2019 &&
+		scored.floor === 3 &&
+		scored.floorCount === 10,
+	scored,
+);
+check(
+	"quality flags project",
+	scored?.technology === "prefab" &&
+		scored.insulation === true &&
+		scored.floorHeating === true &&
+		scored.heatPump === true &&
+		scored.recuperation === true &&
+		scored.airConditioning === true &&
+		scored.photovoltaics === true,
+	scored,
+);
+check(
+	"legal status, code lists and tenancy project",
+	scored?.legalStatus === "cooperative" &&
+		scored.encumbrances.length === 2 &&
+		scored.defects.length === 2 &&
+		scored.tenanted === false,
+	scored,
+);
+check(
+	"the plot projection carries media, access and plan",
+	scored?.plot?.type === "budowlana" &&
+		scored.plot.mediaCount === 2 &&
+		scored.plot.media.water === false &&
+		scored.plot.roadAccess === "public" &&
+		scored.plot.wz === true &&
+		scored.plot.shape === "regular" &&
+		scored.plot.slope === "flat" &&
+		scored.plot.dimensions === "20x40 m",
+	scored?.plot,
+);
+check(
+	"the context projection carries the setting and the view",
+	scored?.context?.lake === true &&
+		scored.context.forest === true &&
+		scored.context.mountains === false &&
+		scored.context.view === "widok na jezioro",
+	scored?.context,
+);
+check(
+	"monthly costs project verbatim",
+	scored?.monthlyCosts?.rent === 1200 &&
+		scored.monthlyCosts.agencyFeePct === 2.5,
+	scored?.monthlyCosts,
+);
+const flat = scoredFactsOf({
+	heating: "gas",
+	buildingType: "block",
+	utilities: { power: true },
+	condition: "good",
+});
+check(
+	"utilities alone do not make a flat a plot",
+	flat?.plot === null && flat.buildingStyle === "block",
+	flat,
+);
+check(
+	"a block with prefab technology is a large panel block",
+	scoredFactsOf({ buildingType: "block", technology: "prefab" })
+		?.buildingStyle === "largePanel" &&
+		scoredFactsOf({ buildingType: "detached" })?.buildingStyle === "house",
+);
+check(
+	"a direct large-panel answer wins over the derived style",
+	factsOf({ largePanel: true })?.largePanel === true &&
+		factsOf({ largePanel: "false" })?.largePanel === false &&
+		scoredFactsOf({ largePanel: true, buildingType: "block" })
+			?.buildingStyle === "largePanel" &&
+		scoredFactsOf({ buildingType: "block" })?.buildingStyle === "block",
+);
+check(
+	"a v1 facts row still projects",
+	scoredFactsOf({ heating: "district", buildYear: 1998 })?.heating ===
+		"district",
+);
+check(
+	"empty and malformed rows project to null",
+	scoredFactsOf(null) === null &&
+		scoredFactsOf({}) === null &&
+		scoredFactsOf({ heating: "geotermia" }) === null,
+);
+check(
+	"an empty id list loads nothing (no DB roundtrip)",
+	(await loadScoredFacts([])).size === 0,
+);
+check(
+	"loadScoredFacts drops non-integer ids before querying",
+	(await loadScoredFacts([Number.NaN, 0, -1])).size === 0,
 );
 
 // --- Idempotence --------------------------------------------------------

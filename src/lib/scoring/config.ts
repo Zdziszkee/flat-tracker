@@ -9,7 +9,7 @@
 
 import { clamp } from "#/lib/stats";
 
-export const SCORE_VERSION = "2027.13";
+export const SCORE_VERSION = "2027.14";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -89,8 +89,77 @@ export const SEGMENT_ELIGIBILITY = {
 	/** Flats must be district-heated (or a heat pump) and not a large-panel block. */
 	flatRequiresDistrictHeating: true,
 	flatExcludesLargePanel: true,
+	/** Flats must sit inside `CENTRE_ZONE.radiusM` of a tracked city centre. */
+	flatRequiresCentreZone: true,
+	/** ... and be a tenement (kamienica) or a pre-1945 building. */
+	flatRequiresTenement: true,
 	/** Plots must show building-plot evidence: plot type, WZ or a zoning plan. */
 	plotRequiresBuildingEvidence: true,
+	/**
+	 * Houses carry the same requirement: the point of a house alert is that
+	 * something can still be built on that parcel, so a house whose land use,
+	 * zoning or utilities never prove buildability is not alerted.
+	 */
+	houseRequiresBuildingEvidence: true,
+	/** Plots and houses must sit inside `FAST_RAIL.gateRadiusM` of a fast-rail station. */
+	plotRequiresFastRail: true,
+	houseRequiresFastRail: true,
+} as const;
+
+/**
+ * Fast-rail access (200 km/h+ today, KDP from 2035).
+ *
+ * The gate radius is the user's investment rule, not a fitted parameter: a
+ * plot 3 km from the station is a different asset from one 300 m away, and
+ * everything beyond is out of scope for the alert list even when it is cheap.
+ * Inside the radius the band curve rewards the walkable ring (800-2000 m) and
+ * penalises the 24/7 station doorstep, the same way the tram and railway
+ * bands do.
+ */
+export const FAST_RAIL = {
+	gateRadiusM: 3000,
+	bands: [
+		[400, 50],
+		[800, 80],
+		[1500, 100],
+		[2000, 90],
+		[3000, 70],
+	] as DistanceBands,
+	fallback: 0,
+	/** Bonus points for living inside the gate radius (plots and houses). */
+	bonus: 8,
+	/** Extra points when the station is a planned KDP call (2035+). */
+	kdpBonus: 4,
+} as const;
+
+/**
+ * Centre zone for flats. Distance is measured to the nearest anchor in
+ * `src/lib/scoring/centre-zone.ts` (Rynek Główny, Kazimierz, Podgórze,
+ * Krowodrza, Grzegórzki, Dębniki, Zwierzyniec, Wola Justowska, Katowice
+ * Rynek), not to a single city point, because the target is the walkable core
+ * of a handful of neighbourhoods, not a 4 km disc around one square.
+ *
+ * The 4 km radius is the user's rule and is a gate, not just a score: an
+ * offer outside it is kept in the table but never alerted.
+ */
+export const CENTRE_ZONE = {
+	radiusM: 4000,
+	bands: [
+		[500, 100],
+		[1000, 95],
+		[2000, 85],
+		[3000, 72],
+		[4000, 55],
+	] as DistanceBands,
+	fallback: 0,
+	/** Bonus points for a flat inside the zone (on top of the zone component). */
+	bonus: 6,
+	/**
+	 * A tenement is the target, but a pre-war building is the same asset class
+	 * even when the ad calls it "kamienica" or the portal labels it
+	 * "apartment": both count as tenement evidence.
+	 */
+	tenementMaxBuildYear: 1945,
 } as const;
 
 /**
@@ -190,10 +259,14 @@ export interface SegmentWeights {
 export const SEGMENT_WEIGHTS: Record<AlertSegment, SegmentWeights> = {
 	// Price carries less weight than before: a 30% swing in asking price is
 	// common, so location, building quality and risk must decide more of the
-	// ranking.
-	flat: { value: 0.35, transit: 0.22, green: 0.18, property: 0.2, risk: 0.05 },
-	house: { value: 0.35, transit: 0.1, green: 0.25, property: 0.25, risk: 0.05 },
-	plot: { value: 0.3, transit: 0.05, green: 0.3, property: 0.3, risk: 0.05 },
+	// ranking. Flats: the target is a centre-zone tenement with municipal
+	// heating, so the property component (building style, condition) and the
+	// transit component (tram, centre zone) outrank the discount.
+	flat: { value: 0.3, transit: 0.2, green: 0.2, property: 0.25, risk: 0.05 },
+	// Houses and plots: fast-rail access is the reason the offer exists, so the
+	// transit component carries real weight for both.
+	house: { value: 0.3, transit: 0.2, green: 0.25, property: 0.2, risk: 0.05 },
+	plot: { value: 0.25, transit: 0.15, green: 0.28, property: 0.27, risk: 0.05 },
 };
 
 /**
@@ -272,11 +345,16 @@ export const TRAIN_FALLBACK = 15;
  * listing gets zero weight, and that weight is moved to the signals that do,
  * so an inapplicable tram stop can never raise a house score and a missing
  * tram network cannot silently drain the flat score outside tram cities.
+ *
+ * `fastRail` is the 200 km/h+/KDP access signal and carries most of the house
+ * and plot transit score: for those two segments the nearest fast-rail station
+ * is the reason the offer is on the list at all. `center` for flats is the
+ * centre-zone band (`CENTRE_ZONE`), not the external city-centre label.
  */
 export const TRANSIT_MIX = {
-	flatTram: { tram: 0.55, train: 0.2, bus: 0.1, center: 0.15 },
-	flatNoTram: { tram: 0, train: 0.55, bus: 0.15, center: 0.3 },
-	housePlot: { tram: 0, train: 0.7, bus: 0.15, center: 0.15 },
+	flatTram: { tram: 0.45, train: 0.15, bus: 0.1, center: 0.3, fastRail: 0 },
+	flatNoTram: { tram: 0, train: 0.4, bus: 0.15, center: 0.45, fastRail: 0 },
+	housePlot: { tram: 0, train: 0.25, bus: 0.1, center: 0.15, fastRail: 0.5 },
 } as const;
 
 export const DISTANCE_BANDS = {
