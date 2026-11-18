@@ -580,7 +580,14 @@ must stay a literal — it may not import `sites/index.ts`, because
 
 Every phase records its own `crawl_runs` row (counts in
 `newCount`/`updatedCount`, failures through the shared error report), so the
-page can show a real "last refreshed" per source. `/api/crawl-status` adds
+page can show a real "last refreshed" per source. While a run is in flight the
+page also shows one overall bar plus live numbers (`RunProgress` in
+`/api/crawl-status`): offers stored and per-minute rate from the crawl phase,
+the current phase and its counter, elapsed time and an ETA. The bar is
+weighted by `PHASE_WEIGHTS` in `src/crawler/progress.ts` (the crawl is about
+45% of a run), because counting phases equally left it at 4% after the whole
+crawl had finished. The facts and scoring phases report `done`/`total`
+through their `onProgress` callback, so their row moves too. `/api/crawl-status` adds
 `lastRefreshedAt` (newest successful finish across non-static sources),
 per-source `lastSuccessAt`, and passes `group`/`static` through; the panel
 groups the table into Portale, Dane i warstwy and Przetwarzanie i scoring,

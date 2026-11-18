@@ -932,6 +932,17 @@ export async function refreshAll(
 				const { extractListingFacts } = await import("../lib/llm/extract.ts");
 				const facts = await extractListingFacts({
 					limit: LLM_FACTS_PER_REFRESH,
+					// The /sources page shows how far the extractor got: stored
+					// facts are the useful number, sent batches the denominator.
+					onProgress: ({ done, total, stored, errors }) => {
+						setSourceProgress("listing-facts", {
+							state: "running",
+							done,
+							total,
+							newCount: stored,
+							updatedCount: errors,
+						});
+					},
 				});
 				console.log(
 					`[refresh] listing-facts: ${facts.stored} stored, ` +
@@ -995,6 +1006,14 @@ export async function refreshAll(
 			const { runAlertScoring } = await import("../lib/scoring/run.ts");
 			const score = await runAlertScoring({
 				incremental: true,
+				onProgress: ({ done, total, scored }) => {
+					setSourceProgress("scoring", {
+						state: "running",
+						done,
+						total,
+						newCount: scored,
+					});
+				},
 				// New offers are scored inline by `scoreArrivals`, so this cap
 				// only bounds the backlog (for example after a SCORE_VERSION
 				// bump) to keep one refresh inside its hourly window. The rest

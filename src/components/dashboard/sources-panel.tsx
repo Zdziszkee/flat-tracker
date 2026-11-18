@@ -31,10 +31,14 @@ import { cn } from "#/lib/utils";
 import {
 	absoluteTime,
 	type CrawlStatusResponse,
+	countLabel,
 	duration,
+	elapsedLabel,
 	freshnessLabel,
 	isStale,
 	metrics,
+	phaseLabel,
+	type RunProgress,
 	relativeTime,
 	type SourceGroup,
 	type SourceStatus,
@@ -119,6 +123,145 @@ function SourceRow({ source }: { source: SourceStatus }) {
 	);
 }
 
+/** One number of the live run: a label, a value and an optional note. */
+function RunStat({
+	label,
+	value,
+	note,
+}: {
+	label: string;
+	value: string;
+	note?: string;
+}) {
+	return (
+		<div className="rounded-md border bg-muted/30 px-3 py-2">
+			<div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+				{label}
+			</div>
+			<div className="font-medium tabular-nums">{value}</div>
+			{note && (
+				<div className="text-xs text-muted-foreground tabular-nums">{note}</div>
+			)}
+		</div>
+	);
+}
+
+/**
+ * Live run numbers: how many offers the crawl stored, how fast, which phase
+ * is running and how long it has left. `aria-live` so a screen reader hears
+ * the phase change without the page shouting on every tick.
+ */
+function RunStats({ progress }: { progress: RunProgress }) {
+	const phaseCounter =
+		progress.phaseDone != null && progress.phaseTotal != null
+			? `${countLabel(progress.phaseDone)}/${countLabel(progress.phaseTotal)}`
+			: null;
+	return (
+		<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+			<RunStat
+				label="Oferty w tym przebiegu"
+				value={countLabel(progress.offersTotal)}
+				note={`nowe ${countLabel(progress.offersNew)} · zmienione ${countLabel(progress.offersUpdated)}`}
+			/>
+			<RunStat
+				label="Tempo"
+				value={
+					progress.offersPerMinute == null
+						? "—"
+						: `${countLabel(progress.offersPerMinute)} ofert/min`
+				}
+				note={
+					progress.offersPerMinute == null
+						? "liczę po pierwszych zapisach"
+						: "średnio od startu"
+				}
+			/>
+			<RunStat
+				label="Etap"
+				value={phaseLabel(progress.phase)}
+				note={
+					phaseCounter
+						? `${phaseCounter} · etap ${progress.phaseIndex} z ${progress.phasesTotal}`
+						: `etap ${progress.phaseIndex} z ${progress.phasesTotal}`
+				}
+			/>
+			<RunStat
+				label="Czas"
+				value={elapsedLabel(progress.elapsedMs)}
+				note={
+					progress.etaMs == null
+						? "ETA po pierwszym etapie"
+						: `pozostało ~${elapsedLabel(progress.etaMs)}`
+				}
+			/>
+		</div>
+	);
+}
+
+/**
+ * Which portals are being fetched right now, with what each has produced so
+ * far. A scrape has no total, so these are counts, not bars.
+ */
+function LiveSources({
+	progress,
+	sources,
+}: {
+	progress: RunProgress;
+	sources: SourceStatus[];
+}) {
+	const portals = sources.filter((source) => source.group === "portal");
+	const running = new Set(progress.current);
+	const active = portals.filter(
+		(source) =>
+			running.has(source.id) ||
+			source.live?.state === "running" ||
+			source.live?.state === "pending",
+	);
+	if (active.length === 0) return null;
+	return (
+		<div className="flex flex-wrap gap-1.5">
+			{active.map((source) => {
+				const live = source.live;
+				const isRunning = running.has(source.id) || live?.state === "running";
+				const parts = [source.id];
+				if (live?.pages != null) parts.push(`${live.pages} str.`);
+				if (live?.newCount != null || live?.updatedCount != null) {
+					parts.push(
+						`+${countLabel(live?.newCount ?? 0)}/${countLabel(live?.updatedCount ?? 0)}`,
+					);
+				}
+				return (
+					<span
+						key={source.id}
+						className={cn(
+							"inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs",
+							isRunning
+								? "border-primary/40 bg-primary/10 text-foreground"
+								: "bg-muted/40 text-muted-foreground",
+						)}
+					>
+						{isRunning ? (
+							<RefreshCwIcon
+								className="size-3 animate-spin"
+								aria-hidden="true"
+							/>
+						) : (
+							<span
+								aria-hidden="true"
+								className="size-1.5 rounded-full bg-muted-foreground/50"
+							/>
+						)}
+						<span className="font-medium">{source.id}</span>
+						{parts.length > 1 && (
+							<span className="tabular-nums">{parts.slice(1).join(" · ")}</span>
+						)}
+					</span>
+				);
+			})}
+		</div>
+	);
+}
+
 /**
  * "Źródła danych" panel: per-source freshness plus the live refresh progress
  * and the manual refresh trigger (`POST /api/refresh`).
@@ -145,15 +288,7 @@ export function SourcesPanel() {
 
 	const running = data?.running ?? false;
 	const sources = data?.sources ?? [];
-	// Built-in reference layers never run, so they neither progress nor age.
-	const refreshable = sources.filter((s) => !s.static);
-	const doneCount = refreshable.filter(
-		(s) => s.live?.state === "ok" || s.live?.state === "failed",
-	).length;
-	const pct =
-		refreshable.length > 0
-			? Math.round((doneCount / refreshable.length) * 100)
-			: 0;
+	const progress = data?.progress ?? null;
 	const refreshBusy = running || refresh.isPending;
 
 	const lastRefreshedAt = data?.lastRefreshedAt ?? null;
@@ -188,14 +323,32 @@ export function SourcesPanel() {
 					</CardAction>
 				</CardHeader>
 				{running && (
-					<CardContent className="px-4">
-						<div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-							<span>Etap: {data?.progress?.phase ?? "crawl"}</span>
-							<span className="tabular-nums">
-								{doneCount}/{refreshable.length}
-							</span>
+					<CardContent className="flex flex-col gap-3 px-4">
+						<div
+							role="status"
+							aria-live="polite"
+							className="flex flex-col gap-3"
+						>
+							<div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
+								<span className="truncate">
+									Etap: {phaseLabel(progress?.phase ?? "crawl")}
+								</span>
+								<span className="shrink-0 tabular-nums">
+									{progress?.fraction == null
+										? "liczę postęp…"
+										: `${Math.round(progress.fraction * 100)}%`}
+								</span>
+							</div>
+							<Progress
+								value={progress?.fraction == null ? 0 : progress.fraction * 100}
+								aria-label="Postęp odświeżania"
+								className={cn(progress?.fraction == null && "animate-pulse")}
+							/>
+							{progress && <RunStats progress={progress} />}
+							{progress && (
+								<LiveSources progress={progress} sources={sources} />
+							)}
 						</div>
-						<Progress value={pct} aria-label="Postęp odświeżania" />
 					</CardContent>
 				)}
 			</Card>

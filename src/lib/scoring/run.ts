@@ -78,6 +78,17 @@ export interface ScoreRunOptions {
 	/** Compute and store scores but do not create alerts. */
 	dryRun?: boolean;
 	now?: Date;
+	/**
+	 * Called every few dozen offers with the running counters. The refresh
+	 * child forwards this to /api/crawl-status, so the /sources page can show
+	 * how many offers the scoring phase has worked through.
+	 */
+	onProgress?: (progress: {
+		done: number;
+		total: number;
+		scored: number;
+		errors: number;
+	}) => void;
 }
 
 export interface ScoreRunSummary {
@@ -444,18 +455,37 @@ export async function runAlertScoring(
 	const facts = await loadScoredFacts(rows.map((row) => row.id));
 	const placeholders = await loadPlaceholderPoints();
 
+	let done = 0;
 	for (const row of rows) {
 		try {
 			const entry = await scoreListingRow(row, now, facts, placeholders);
-			if (!entry) continue;
-			scored++;
-			bySegment[entry.segment] = (bySegment[entry.segment] ?? 0) + 1;
-			byRegion[entry.region] = (byRegion[entry.region] ?? 0) + 1;
-			if (entry.score.eligible) eligible++;
+			if (entry) {
+				scored++;
+				bySegment[entry.segment] = (bySegment[entry.segment] ?? 0) + 1;
+				byRegion[entry.region] = (byRegion[entry.region] ?? 0) + 1;
+				if (entry.score.eligible) eligible++;
+			}
 		} catch (error) {
 			errors.push(`listing ${row.id}: ${errorMessage(error)}`);
 		}
+		done++;
+		// A progress report per offer would rewrite a JSON file ~10x a second;
+		// one every 25 keeps the feed live without the I/O.
+		if (options.onProgress && done % 25 === 0) {
+			options.onProgress({
+				done,
+				total: rows.length,
+				scored,
+				errors: errors.length,
+			});
+		}
 	}
+	options.onProgress?.({
+		done: rows.length,
+		total: rows.length,
+		scored,
+		errors: errors.length,
+	});
 
 	let alerts = 0;
 	if (!options.dryRun) {

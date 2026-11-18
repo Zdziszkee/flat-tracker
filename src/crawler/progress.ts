@@ -18,6 +18,13 @@ export interface SourceProgress {
 	pages?: number;
 	newCount?: number;
 	updatedCount?: number;
+	/**
+	 * Counters of the work inside one phase: offers processed out of the
+	 * candidates the phase picked up. The crawler reports pages instead, and a
+	 * scrape has no known total, so the two never mix in one row.
+	 */
+	done?: number;
+	total?: number;
 	/** Short, single-line summary shown in the status badge. */
 	error?: string;
 	/** Full error or crawl log, when one is available. */
@@ -39,6 +46,60 @@ export type RefreshPhase =
 	| "public-investments"
 	| "finwire"
 	| "done";
+
+/**
+ * The pipeline in execution order. The /sources progress bar measures a run
+ * against this list, so the phase set is exhaustive by type: adding a member
+ * to `RefreshPhase` without giving it a position here is a compile error.
+ */
+const PHASE_ORDER: Record<RefreshPhase, number> = {
+	crawl: 1,
+	prune: 2,
+	"public-investments": 3,
+	finwire: 4,
+	"airbnb-enrich": 5,
+	geocode: 6,
+	rcn: 7,
+	"building-assign": 8,
+	"parcel-assign": 9,
+	"parcel-enrich": 10,
+	"listing-derived": 11,
+	"listing-facts": 12,
+	scoring: 13,
+	done: 14,
+};
+
+export const REFRESH_PHASES: readonly RefreshPhase[] = Object.entries(
+	PHASE_ORDER,
+)
+	.sort((left, right) => left[1] - right[1])
+	.map(([phase]) => phase as RefreshPhase);
+
+/**
+ * Rough share of a refresh run each phase takes, used only to draw one
+ * meaningful progress bar: counting phases equally left the bar at 4% after
+ * the whole crawl had finished, which reads as "nothing happened". The crawl
+ * dominates wall-clock time, RCN and the building assignment follow, and the
+ * rest are short. These are display weights, never scoring input, and they
+ * do not need to be exact: they make the bar move in the right proportion
+ * and give the ETA the right order of magnitude.
+ */
+export const PHASE_WEIGHTS: Record<RefreshPhase, number> = {
+	crawl: 0.45,
+	prune: 0.01,
+	"public-investments": 0.02,
+	finwire: 0.02,
+	"airbnb-enrich": 0.05,
+	geocode: 0.05,
+	rcn: 0.12,
+	"building-assign": 0.1,
+	"parcel-assign": 0.04,
+	"parcel-enrich": 0.04,
+	"listing-derived": 0.03,
+	"listing-facts": 0.04,
+	scoring: 0.03,
+	done: 0,
+};
 
 export interface RefreshProgress {
 	runId: string;

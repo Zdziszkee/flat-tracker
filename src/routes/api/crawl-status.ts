@@ -5,6 +5,9 @@ import { and, eq, isNull, max, or, sql } from "drizzle-orm";
 import {
 	getProgress,
 	isRunning,
+	PHASE_WEIGHTS,
+	REFRESH_PHASES,
+	type RefreshProgress,
 	type SourceProgress,
 } from "#/crawler/progress";
 import { remoteRefreshRunning } from "#/crawler/refresh-lock";
@@ -83,6 +86,129 @@ function toLiveState(
 
 const toIso = (value: Date | null | undefined): string | null =>
 	value ? value.toISOString() : null;
+
+/** Live numbers the /sources progress card renders. */
+interface RunProgress {
+	runId: string;
+	status: string;
+	startedAt: string;
+	finishedAt: string | null;
+	phase: string;
+	/** 1-based position of the current phase in `REFRESH_PHASES`. */
+	phaseIndex: number;
+	phasesTotal: number;
+	/** Work inside the current phase, when the phase reports it. */
+	phaseDone: number | null;
+	phaseTotal: number | null;
+	elapsedMs: number;
+	/** Offers stored by the crawl phase of this run. */
+	offersNew: number;
+	offersUpdated: number;
+	offersTotal: number;
+	/** Offers per minute over the phase that produced them. */
+	offersPerMinute: number | null;
+	/** 0-1 estimate from the phase position; null when not measurable. */
+	fraction: number | null;
+	etaMs: number | null;
+	/** Sources being worked on right now. */
+	current: string[];
+}
+
+function clamp01(value: number): number {
+	return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * Summarise a live run for the progress card.
+ *
+ * The bar is measured in phases, not offers: a crawl has no known offer
+ * total, while the phases that do report a total (facts, scoring) are a
+ * single row each. Inside the crawl phase the fraction is the share of
+ * portals that have settled, so the bar moves as each portal finishes.
+ */
+function summariseProgress(
+	progress: RefreshProgress,
+	portalIds: ReadonlySet<string>,
+	nowMs: number,
+): RunProgress {
+	const startedMs = Date.parse(progress.startedAt);
+	const elapsedMs = Number.isFinite(startedMs)
+		? Math.max(0, nowMs - startedMs)
+		: 0;
+	const phasesTotal = REFRESH_PHASES.filter((phase) => phase !== "done").length;
+	const phaseIndex = Math.max(1, REFRESH_PHASES.indexOf(progress.phase) + 1);
+	const settled = (row: SourceProgress) =>
+		row.state === "ok" || row.state === "failed";
+
+	let offersNew = 0;
+	let offersUpdated = 0;
+	for (const row of progress.sources) {
+		offersNew += row.newCount ?? 0;
+		offersUpdated += row.updatedCount ?? 0;
+	}
+
+	let fraction: number | null = null;
+	let phaseDone: number | null = null;
+	let phaseTotal: number | null = null;
+	if (progress.phase === "crawl") {
+		const portals = progress.sources.filter((row) => portalIds.has(row.source));
+		phaseTotal = portals.length;
+		phaseDone = portals.filter(settled).length;
+		fraction = portals.length > 0 ? phaseDone / portals.length : null;
+	} else {
+		const row = progress.sources.find((entry) => entry.state === "running");
+		if (row?.done != null && row.total != null && row.total > 0) {
+			phaseDone = row.done;
+			phaseTotal = row.total;
+			fraction = row.done / row.total;
+		} else if (row && settled(row)) {
+			phaseDone = 1;
+			phaseTotal = 1;
+			fraction = 1;
+		}
+	}
+	// Weighted, not phase-counted: the crawl is ~45% of a run and must move
+	// the bar accordingly, otherwise finishing every portal shows 4%.
+	let completedWeight = 0;
+	for (const phase of REFRESH_PHASES) {
+		if (phase === progress.phase) break;
+		completedWeight += PHASE_WEIGHTS[phase];
+	}
+	const currentWeight = PHASE_WEIGHTS[progress.phase] ?? 0;
+	const overall =
+		fraction == null
+			? completedWeight
+			: clamp01(completedWeight + currentWeight * fraction);
+	const etaMs =
+		overall != null && overall > 0.03
+			? Math.round((elapsedMs * (1 - overall)) / overall)
+			: null;
+
+	return {
+		runId: progress.runId,
+		status: progress.status,
+		startedAt: progress.startedAt,
+		finishedAt: progress.finishedAt ?? null,
+		phase: progress.phase,
+		phaseIndex,
+		phasesTotal,
+		phaseDone,
+		phaseTotal,
+		elapsedMs,
+		offersNew,
+		offersUpdated,
+		offersTotal: offersNew + offersUpdated,
+		offersPerMinute:
+			elapsedMs > 5_000
+				? Math.round(((offersNew + offersUpdated) / elapsedMs) * 60_000)
+				: null,
+		fraction: overall,
+		etaMs,
+		current: progress.sources
+			.filter((row) => row.state === "running")
+			.map((row) => row.source),
+	};
+}
 
 export const Route = createFileRoute("/api/crawl-status")({
 	server: {
@@ -173,18 +299,19 @@ export const Route = createFileRoute("/api/crawl-status")({
 				// the shared record it publishes every second.
 				const remote = remoteRefreshRunning();
 				const progress = getProgress() ?? remote;
+				const portalIds = new Set(
+					descriptors
+						.filter(
+							({ group, staticLayer }) => group === "portal" && !staticLayer,
+						)
+						.map(({ descriptor }) => descriptor.id),
+				);
 
 				return json({
 					running: isRunning() || remote != null,
 					lastRefreshedAt: toIso(lastRefreshed),
 					progress: progress
-						? {
-								runId: progress.runId,
-								status: progress.status,
-								startedAt: progress.startedAt,
-								finishedAt: progress.finishedAt ?? null,
-								phase: progress.phase,
-							}
+						? summariseProgress(progress, portalIds, Date.now())
 						: null,
 					sources: descriptors.map(
 						({ descriptor, group, staticLayer, fileFreshness }) => ({

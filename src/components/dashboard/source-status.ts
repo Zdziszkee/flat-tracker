@@ -21,6 +21,9 @@ export interface LiveState {
 	pages?: number;
 	newCount?: number;
 	updatedCount?: number;
+	/** Work inside one phase: offers processed out of the candidates. */
+	done?: number;
+	total?: number;
 	error?: string;
 	log?: string;
 }
@@ -57,18 +60,73 @@ export interface SourceStatus {
 	live: LiveState | null;
 }
 
+/** Live numbers of the run in flight, computed by `/api/crawl-status`. */
+export interface RunProgress {
+	runId: string;
+	status: string;
+	startedAt: string;
+	finishedAt: string | null;
+	phase: string;
+	/** 1-based position of the phase in the pipeline. */
+	phaseIndex: number;
+	phasesTotal: number;
+	phaseDone: number | null;
+	phaseTotal: number | null;
+	elapsedMs: number;
+	offersNew: number;
+	offersUpdated: number;
+	offersTotal: number;
+	offersPerMinute: number | null;
+	/** 0-1 estimate of the whole run. */
+	fraction: number | null;
+	etaMs: number | null;
+	current: string[];
+}
+
 export interface CrawlStatusResponse {
 	running: boolean;
 	/** Newest successful run across every non-static source. */
 	lastRefreshedAt: string | null;
-	progress: {
-		runId: string;
-		status: string;
-		startedAt: string;
-		finishedAt: string | null;
-		phase: string;
-	} | null;
+	progress: RunProgress | null;
 	sources: SourceStatus[];
+}
+
+/** Polish label for a pipeline phase, in pipeline order. */
+const PHASE_LABELS: Record<string, string> = {
+	crawl: "Pobieranie portali",
+	prune: "Czyszczenie starych ofert",
+	"public-investments": "Inwestycje publiczne",
+	finwire: "Indeksy cen (finwire)",
+	"airbnb-enrich": "Wzbogacanie Airbnb",
+	geocode: "Geokodowanie adresów",
+	rcn: "Import RCN",
+	"building-assign": "Przypisanie do budynków",
+	"parcel-assign": "Przypisanie działek",
+	"parcel-enrich": "Wzbogacanie działek",
+	"listing-derived": "Kolumny pochodne ofert",
+	"listing-facts": "Ekstrakcja faktów (LLM)",
+	scoring: "Scoring i alerty",
+	done: "Zakończone",
+};
+
+export function phaseLabel(phase: string): string {
+	return PHASE_LABELS[phase] ?? phase;
+}
+
+/** "1:07" / "12 min" for a duration in milliseconds. */
+export function elapsedLabel(ms: number): string {
+	const seconds = Math.max(0, Math.round(ms / 1000));
+	if (seconds < 60) return `${seconds} s`;
+	const minutes = Math.floor(seconds / 60);
+	const rest = seconds % 60;
+	if (minutes < 60) return `${minutes}:${String(rest).padStart(2, "0")} min`;
+	const hours = Math.floor(minutes / 60);
+	return `${hours} h ${String(minutes % 60).padStart(2, "0")} min`;
+}
+
+/** Compact count, Polish grouping: 1 234. */
+export function countLabel(value: number): string {
+	return value.toLocaleString("pl-PL");
 }
 
 /** Older than this and a source's last successful run counts as stale. */
