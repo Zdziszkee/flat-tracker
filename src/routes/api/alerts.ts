@@ -87,6 +87,7 @@ export const Route = createFileRoute("/api/alerts")({
 						compCount: listingScores.compCount,
 						compRcnCount: listingScores.compRcnCount,
 						eligible: listingScores.eligible,
+						gateReason: listingScores.gateReason,
 						/**
 						 * Comparable evidence from the listing's current-version score row.
 						 * An alert computed under an older SCORE_VERSION keeps its own
@@ -179,6 +180,7 @@ export const Route = createFileRoute("/api/alerts")({
 						/** True for an offer that fills a section without heating proof. */
 						heatingUnknown: payload.heatingUnknown === true,
 						eligible: row.eligible ?? true,
+						gateReason: row.gateReason,
 						fallbackReason:
 							row.eligible === false
 								? row.segment === "flat"

@@ -162,6 +162,7 @@ const SCORE_ROW_COLUMNS = {
 	district: listings.district,
 	propertyKind: listings.propertyKind,
 	propertyType: listings.propertyType,
+	externalId: listings.externalId,
 	firstSeenAt: listings.firstSeenAt,
 	parcelId: listings.parcelId,
 	parcelAreaM2: parcelFeatures.areaM2,
@@ -249,6 +250,9 @@ async function scoreListingRow(
 		source: row.source,
 		title: row.title,
 		propertyType: row.propertyKind ?? row.propertyType,
+		// Without the id an investmap `inv-` investment stand-in classifies as
+		// a flat (the feed-semantics fallback) and gets a fiction score.
+		externalId: row.externalId,
 	});
 	if (!kind) return null;
 	const segment = SEGMENT_BY_KIND[kind];
@@ -765,6 +769,7 @@ async function storeScore(
 			confidence: score.confidence,
 			eligible: score.eligible,
 			fallbackEligible: score.fallbackEligible,
+			gateReason: score.gateReason,
 			discountPct: score.discountPct,
 			fairPrice: score.fairPrice,
 			fairM2: score.fairM2,
@@ -792,6 +797,7 @@ async function storeScore(
 				confidence: score.confidence,
 				eligible: score.eligible,
 				fallbackEligible: score.fallbackEligible,
+				gateReason: score.gateReason,
 				discountPct: score.discountPct,
 				fairPrice: score.fairPrice,
 				fairM2: score.fairM2,

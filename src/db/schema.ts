@@ -859,6 +859,13 @@ export const listingScores = sqliteTable(
 		fallbackEligible: integer("fallback_eligible", { mode: "boolean" })
 			.notNull()
 			.default(false),
+		/**
+		 * First failed eligibility gate (`gateFailures[0]` in alert-score.ts),
+		 * null for a fully eligible offer. Persisted so a rejected row can be
+		 * audited without re-scoring it; selection-only changes do not bump
+		 * SCORE_VERSION, so old rows may carry null until re-scored.
+		 */
+		gateReason: text("gate_reason"),
 		rankPct: real("rank_pct"),
 		discountPct: real("discount_pct"),
 		fairPrice: real("fair_price"),

@@ -1732,6 +1732,24 @@ check(
 // this only asserts that scores exist at all.
 check("stored scores exist", (stored?.count ?? 0) > 0, stored);
 
+// The gate reason is persisted with the score: an eligible row never carries
+// one, and a fallback row that HAS a reason failed only on missing evidence
+// (heating/buildability), never on a statement against the offer. Rows written
+// before the column existed carry null, which stays legal on a fallback row.
+const gateConsistency = await db
+	.select({
+		eligibleWithReason: sql<number>`sum(case when ${listingScores.eligible} and ${listingScores.gateReason} is not null then 1 else 0 end)`,
+		badFallback: sql<number>`sum(case when ${listingScores.fallbackEligible} and ${listingScores.gateReason} is not null and ${listingScores.gateReason} not in ('no_heating_evidence', 'not_building_plot') then 1 else 0 end)`,
+	})
+	.from(listingScores);
+const gates = gateConsistency[0];
+check(
+	"stored gate reasons agree with eligibility",
+	gates == null ||
+		((gates.eligibleWithReason ?? 0) === 0 && (gates.badFallback ?? 0) === 0),
+	gates,
+);
+
 const alerts = await db
 	.select({
 		count: sql<number>`count(*)`,

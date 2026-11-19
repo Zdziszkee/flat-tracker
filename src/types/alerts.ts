@@ -226,6 +226,12 @@ export interface AlertDto {
 	 * a fully eligible offer.
 	 */
 	fallbackReason: "heating" | "evidence" | null;
+	/**
+	 * First failed gate from the stored score (`no_heating_evidence`,
+	 * `not_building_plot`, ...). Null for a fully eligible offer and for rows
+	 * scored before the column existed.
+	 */
+	gateReason: string | null;
 	/** Why the alert was raised (for example "fresh_arrival"); null when the
 	 * stored payload does not say. */
 	reason: string | null;
