@@ -161,9 +161,28 @@ interface WorkingComp {
 const AUCTION_SOURCES = new Set(["licytacje-komornik", "mapalicytacji"]);
 const FIVE_YEARS_SECONDS = 5 * 365 * 86_400;
 
+export interface MarketMedian {
+	/** Median transaction price per m² for the offer's kind and city. */
+	medianM2: number;
+	p25M2: number;
+	p75M2: number;
+	/** Transactions behind the median. */
+	sample: number;
+	/** Radius the median was measured in (null for a region-wide sample). */
+	radiusM: number | null;
+	/** How far back the sample reaches. */
+	months: number;
+}
+
 export interface SaleValuationResult {
 	estimate: ValuationEstimate | null;
 	reason: string | null;
+	/**
+	 * City-wide RCN median, measured independently of the comp selection: a
+	 * reference for a thin comp set ("here is the whole market") rather than a
+	 * substitute for comparables.
+	 */
+	marketMedian?: MarketMedian | null;
 }
 
 function secondsOf(value: Date | number | null): number | null {
@@ -972,6 +991,55 @@ async function momentumSeries(
 }
 
 /**
+ * The whole market as a reference: median, p25 and p75 transaction price per
+ * m² for the offer's kind within 8 km (a city) over the last 24 months.
+ *
+ * This is deliberately not a valuation: a city median ignores the street, the
+ * building and the condition, so it can only say "the market here is X". It is
+ * shown beside a thin comp set (and used as the reason text when fewer than
+ * three comparables exist) instead of pretending two comps are a valuation.
+ */
+async function marketMedianFor(
+	offer: OfferForValuation,
+	nowSeconds: number,
+): Promise<MarketMedian | null> {
+	if (offer.lat == null || offer.lng == null) return null;
+	const [minM2, maxM2] = validM2(offer.kind);
+	const months = 24;
+	const since = nowSeconds - months * 30 * 86_400;
+	const box = bbox(offer.lat, offer.lng, 8000);
+	const rows = await db
+		.select({ pricePerM2: transactions.pricePerM2 })
+		.from(transactions)
+		.where(
+			and(
+				eq(transactions.kind, requiredKind(offer.kind)),
+				sql`${transactions.date} >= ${since}`,
+				sql`${transactions.date} <= ${nowSeconds}`,
+				sql`${transactions.pricePerM2} between ${minM2} and ${maxM2}`,
+				sql`${transactions.lat} between ${box.minLat} and ${box.maxLat}`,
+				sql`${transactions.lng} between ${box.minLng} and ${box.maxLng}`,
+			),
+		)
+		.limit(5000);
+	const values = rows
+		.map((row) => row.pricePerM2)
+		.filter((value): value is number => value != null && value > 0)
+		.sort((a, b) => a - b);
+	if (values.length < 20) return null;
+	const quantile = (q: number) =>
+		values[Math.min(values.length - 1, Math.floor(q * (values.length - 1)))];
+	return {
+		medianM2: Math.round(quantile(0.5)),
+		p25M2: Math.round(quantile(0.25)),
+		p75M2: Math.round(quantile(0.75)),
+		sample: values.length,
+		radiusM: 8000,
+		months,
+	};
+}
+
+/**
  * Estimate today's fair value from time-adjusted RCN comparables. Active
  * asking offers are only a fallback when fewer than three RCN comps survive.
  */
@@ -989,6 +1057,8 @@ export async function estimateSaleValue(
 		compareToOffer?: boolean;
 		/** Skip the forward-looking model when only the fair value is needed. */
 		includeUpside?: boolean;
+		/** Also measure the city-wide median (one extra aggregate query). */
+		includeMarketMedian?: boolean;
 	} = {},
 ): Promise<SaleValuationResult> {
 	const compareToOffer = options.compareToOffer !== false;
@@ -1027,7 +1097,8 @@ export async function estimateSaleValue(
 		comps = [...comps, ...fallback.filter((comp) => !existing.has(comp.id))];
 	}
 	if (comps.length < 3) {
-		return { estimate: null, reason: "insufficient_comps" };
+		const marketMedian = await marketMedianFor(offer, nowSeconds);
+		return { estimate: null, reason: "insufficient_comps", marketMedian };
 	}
 	comps = comps.sort((a, b) => b.weight - a.weight).slice(0, 140);
 	const overall = stats(comps);
@@ -1117,5 +1188,8 @@ export async function estimateSaleValue(
 		statistics: estimateStatistics(comps, asking, nowSeconds),
 		upside,
 	};
-	return { estimate, reason: null };
+	const marketMedian = options.includeMarketMedian
+		? await marketMedianFor(offer, nowSeconds)
+		: null;
+	return { estimate, reason: null, marketMedian };
 }

@@ -130,6 +130,23 @@ export function ValuationPanel({ id }: { id: number }) {
 						</span>
 					)}
 				</div>
+				{/* The whole market, independent of the comp set: it keeps a thin
+				    or empty comp list from reading as "no price history". */}
+				{data.marketMedian && (
+					<div className="text-muted-foreground">
+						Mediana rynku:{" "}
+						<b className="text-foreground/90">
+							{formatNumber(data.marketMedian.medianM2)} zł/m²
+						</b>{" "}
+						({formatNumber(data.marketMedian.p25M2)}–
+						{formatNumber(data.marketMedian.p75M2)} · {data.marketMedian.sample}{" "}
+						transakcji · {data.marketMedian.months} mies.
+						{data.marketMedian.radiusM != null
+							? ` · ${Math.round(data.marketMedian.radiusM / 1000)} km`
+							: ""}
+						)
+					</div>
+				)}
 				<div className="flex flex-col gap-0.5">
 					{compRow(
 						"To samo budynku",

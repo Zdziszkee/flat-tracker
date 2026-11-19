@@ -380,6 +380,18 @@ export interface OfferValuation {
 		kind: PropertyKind | null;
 	};
 	estimate: ValuationEstimate | null;
+	/**
+	 * City-wide RCN median for the offer's kind (8 km / 24 months), so a thin
+	 * or empty comp set still shows what the market around it costs.
+	 */
+	marketMedian: {
+		medianM2: number;
+		p25M2: number;
+		p75M2: number;
+		sample: number;
+		radiusM: number | null;
+		months: number;
+	} | null;
 	rent: RentEstimate | null;
 	/**
 	 * Purchase price used as the ROI denominator. Sales use the asking price;

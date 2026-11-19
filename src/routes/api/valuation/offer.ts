@@ -252,7 +252,9 @@ export const Route = createFileRoute("/api/valuation/offer")({
 				};
 				const saleResult =
 					isSale && kind != null
-						? await estimateSaleValue(valuationOffer, new Date())
+						? await estimateSaleValue(valuationOffer, new Date(), {
+								includeMarketMedian: true,
+							})
 						: {
 								estimate: null,
 								reason: isSale ? "unsupported_kind" : "not_sale",
@@ -321,6 +323,7 @@ export const Route = createFileRoute("/api/valuation/offer")({
 						kind: kind as PropertyKind | null,
 					},
 					estimate: saleResult.estimate,
+					marketMedian: saleResult.marketMedian ?? null,
 					rent: null,
 					buyPrice,
 					forecast,

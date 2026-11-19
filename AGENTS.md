@@ -839,6 +839,22 @@ deletes only `source = "rcn"`, so the external rows survive a rebuild.
 `src/lib/valuation/external-city.ts` maps a comparable's coordinates to the
 nearest tracked city (100 km) or its voivodeship proxy.
 
+### The market median beside a thin comp set
+
+The comparable set already mixes RCN transactions and the active asking
+offers in the database (a listing-only set is converted to the transaction
+level with the measured asking ratio), and the selection is capped where the
+backtest measured it best (40 flats, 140 plots), so "more data points" means
+more *evidence tiers*, not a wider radius.
+
+`estimateSaleValue` therefore also reports a city-wide median when asked
+(`includeMarketMedian`, used by `/api/valuation/offer`): median, p25 and p75
+transaction zł/m² for the offer's kind within 8 km over 24 months, with the
+sample size. It is deliberately not a valuation (it ignores street, building
+and condition) and never becomes a comparable or a score input; it is shown on
+the valuation panel and returned as `marketMedian` even when the comp set is
+empty, so a thin offer reads as "the market here is X" instead of a blank.
+
 ### Upside potential (1-5 years)
 
 `ValuationEstimate.upside` (`src/lib/valuation/upside.ts`) is the forward
