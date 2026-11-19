@@ -29,3 +29,6 @@ dev-server.log
 *.log
 public/map-debug.html
 public/map-min-test.html
+
+# Serena MCP local project state
+.serena/
