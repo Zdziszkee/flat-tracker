@@ -27,7 +27,15 @@ import {
  */
 
 const BASE = "https://tabelaofert.pl";
-const DETAIL_BUDGET_PER_PAGE = 8;
+/**
+ * Detail pages a first-page-only run may follow per list page. Investment
+ * and direct-offer pages share the budget; `TABELAOFERT_DETAIL_BUDGET` raises
+ * it for a one-off drain of a fresh database (the list rows carry no geo).
+ */
+const detailBudgetPerPage = (): number => {
+	const raw = Number(process.env.TABELAOFERT_DETAIL_BUDGET);
+	return Number.isFinite(raw) && raw >= 0 ? raw : 8;
+};
 // Unit inventory changes as flats sell; a short TTL also lets a reset DB
 // recover the detail rows without waiting a month.
 const DETAIL_TTL_DAYS = 3;
@@ -128,6 +136,77 @@ interface OfferContext {
 	constructionEndDate: string | null;
 	sourceCategory: string | null;
 	pageUrl: string;
+	/**
+	 * The page's shared place. On an investment page every unit offer points
+	 * its `geo`/`address` at `#geo`/`#adres` (`{"@id": "#geo"}`); only the
+	 * first one inlines the coordinates, so reading `itemOffered.geo` alone
+	 * left every unit except the first without a map point.
+	 */
+	place: PagePlace | null;
+}
+
+interface PagePlace {
+	lat: number | null;
+	lng: number | null;
+	street: string | null;
+	city: string | null;
+	district: string | null;
+	voivodeship: string | null;
+	address: string | null;
+}
+
+/** First numeric geo and first postal address anywhere in the LD+JSON nodes. */
+function pagePlace(nodes: unknown[]): PagePlace | null {
+	let geo: { lat: number | null; lng: number | null } | null = null;
+	let postal: {
+		street: string | null;
+		city: string | null;
+		district: string | null;
+		voivodeship: string | null;
+	} | null = null;
+	const walk = (value: unknown): void => {
+		if (!value || typeof value !== "object" || (geo && postal)) return;
+		if (Array.isArray(value)) {
+			for (const entry of value) walk(entry);
+			return;
+		}
+		const obj = value as Record<string, unknown>;
+		if (!geo) {
+			const g = obj.geo as Record<string, unknown> | undefined;
+			const lat = g && typeof g === "object" ? num(g.latitude) : null;
+			const lng = g && typeof g === "object" ? num(g.longitude) : null;
+			if (lat != null && lng != null) geo = { lat, lng };
+		}
+		if (!postal) {
+			const a = obj.address as Record<string, unknown> | undefined;
+			const street = a && typeof a === "object" ? str(a.streetAddress) : null;
+			const locality =
+				a && typeof a === "object" ? cleanText(str(a.addressLocality)) : null;
+			if (street || locality) {
+				postal = {
+					street,
+					city: locality?.split(",")[0]?.trim() ?? null,
+					district: locality?.includes(",")
+						? locality.split(",").slice(1).join(",").trim() || null
+						: null,
+					voivodeship:
+						a && typeof a === "object" ? cleanText(str(a.addressRegion)) : null,
+				};
+			}
+		}
+		for (const entry of Object.values(obj)) walk(entry);
+	};
+	for (const node of nodes) walk(node);
+	if (!geo && !postal) return null;
+	return {
+		lat: geo?.lat ?? null,
+		lng: geo?.lng ?? null,
+		street: postal?.street ?? null,
+		city: postal?.city ?? null,
+		district: postal?.district ?? null,
+		voivodeship: postal?.voivodeship ?? null,
+		address: [postal?.street, postal?.city].filter(Boolean).join(", ") || null,
+	};
 }
 
 function offerToListing(
@@ -147,14 +226,25 @@ function offerToListing(
 	const areaM2 = numFromQuantity(item.floorSize);
 	const rooms = numFromQuantity(item.numberOfRooms);
 	const floor = str(item.floorLevel);
-	const street = str(addressNode.streetAddress);
-	const locality = cleanText(str(addressNode.addressLocality));
+	const street =
+		str(addressNode.streetAddress) ?? context.place?.street ?? null;
+	const placeLocality = [context.place?.city, context.place?.district]
+		.filter(Boolean)
+		.join(", ");
+	const locality =
+		cleanText(str(addressNode.addressLocality)) ?? (placeLocality || null);
 	const city = locality?.split(",")[0]?.trim() ?? null;
-	const voivodeship = cleanText(str(addressNode.addressRegion));
+	const voivodeship =
+		cleanText(str(addressNode.addressRegion)) ??
+		context.place?.voivodeship ??
+		null;
 	const district = locality?.includes(",")
 		? locality.split(",").slice(1).join(",").trim() || null
-		: null;
-	const address = [street, locality].filter(Boolean).join(", ") || null;
+		: (context.place?.district ?? null);
+	const address =
+		[street, locality].filter(Boolean).join(", ") ||
+		context.place?.address ||
+		null;
 	const unitTitle = cleanText(str(offer.name));
 	const investmentTitle = context.investmentTitle;
 	const title = [investmentTitle, unitTitle].filter(Boolean).join(" — ");
@@ -200,8 +290,8 @@ function offerToListing(
 		heatingType: propertyValue(item.additionalProperty, "Ogrzewanie"),
 		propertyType,
 		features: JSON.stringify(features),
-		lat: num(geo.latitude),
-		lng: num(geo.longitude),
+		lat: num(geo.latitude) ?? context.place?.lat ?? null,
+		lng: num(geo.longitude) ?? context.place?.lng ?? null,
 		listedAt: null,
 		scrapedAt: new Date().toISOString(),
 	};
@@ -236,6 +326,7 @@ function contextOf(
 	product: Record<string, unknown> | null,
 	pageUrl: string,
 	category: string | null,
+	nodes: unknown[],
 ): OfferContext {
 	const brand = (product?.brand ?? {}) as Record<string, unknown>;
 	const properties = product?.additionalProperty;
@@ -259,6 +350,7 @@ function contextOf(
 			: null,
 		sourceCategory: category,
 		pageUrl,
+		place: pagePlace(nodes),
 	};
 }
 
@@ -271,7 +363,7 @@ export const tabelaofertAdapter: CheerioAdapter = {
 	),
 	maxRequestsPerCrawl: 1200,
 	firstPageOnlyRequests:
-		REGIONS.length * CATEGORIES.length * (1 + DETAIL_BUDGET_PER_PAGE),
+		REGIONS.length * CATEGORIES.length * (1 + detailBudgetPerPage()),
 
 	async extractHtml(html, url, enqueue, root) {
 		const $ = root as unknown as Selector;
@@ -282,7 +374,7 @@ export const tabelaofertAdapter: CheerioAdapter = {
 
 		if (isInvestmentUrl(url)) {
 			// Investment detail: every offer is a unit for sale.
-			const context = contextOf(product, url, category);
+			const context = contextOf(product, url, category, nodes);
 			const listings: Listing[] = [];
 			for (const offer of productOffers(product)) {
 				const listing = offerToListing(offer, context);
@@ -298,7 +390,7 @@ export const tabelaofertAdapter: CheerioAdapter = {
 			// Direct offer detail: the list row has no geo or address, this page
 			// has both. Marking it fetched keeps the list page from queueing it
 			// again until the TTL expires.
-			const context = contextOf(product, url, category);
+			const context = contextOf(product, url, category, nodes);
 			const listings: Listing[] = [];
 			for (const offer of productOffers(product)) {
 				const listing = offerToListing(offer, context);
@@ -311,7 +403,7 @@ export const tabelaofertAdapter: CheerioAdapter = {
 
 		// List page: direct offers are emitted now, investments are queued
 		// for their unit-level detail page.
-		const context = contextOf(product, url, category);
+		const context = contextOf(product, url, category, nodes);
 		const listings: Listing[] = [];
 		const detailUrls: string[] = [];
 		for (const offer of productOffers(product)) {
@@ -322,7 +414,7 @@ export const tabelaofertAdapter: CheerioAdapter = {
 				if (
 					id &&
 					!detailCache.fresh(detailCache.get(id)) &&
-					detailUrls.length < DETAIL_BUDGET_PER_PAGE
+					detailUrls.length < detailBudgetPerPage()
 				) {
 					detailUrls.push(offerUrl);
 				}
@@ -335,7 +427,7 @@ export const tabelaofertAdapter: CheerioAdapter = {
 				// (bounded by the page budget) so the offer lands on the map.
 				if (
 					!detailCache.fresh(detailCache.get(listing.externalId)) &&
-					detailUrls.length < DETAIL_BUDGET_PER_PAGE
+					detailUrls.length < detailBudgetPerPage()
 				) {
 					detailUrls.push(offerUrl);
 				}
