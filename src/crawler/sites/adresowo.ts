@@ -2,6 +2,7 @@ import { REGIONS } from "../regions.ts";
 import type { CheerioAdapter, CheerioSelection, Listing } from "../types.ts";
 import { formatAddressForGeocode, parseAddressFromText } from "./address.ts";
 import { createDetailCache, enqueueDetailPass } from "./detail-cache.ts";
+import { withHarvestedAttributes } from "./html-attributes.ts";
 import { cleanText } from "./html-entities.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
 import { num, str } from "./ldoffer.ts";
@@ -47,6 +48,8 @@ interface CachedDetail {
 	areaM2: number | null;
 	rooms: number | null;
 	floor: string | null;
+	/** Every labelled value the detail page printed (see html-attributes.ts). */
+	features: string | null;
 }
 
 const detailCache = createDetailCache<CachedDetail>({
@@ -62,6 +65,7 @@ const detailCache = createDetailCache<CachedDetail>({
 		areaM2: typeof entry.areaM2 === "number" ? entry.areaM2 : null,
 		rooms: typeof entry.rooms === "number" ? entry.rooms : null,
 		floor: typeof entry.floor === "string" ? entry.floor : null,
+		features: typeof entry.features === "string" ? entry.features : null,
 	}),
 });
 
@@ -184,6 +188,42 @@ function cardToListing(
 	};
 }
 
+/**
+ * The detail page prints its facts as chips whose label comes *after* the
+ * value ("1960 | rok budowy", "parter", "brak windy") plus a building-material
+ * icon code, so a selector per chip is fragile. The visible text is stable and
+ * short, and these are the facts it carries.
+ */
+function detailChips(html: string): {
+	buildYear: number | null;
+	buildingMaterial: string | null;
+	hasElevator: boolean | null;
+	floor: string | null;
+} {
+	const text =
+		cleanText(
+			html
+				.replace(/<script[\s\S]*?<\/script>/giu, " ")
+				.replace(/<style[\s\S]*?<\/style>/giu, " ")
+				.replace(/<[^>]+>/gu, " | "),
+		) ?? "";
+	const year = text.match(/(\d{4})[\s|]*rok budowy/iu);
+	const material = html.match(
+		/construction-(brick|panel|wood|concrete|silicate)/iu,
+	);
+	const floorMatch = text.match(/\b(parter|\d+\s*pi[eę]tr\w*)\b/iu);
+	return {
+		buildYear: year ? Number.parseInt(year[1], 10) : null,
+		buildingMaterial: material ? material[1].toLowerCase() : null,
+		hasElevator: /brak windy/iu.test(text)
+			? false
+			: /\bwinda\b/iu.test(text)
+				? true
+				: null,
+		floor: floorMatch ? floorMatch[1].replace(/\s+/gu, " ") : null,
+	};
+}
+
 function detailToListing(
 	html: string,
 	url: string,
@@ -223,6 +263,7 @@ function detailToListing(
 		absoluteUrl($('link[rel="canonical"]').eq(0).attr("href"), BASE) ?? url;
 	const propertyType = propertyTypeFromListingUrl(url);
 
+	const chips = detailChips(html);
 	const listing: Listing = {
 		source: "adresowo",
 		externalId: externalIdOf(url),
@@ -232,19 +273,31 @@ function detailToListing(
 		pricePerM2: price && areaM2 ? price / areaM2 : null,
 		areaM2,
 		rooms,
-		floor,
+		floor: floor ?? chips.floor,
 		district: null,
 		address,
 		description: description ?? null,
 		heatingType: null,
 		propertyType,
-		features: JSON.stringify({
-			private_owner: true,
-			advertiser_type: "private",
-			...(propertyType === "plot" && areaM2 != null
-				? { plot_area: areaM2 }
-				: {}),
-		}),
+		features: JSON.stringify(
+			withHarvestedAttributes(
+				{
+					private_owner: true,
+					advertiser_type: "private",
+					...(chips.buildYear != null ? { build_year: chips.buildYear } : {}),
+					...(chips.buildingMaterial
+						? { building_material: chips.buildingMaterial }
+						: {}),
+					...(chips.hasElevator != null
+						? { has_elevator: chips.hasElevator }
+						: {}),
+					...(propertyType === "plot" && areaM2 != null
+						? { plot_area: areaM2 }
+						: {}),
+				},
+				html,
+			),
+		),
 		lat: num(geo.latitude),
 		lng: num(geo.longitude),
 		listedAt: null,
@@ -260,6 +313,7 @@ function detailToListing(
 		areaM2: listing.areaM2,
 		rooms: listing.rooms,
 		floor: listing.floor,
+		features: listing.features,
 	});
 
 	return listing;
@@ -311,6 +365,17 @@ export const adresowoAdapter: CheerioAdapter = {
 				listing.areaM2 = cached.areaM2 ?? listing.areaM2;
 				listing.rooms = cached.rooms ?? listing.rooms;
 				listing.floor = cached.floor ?? listing.floor;
+				// The detail pass is the only place these labels are read; a
+				// cached entry keeps them for the next list-only run.
+				if (cached.features) {
+					const base = listing.features
+						? (JSON.parse(listing.features) as Record<string, unknown>)
+						: {};
+					listing.features = JSON.stringify({
+						...base,
+						...(JSON.parse(cached.features) as Record<string, unknown>),
+					});
+				}
 			},
 		});
 		if (detailUrls.length > 0) await enqueue(detailUrls);

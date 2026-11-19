@@ -1,6 +1,7 @@
 import { regionsForPoint } from "../regions.ts";
 import type { CheerioAdapter, CheerioSelection, Listing } from "../types.ts";
 import { createDetailCache } from "./detail-cache.ts";
+import { withHarvestedAttributes } from "./html-attributes.ts";
 import { cleanText } from "./html-entities.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
 import { num, str } from "./ldoffer.ts";
@@ -402,7 +403,9 @@ function detailToListing(
 		description: description ?? null,
 		heatingType: null,
 		propertyType,
-		features: JSON.stringify(features),
+		// The detail page prints far more than the parsed table (media, building
+		// age, room layout, encumbrances); keep every labelled value it shows.
+		features: JSON.stringify(withHarvestedAttributes(features, html)),
 		lat,
 		lng,
 		listedAt,

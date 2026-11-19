@@ -6,6 +6,7 @@ import {
 	parseAddressFromText,
 } from "./address.ts";
 import { createDetailCache, enqueueDetailPass } from "./detail-cache.ts";
+import { withHarvestedAttributes } from "./html-attributes.ts";
 import { cleanText } from "./html-entities.ts";
 import { findLdNodes, parseLdJson } from "./ldjson.ts";
 import { str } from "./ldoffer.ts";
@@ -314,9 +315,14 @@ function detailToListing(
 		description: description ?? null,
 		heatingType: heating,
 		propertyType,
-		features: JSON.stringify({
-			...attributes,
-			market,
+		// The Polish-keyed attribute list is parsed explicitly; the harvest adds
+		// every other labelled value the detail page prints (media, costs,
+		// building details) without a selector per row.
+		features: JSON.stringify(
+			withHarvestedAttributes(
+				{
+					...attributes,
+					market,
 			build_year: buildYear,
 			building_material: material,
 			ownership,
@@ -335,28 +341,32 @@ function detailToListing(
 			...(advertiser ? { advertiser_type: advertiser } : {}),
 			...(building ? { building_type: building } : {}),
 			...(adminFee != null ? { admin_fee: adminFee } : {}),
-			...(deposit != null ? { deposit } : {}),
-		}),
+					...(deposit != null ? { deposit } : {}),
+				},
+				html,
+			),
+		}
+	),
 		lat,
 		lng,
 		listedAt: null,
 		scrapedAt: new Date().toISOString(),
-	};
+}
 
-	detailCache.store(listing.externalId, {
-		lat: listing.lat,
-		lng: listing.lng,
-		address: listing.address,
-		description: listing.description,
-		areaM2: listing.areaM2,
-		rooms: listing.rooms,
-		floor: listing.floor,
-		propertyType: listing.propertyType,
-		features: listing.features,
-		heatingType: listing.heatingType,
-	});
+detailCache.store(listing.externalId, {
+	lat: listing.lat,
+	lng: listing.lng,
+	address: listing.address,
+	description: listing.description,
+	areaM2: listing.areaM2,
+	rooms: listing.rooms,
+	floor: listing.floor,
+	propertyType: listing.propertyType,
+	features: listing.features,
+	heatingType: listing.heatingType,
+});
 
-	return listing;
+return listing;
 }
 
 export const sprzedajemyAdapter: CheerioAdapter = {
