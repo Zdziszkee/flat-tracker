@@ -13,6 +13,7 @@ import {
 	type PreparedListingFacts,
 	storeListingFacts,
 } from "#/lib/llm/extract.ts";
+import { propertyKindOf } from "#/lib/property-kind.ts";
 import { normalizeListingAttributes } from "./attributes.ts";
 import type { Listing } from "./types.ts";
 
@@ -156,6 +157,16 @@ export async function saveListings(
 			externalId: l.externalId,
 			url: l.url,
 			title: l.title,
+			// Classify on arrival. The derived pass also fills this, but it
+			// only runs after the crawl: until then the /map and /listings
+			// kind filter (a SQL predicate) would hide every fresh offer and
+			// the facet bar would count them under "Wszystkie" only.
+			propertyKind: propertyKindOf({
+				source: l.source,
+				title: l.title,
+				propertyType: l.propertyType,
+				externalId: l.externalId,
+			}),
 			price: l.price,
 			pricePerM2: l.pricePerM2,
 			areaM2: l.areaM2,
@@ -243,6 +254,10 @@ export async function saveListings(
 					title: sql.raw(`excluded.title`),
 					price: sql.raw(`excluded.price`),
 					pricePerM2: sql.raw(`excluded.pricePerM2`),
+					// A list-only re-crawl may not carry the portal's type, so
+					// keep a kind a detail row already established; the derived
+					// pass is the authority for clearing it.
+					propertyKind: sql`coalesce(excluded.property_kind, ${listings.propertyKind})`,
 					// List pages may omit detail-only fields (area on a full
 					// classifieds card, rooms/floor on a list row); a later
 					// detail row owns them. Coalesce so the next list crawl
