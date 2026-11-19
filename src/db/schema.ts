@@ -866,6 +866,14 @@ export const listingScores = sqliteTable(
 		 * SCORE_VERSION, so old rows may carry null until re-scored.
 		 */
 		gateReason: text("gate_reason"),
+		/**
+		 * Every failed gate, in evaluation order (`gateFailures` in
+		 * alert-score.ts), JSON array. `gate_reason` keeps only the first, so a
+		 * rejected row could not be audited for its *other* failures without
+		 * re-scoring it; this column makes the whole rejection diagnosable in
+		 * SQL. Null on rows written before the column existed.
+		 */
+		gateFailuresJson: text("gate_failures_json"),
 		rankPct: real("rank_pct"),
 		discountPct: real("discount_pct"),
 		fairPrice: real("fair_price"),

@@ -1,0 +1,1 @@
+ALTER TABLE `listing_scores` ADD `gate_failures_json` text;

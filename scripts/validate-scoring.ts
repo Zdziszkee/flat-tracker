@@ -1740,13 +1740,20 @@ const gateConsistency = await db
 	.select({
 		eligibleWithReason: sql<number>`sum(case when ${listingScores.eligible} and ${listingScores.gateReason} is not null then 1 else 0 end)`,
 		badFallback: sql<number>`sum(case when ${listingScores.fallbackEligible} and ${listingScores.gateReason} is not null and ${listingScores.gateReason} not in ('no_heating_evidence', 'not_building_plot') then 1 else 0 end)`,
+		// The full failure list must agree with the first-failure column and
+		// with eligibility. Null (pre-column rows) stays legal.
+		eligibleWithFailures: sql<number>`sum(case when ${listingScores.eligible} and ${listingScores.gateFailuresJson} is not null and ${listingScores.gateFailuresJson} != '[]' then 1 else 0 end)`,
+		reasonMismatch: sql<number>`sum(case when ${listingScores.gateFailuresJson} is not null and coalesce(json_extract(${listingScores.gateFailuresJson}, '$[0]'), '') != coalesce(${listingScores.gateReason}, '') then 1 else 0 end)`,
 	})
 	.from(listingScores);
 const gates = gateConsistency[0];
 check(
 	"stored gate reasons agree with eligibility",
 	gates == null ||
-		((gates.eligibleWithReason ?? 0) === 0 && (gates.badFallback ?? 0) === 0),
+		((gates.eligibleWithReason ?? 0) === 0 &&
+			(gates.badFallback ?? 0) === 0 &&
+			(gates.eligibleWithFailures ?? 0) === 0 &&
+			(gates.reasonMismatch ?? 0) === 0),
 	gates,
 );
 

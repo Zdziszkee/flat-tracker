@@ -151,6 +151,8 @@ export interface AlertScore {
 	/** Passes every gate except `no_heating_evidence`; fills a short section. */
 	fallbackEligible: boolean;
 	gateReason: string | null;
+	/** Every failed gate in evaluation order; empty for an eligible offer. */
+	gateFailures: string[];
 	reasons: ScoreReason[];
 	flags: string[];
 	amenities: GeoUniqueness | null;
@@ -1505,6 +1507,7 @@ export function scoreAlert(
 		/** All gates pass except proof of municipal heating. */
 		fallbackEligible,
 		gateReason,
+		gateFailures,
 		reasons,
 		flags,
 		amenities: geo,
