@@ -48,6 +48,11 @@ try {
 	// every batch (a crawl/RCN drain commits thousands of them), and a power
 	// cut can only cost the most recent commits, never the database.
 	sqlite.pragma("synchronous = NORMAL");
+	// A bulk import (the GUGiK RCN drain writes millions of rows) can leave a
+	// multi-GB WAL behind: SQLite reuses the file and only truncates it at a
+	// checkpoint, and the default is "never". 256 MB is enough for the hourly
+	// crawl's burst and keeps the file from filling a small VM disk.
+	sqlite.pragma("journal_size_limit = 268435456");
 } catch (err) {
 	console.warn(
 		`[db] could not apply tuning pragmas (continuing): ${String(err).slice(0, 120)}`,
