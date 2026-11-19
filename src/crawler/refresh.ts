@@ -17,6 +17,7 @@ import {
 import { geocodeUnlocatedListings } from "./geocode-listings.ts";
 import { importFinwire } from "./import-finwire.ts";
 import { importRcn } from "./import-rcn.ts";
+import { osmIndexReady } from "./osm-index.ts";
 import { runCrawlWithRetry } from "./pipeline.ts";
 import {
 	beginRefresh,
@@ -199,8 +200,14 @@ export async function refreshAll(
 	// Begin the live-progress registry synchronously so a concurrent caller
 	// (hourly task / dev boot / /api/refresh) sees the run immediately.
 	const siteAdapters = adapters.filter((base) => !DEMO_SITES.has(base.id));
+	// The address matcher reads `osm_buildings`. On a fresh database that
+	// index does not exist yet, so it has to be built *before* geocoding:
+	// otherwise every address-bearing offer falls through to the 100-request
+	// Photon budget while a local index could anchor it instantly.
+	const needsOsmIndex = !(await osmIndexReady());
 	beginRefresh([
 		...siteAdapters.map((a) => a.id),
+		...(needsOsmIndex ? ["osm-index"] : []),
 		"geocoding",
 		"rcn-import",
 		"gugik-import",
@@ -545,6 +552,44 @@ export async function refreshAll(
 					startedAt: aT0,
 					err,
 					context: "airbnb detail enrichment failed",
+				});
+			}
+		}
+
+		// Build the OSM building index before the address matcher runs. It is a
+		// one-time cost per region set (two Geofabrik extracts, ~3.5 min) and the
+		// only local source of building/street coordinates.
+		if (needsOsmIndex) {
+			setPhase("osm-index");
+			const osmT0 = Date.now();
+			setSourceProgress("osm-index", {
+				state: "running",
+				startedAt: new Date(osmT0).toISOString(),
+			});
+			try {
+				const { buildOsmIndex } = await import("./osm-index.ts");
+				const rows = await buildOsmIndex();
+				await recordCrawlRun({
+					source: "osm-index",
+					startedAt: new Date(osmT0),
+					finishedAt: new Date(),
+					pages: 0,
+					newCount: rows,
+					updatedCount: 0,
+				});
+				setSourceProgress("osm-index", {
+					state: "ok",
+					finishedAt: new Date().toISOString(),
+					newCount: rows,
+				});
+			} catch (err) {
+				// A missing Geofabrik extract must not cost the crawl: geocoding
+				// still falls back to Photon and the next run retries the build.
+				await recordFailure({
+					source: "osm-index",
+					startedAt: osmT0,
+					err,
+					context: "OSM building index build failed",
 				});
 			}
 		}

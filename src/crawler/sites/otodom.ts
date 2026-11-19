@@ -16,8 +16,17 @@ import {
  * condition (db-sink promotes those out of the `features` JSON), and otodom
  * rate-limits bulk detail crawls — so each run drains a few offers that have
  * never been enriched, newest first.
+ *
+ * A fresh database needs a one-time drain of the whole backlog (every offer
+ * lacks coordinates because the list page carries none). Set
+ * `OTODOM_DETAIL_BUDGET` for that run instead of raising the hourly default:
+ * a CloudFront 429 pauses the source for two hours, which costs more than a
+ * slow drain.
  */
-const DETAIL_BUDGET = 8;
+const detailBudget = (): number => {
+	const raw = Number(process.env.OTODOM_DETAIL_BUDGET);
+	return Number.isFinite(raw) && raw >= 0 ? raw : 8;
+};
 
 /** Ids whose detail page was already parsed (its `features` are stored). */
 async function enrichedDetailIds(
@@ -458,7 +467,7 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 		// One newest list page per region plus a few detail pages per
 		// incremental run: the per-region first pages must both fit, or the
 		// second voivodeship would never be seen by the hourly refresh.
-		firstPageOnlyRequests: opts.listBases.length + DETAIL_BUDGET,
+		firstPageOnlyRequests: opts.listBases.length + detailBudget(),
 
 		async extractHtml(html, url, enqueue) {
 			const data = parseOtodomHtml(html);
@@ -541,12 +550,9 @@ function makeOtodomAdapter(opts: OtodomAdapterOptions): CheerioAdapter {
 				const fresh = detailItems
 					.filter((item) => !enriched.has(String(item.id)))
 					.map((item) => `https://www.otodom.pl/pl/oferta/${item.slug}`);
-				const backlog = await detailBacklog(
-					source,
-					opts.offerType,
-					DETAIL_BUDGET,
-				);
-				await enqueue([...fresh, ...backlog].slice(0, DETAIL_BUDGET));
+				const budget = detailBudget();
+				const backlog = await detailBacklog(source, opts.offerType, budget);
+				await enqueue([...fresh, ...backlog].slice(0, budget));
 			}
 
 			const newest = items.reduce<Date | null>((max, item) => {

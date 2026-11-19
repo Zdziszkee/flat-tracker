@@ -244,7 +244,12 @@ together with the postal code from the address.
 
 The same pass runs automatically inside every `refreshAll()` with a
 Photon budget of 100/run (local index matches are instant), so the
-map stays populated between manual drains. Geocoded positions survive
+map stays populated between manual drains. The refresh builds the local
+`osm_buildings` index *before* this pass when it is missing (`osm-index`
+phase): the address matcher reads that table, and on a fresh database the
+old order geocoded first, so every address-bearing offer fell through to
+the 100-request Photon budget while a local index could have anchored it.
+Geocoded positions survive
 re-crawls: `saveListings` coalesces coordinates, `address` and
 `description`, so address-only adapters never overwrite them with NULL
 (a plain `excluded.address` here once wiped 28 geocode-mined budujesie
@@ -587,10 +592,26 @@ the component breakdown and rationale.
   the time factor that brings each RCN comp to today through the chain-linked
   index (nominal, so inflation is inside it) and the condition/quality
   correction from `src/lib/valuation/quality-factor.ts` (balanced two-sided
-  deck, +-15% clamp, named reasons, neutral when no facts). Listing-only comp
-  sets are converted to the transaction level with a measured
-  asking-to-transaction ratio (`src/lib/valuation/asking-ratio.ts`,
-  `bun run measure:asking-ratio` audits it) rather than face value.
+  deck, +-15% clamp, named reasons, neutral when no facts).
+- **The comp set is 30 mixed comparables inside 1 km** (2027.19):
+  `estimateSaleValue` always gathers RCN transactions *and* the active offers
+  in the same radius, carries the RCN side to today through the index, converts
+  the asking side to the transaction level with the measured asking ratio, and
+  keeps the 30 highest-weight comps. Listings used to be a fallback only when
+  fewer than three RCN comps survived, and the radius was [800, 1600] m for
+  built property and [3000, 6000] m for plots; a house or plot with no RCN sale
+  in its own neighbourhood was left unscored (`no_comparable_estimate`). The
+  radius and cap are a product decision (evidence a buyer can walk to), so they
+  sit outside the backtest optimum that tuned the bands and the weighted
+  median. `RADII_BY_KIND` and the caps in `comp-selection.ts` carry the values;
+  changing them needs a `SCORE_VERSION` bump.
+- **Plot comps read land use from the RCN parcel metadata**:
+  `parcelFamilies()` maps `parcel_meta.land_use`
+  (`gruntyZabudowaneIZurbanizowane`, `gruntyRolne`, `gruntyLesne`, ...) to the
+  same families as an EGiB class symbol, with `parcels.land_use_class` as the
+  fallback. Before this, the only source was the EGiB `parcels` import, which
+  defaults to zero tiles per refresh, so every RCN plot comp was "unknown" and
+  a plot advert that named its type could not use a single RCN sale.
 - **/alerts always renders three fixed sections**, even when empty:
   Mieszkania, Domy z działką and Działki, fed by `/api/alerts` (latest
   alert date by default, optional `region`/`segment`/`date` filters). Rows
@@ -604,7 +625,7 @@ the component breakdown and rationale.
   sample (`Wycena z N ofert, w tym M z RCN`).
 - **The valuation median's sample is stored with the score**:
   `listing_scores.comp_count` and `comp_rcn_count` hold how many
-  comparables (total, RCN-only) the weighted median used, capped at 140 and
+  comparables (total, RCN-only) the weighted median used, capped at 30 and
   at least 3. `0` means "not recorded" (a row written before the columns
   existed), so consumers treat it as unknown, not as "no comparables".
   `amenities_json` carries the nearest feature names next to their
@@ -799,7 +820,7 @@ with the build's peak at ~2 GB. If you touch the loader, watch
 
 | Source | What | Access |
 |---|---|---|
-| otodom.pl | Active sale listings — flats, houses and plots — Małopolska + Śląsk | HTML `__NEXT_DATA__` JSON; list pages have no coords, detail pages (`/pl/oferta/`) add lat/lng, `build_year`, building material/floors, condition, market (`attributes`, promoted by db-sink). The sale adapter walks `/sprzedaz/{mieszkanie,dom,dzialka}/{region}`; `estate`/`category.id` set the row's property kind |
+| otodom.pl | Active sale listings — flats, houses and plots — Małopolska + Śląsk | HTML `__NEXT_DATA__` JSON; list pages have no coords, detail pages (`/pl/oferta/`) add lat/lng, `build_year`, building material/floors, condition, market (`attributes`, promoted by db-sink). The sale adapter walks `/sprzedaz/{mieszkanie,dom,dzialka}/{region}`; `estate`/`category.id` set the row's property kind. The hourly detail budget is 8; `OTODOM_DETAIL_BUDGET=N` drains a fresh backlog in one run (a CloudFront 429 pauses the source for 2 h) |
 | otodom.pl (wynajem) | Long-term rental listings — flats, houses and plots — Małopolska + Śląsk | Same `__NEXT_DATA__` path, `/wynajem/{mieszkanie,dom,dzialka}/{malopolskie,slaskie}`; detail price read from `rentalPrice` |
 | olx.pl | Active sale listings — flats, houses and plots — Małopolska + Śląsk | HTML `window.__PRERENDERED_STATE__` JSON incl. coordinates; the regional landing page carries all three categories and the adapter keeps category ids 14/15/16 (flats), 18/20/22 (houses) and 24/25/1311 (plots). The rent adapter reuses the same landing with the `wynajem` ids (15/20/25) |
 | morizon.pl / gratka.pl | Same feed (one company), agency-heavy; flats, houses and plots | schema.org LD+JSON (`Offer` nodes); pagination `?page=N`. The result cards carry "Dodane: YYYY.MM.DD", parsed into `listedAt`; `itemOffered.@type` (`Accommodation`/`House`/`Place`) sets the property kind |
@@ -808,7 +829,7 @@ with the build's peak at ~2 GB. If you touch the loader, watch
 | adresowo.pl | Direct-from-owner sale listings: flats, houses and plots, Małopolska + Śląsk | Server-rendered `div[data-offer-card]` cards (40/page) at `/mieszkania`, `/domy` and `/dzialki` with the `fma`/`fsl` region codes; `<link rel="next">` pagination. The list has price/area/rooms/street but no coordinates, so a detail pass (max 8 uncached details per list page, `data/crawler/adresowo-details.json`) reads the detail `Place` LD+JSON `geo`/description. No absolute posting date (relative copy only), so `firstSeenAt` is the date |
 | gethome.pl | Agency-network sale listings: flats, houses and plots, Małopolska + Śląsk | `window.__INITIAL_STATE__` `offerList.offers.offers` on `/nieruchomosci/<region>` and `/dzialki/<region>`, pagination `?page=N`; every offer carries price, area, rooms, floor, coordinates, address, agency and `created_at` |
 | sprzedajemy.pl | General classifieds: flats, houses and plots, Małopolska + Śląsk | `.../nieruchomosci/{mieszkania,domy,grunty-i-dzialki}/sprzedaz`, 30 cards/page, `?offset=N`. Cards carry price/area/city/district and `<time datetime>`; a detail pass (max 8 uncached details per list page, `data/crawler/sprzedajemy-details.json`) adds rooms/floor/build year and `data-coordinates` |
-| tabelaofert.pl | New-development units: flats, houses and plots, Małopolska + Śląsk | `/mieszkania`, `/domy` and `/dzialki` per region, `?page=N`, embed a schema.org `Product` whose list `offers.offers` are projects plus direct single-property offers. `/inwestycja/...,i<id>` details carry the unit inventory (area, rooms, floor, price, geo); detail fetches are gated by `data/crawler/tabelaofert-investments.json` (3-day TTL) |
+| tabelaofert.pl | New-development units: flats, houses and plots, Małopolska + Śląsk | `/mieszkania`, `/domy` and `/dzialki` per region, `?page=N`, embed a schema.org `Product` whose list `offers.offers` are projects plus direct single-property offers. `/inwestycja/...,i<id>` details carry the unit inventory (area, rooms, floor, price, geo); direct `/oferta/...` pages carry the coordinates and address the list row lacks. Both passes are gated by `data/crawler/tabelaofert-investments.json` (3-day TTL) |
 | rynekpierwotny.pl | New-development projects (osiedla): flats and houses | `window.__INITIAL_STATE__` `offerList.list.offers` with geo points + price ranges; `/s/nowe-mieszkania-*` and `/s/nowe-domy-*`, pagination via the state `next` link. The list omits the posting date; a cached detail pass (max 6 uncached details per list page, `data/crawler/rynekpierwotny-offers.json`) reads `offerDetail.offer.configuration.publish_date` (fallback `create_date`) |
 | investmap.pl | **Every registered investment in Kraków and Katowice with its flats or houses** (incl. small private ones) | Public JSON API `GET /api/investment/search?withEstates=1&categorySlug={mieszkania,domy}&citySlug={krakow,katowice}&offset=N` — units inline (`es[].list`): area, price, price_m2, floor, rooms; coordinates from the investment. Construction timeline: `GET /api/investment?id=<id>` carries `investment.finish` (`{title: "I kw. 2026", date: "2026-01-01"}` = the "realizacja" quarter shown on /miasto/krakow, quarter-start date, planned or actual, the source does not distinguish; search rows only hold empty `finish: {}` placeholders). Stored per unit as `construction_end_label`/`construction_end_date` in `features`, promoted to columns, exposed by /api/listings as `constructionEndLabel`/`constructionEndDate`. Investmap publishes NO construction start date and NO status field (checked the whole API surface), so none are stored. Detail fetches are gated by `data/crawler/investmap-investments.json` (30-day TTL). Investments with NO units for sale (sold out, early phase) would otherwise be invisible entirely: the adapter emits one price-less investment-level row per building (`externalId` `inv-<id>`, `features.investment_row`), and `/api/listings` hides that stand-in again once unit rows for the same `features.investment_id` appear |
 | licytacje.komornik.pl | Court auction notices (Małopolska + Śląsk real estate, all subcategories) | Playwright only (WAF blocks non-browser TLS); anonymous JSON API `POST /services/item-back/rest/item/search` (same-origin, `termFilters` + `fullTextFilters` city, `offset` pagination); every REAL_ESTATE subcategory kept |

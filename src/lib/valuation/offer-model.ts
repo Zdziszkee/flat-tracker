@@ -4,7 +4,7 @@ import { HIDDEN_SOURCES } from "#/crawler/hidden-sources";
 import { db } from "#/db/index";
 import { priceIndexSeries } from "#/db/queries/price-indices";
 import { regionOf } from "#/db/region";
-import { listings, parcels, transactions } from "#/db/schema";
+import { listings, parcelMeta, parcels, transactions } from "#/db/schema";
 import type { ScoredFacts } from "#/lib/llm/fact-access";
 import { propertyKindOf } from "#/lib/property-kind";
 import type { AskingRatio } from "#/lib/valuation/asking-ratio";
@@ -231,10 +231,13 @@ function validM2(kind: ValuationSegment): [number, number] {
 	return [0.01, 20000];
 }
 
-function initialRadius(kind: ValuationSegment): number {
-	if (kind === "flat") return 1200;
-	if (kind === "house") return 2000;
-	return 3000;
+/**
+ * Query radius for comparable candidates. The selection ladder (`RADII_BY_KIND`)
+ * is 1 km for every segment, so the candidate query must not reach further;
+ * a wider box only costs rows the selection throws away.
+ */
+function initialRadius(_kind: ValuationSegment): number {
+	return 1000;
 }
 
 function offerMarket(offer: OfferForValuation): 1 | 2 | null {
@@ -309,9 +312,19 @@ function selectedComps<T extends WorkingComp>(
 }
 
 /**
- * Parcel land-use class for plot comps. The cadastre row is looked up in one
- * batched query; a missing row leaves the family unknown, which the plot
- * filter treats as "no evidence", not as agreement.
+ * Parcel land-use class for plot comps. Two sources, cheapest first:
+ *
+ * 1. `parcel_meta.land_use` — written by the GUGiK RCN import for every
+ *    powiat package it reads (`gruntyZabudowaneIZurbanizowane`,
+ *    `gruntyRolne`, ...). It is the only land-use evidence a fresh install
+ *    has, because the EGiB `parcels` import is a separate manual job
+ *    (`EGIB_TILES_PER_REFRESH` defaults to 0).
+ * 2. `parcels.land_use_class` — the EGiB class symbol, when that import ran.
+ *
+ * A missing row leaves the family unknown, which the plot filter treats as
+ * "no evidence", not as agreement. Without the `parcel_meta` pass every RCN
+ * plot comp was unknown, so a plot advert that named its type ("działka
+ * budowlana") could not use a single RCN sale and fell back to listings only.
  */
 async function parcelFamilies(
 	rows: readonly RcnRow[],
@@ -327,14 +340,27 @@ async function parcelFamilies(
 	for (let offset = 0; offset < ids.length; offset += 400) {
 		const chunk = ids.slice(offset, offset + 400);
 		if (chunk.length === 0) continue;
-		const found = await db
+		const meta = await db
+			.select({
+				parcelId: parcelMeta.parcelId,
+				landUse: parcelMeta.landUse,
+			})
+			.from(parcelMeta)
+			.where(inArray(parcelMeta.parcelId, chunk));
+		for (const row of meta) {
+			const family = plotClassFamily(row.landUse);
+			if (family) families.set(row.parcelId, family);
+		}
+		const missing = chunk.filter((id) => !families.has(id));
+		if (missing.length === 0) continue;
+		const egib = await db
 			.select({
 				parcelId: parcels.parcelId,
 				landUseClass: parcels.landUseClass,
 			})
 			.from(parcels)
-			.where(inArray(parcels.parcelId, chunk));
-		for (const row of found) {
+			.where(inArray(parcels.parcelId, missing));
+		for (const row of egib) {
 			const family = plotClassFamily(row.landUseClass);
 			if (family) families.set(row.parcelId, family);
 		}
@@ -684,7 +710,7 @@ async function listingComps(
 		sql`${listings.price} is not null`,
 	];
 	if (offer.lat != null && offer.lng != null) {
-		const b = bbox(offer.lat, offer.lng, initialRadius(offer.kind) * 2);
+		const b = bbox(offer.lat, offer.lng, initialRadius(offer.kind));
 		filters.push(
 			sql`${listings.lat} between ${b.minLat} and ${b.maxLat}`,
 			sql`${listings.lng} between ${b.minLng} and ${b.maxLng}`,
@@ -872,9 +898,7 @@ async function gatherRcnComps(
 	nowSeconds: number,
 ): Promise<WorkingComp[]> {
 	const radius =
-		offer.lat != null && offer.lng != null
-			? initialRadius(offer.kind) * 2
-			: null;
+		offer.lat != null && offer.lng != null ? initialRadius(offer.kind) : null;
 	const inputs = await rcnRows(offer, radius, nowSeconds);
 	const seen = new Set<string>();
 	const unique: typeof inputs = [];
@@ -1040,8 +1064,10 @@ async function marketMedianFor(
 }
 
 /**
- * Estimate today's fair value from time-adjusted RCN comparables. Active
- * asking offers are only a fallback when fewer than three RCN comps survive.
+ * Estimate today's fair value from time-adjusted RCN comparables mixed with
+ * the active asking offers in the same 1 km, capped at 30. A listing comp is
+ * converted to the transaction level with the measured asking ratio; an RCN
+ * comp is carried to today with the chain-linked index.
  */
 export async function estimateSaleValue(
 	offer: OfferForValuation,
@@ -1082,11 +1108,13 @@ export async function estimateSaleValue(
 	const areaElasticity = AREA_ELASTICITY[offer.kind];
 	const rcn = await gatherRcnComps(offer, nowSeconds);
 	let comps = await adjustComps(rcn, asOfPeriod, offer.areaM2, areaElasticity);
+	// The alert's evidence is the mixed set a buyer can verify: recorded sales
+	// (time-adjusted to today) plus the active offers in the same 1 km, with
+	// the asking side converted to the transaction level. Listings used to be
+	// a fallback only when fewer than three RCN comps survived, which left a
+	// house or plot with no RCN sale in its neighbourhood unscored.
 	let asking: AskingRatio | null = null;
-	if (
-		options.includeListings !== false &&
-		comps.filter((comp) => comp.source === "rcn").length < 3
-	) {
+	if (options.includeListings !== false) {
 		const offerRegion =
 			offer.lat != null && offer.lng != null
 				? regionOf(offer.lat, offer.lng)
@@ -1100,7 +1128,7 @@ export async function estimateSaleValue(
 		const marketMedian = await marketMedianFor(offer, nowSeconds);
 		return { estimate: null, reason: "insufficient_comps", marketMedian };
 	}
-	comps = comps.sort((a, b) => b.weight - a.weight).slice(0, 140);
+	comps = comps.sort((a, b) => b.weight - a.weight).slice(0, 30);
 	const overall = stats(comps);
 	if (!overall) return { estimate: null, reason: "insufficient_comps" };
 	const quality = qualityAdjustment({

@@ -9,7 +9,7 @@
 
 import { clamp } from "#/lib/stats";
 
-export const SCORE_VERSION = "2027.18";
+export const SCORE_VERSION = "2027.19";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {

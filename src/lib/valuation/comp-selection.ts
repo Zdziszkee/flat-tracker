@@ -25,9 +25,16 @@
  * so one metric is kept for the whole model.
  *
  * The selection below is the combination the ablations supported: tighter
- * area band, soft rooms, 800 m distance decay, 40-comp cap, [800, 1600] m
- * radius. It moves flats 14.8 -> 13.8 MedAPE and houses 27.4 -> 21.0 on its
- * own; adding the index guard gives 13.6 and 19.1.
+ * area band, soft rooms, 800 m distance decay. It moves flats 14.8 -> 13.8
+ * MedAPE and houses 27.4 -> 21.0 on its own; adding the index guard gives
+ * 13.6 and 19.1.
+ *
+ * Radius and cap are a product decision, not an ablation result: every offer
+ * is priced from at most 30 comparables inside 1 km, mixing active offers
+ * with RCN transactions (see `estimateSaleValue`). The earlier [800, 1600] m
+ * ladder and 40/140 caps were the backtest optimum, but they answered a
+ * different question ("what is the most accurate point estimate?"), while the
+ * alert list has to explain itself from evidence a buyer can walk to.
  *
  * Every constant names the alternative it replaced and the measured margin.
  * Ablations that did not help stay at their historic value: exact-area ±15%
@@ -207,14 +214,28 @@ function firstClassToken(value: string | null | undefined): string | null {
 }
 
 /**
- * Map an EGiB land-use class (`B`, `Ba`, `RIIIa`, `RV`, `LsIV`, `PS`, `ŁIII`,
- * `W`, `dr`, `Tp`, ...) to a price family. The first token of a comma-separated
- * class list wins: EGiB lists the dominant class first.
+ * Map a land-use class to a price family. Two vocabularies reach this:
+ * an EGiB class symbol (`B`, `Ba`, `RIIIa`, `RV`, `LsIV`, `PS`, `ŁIII`,
+ * `W`, `dr`, `Tp`, ...) and the coarse GUGiK RCN parcel class
+ * (`gruntyZabudowaneIZurbanizowane`, `gruntyRolne`, `gruntyLesne`,
+ * `terenyKomunikacyjne`, `inne`). The RCN import writes the coarse class into
+ * `parcel_meta.land_use` for every powiat it imports, so plot comps carry
+ * family evidence even when the EGiB `parcels` table was never imported.
+ * The first token of a comma-separated class list wins: EGiB lists the
+ * dominant class first.
  */
 export function plotClassFamily(
 	value: string | null | undefined,
 ): PlotClassFamily | null {
-	const token = firstClassToken(value);
+	const raw = value?.trim();
+	if (!raw) return null;
+	const coarse = raw.toLowerCase();
+	if (coarse.startsWith("gruntyzabudowane")) return "built";
+	if (coarse.startsWith("gruntyrolne")) return "agricultural";
+	if (coarse.startsWith("gruntylesne")) return "forest";
+	if (coarse.startsWith("terenykomunikacyjne")) return "other";
+	if (coarse === "inne") return "other";
+	const token = firstClassToken(raw);
 	if (!token) return null;
 	if (token.startsWith("Ł")) return "agricultural";
 	if (token.startsWith("LS")) return "forest";
@@ -342,15 +363,17 @@ export interface SelectionOptions {
 }
 
 /**
- * Radius ladder per segment (metres). Tighter than the historic 1200/2400 for
- * built property: the combined change (this ladder + band + cap + decay) is
- * what cut house MedAPE from 27.4% to 21.0%. Plots keep the historic wide net;
- * land comps are sparse and parcel size already enters through `AREA_ELASTICITY`.
+ * Radius ladder per segment (metres). One kilometre for every segment: the
+ * comparables behind an alert are the offers and recorded sales in the same
+ * neighbourhood, so a wider net buys a statistically tighter median at the
+ * cost of pricing a street with a district. The ladder keeps its shape (a
+ * single tier) so a future segment-specific widening does not change the
+ * call sites.
  */
-export const RADII_BY_KIND: Record<CompKind, [number, number]> = {
-	flat: [800, 1600],
-	house: [800, 1600],
-	plot: [3000, 6000],
+export const RADII_BY_KIND: Record<CompKind, readonly number[]> = {
+	flat: [1000],
+	house: [1000],
+	plot: [1000],
 };
 
 export const DEFAULT_SELECTION: SelectionOptions = {
@@ -363,11 +386,12 @@ export const DEFAULT_SELECTION: SelectionOptions = {
 		{ minRatio: 0.25, maxRatio: 4, rooms: "any", market: "any" },
 	],
 	// Segment defaults override this; see RADII_BY_KIND.
-	radiiM: [800, 1600],
+	radiiM: [1000],
 	minComps: 3,
-	// 40 beats 140 by 0.5 pp MedAPE on flats: a wide set quietly fills with
-	// distant comps, which the distance decay cannot fully suppress.
-	cap: 40,
+	// 30 comparables is the size an alert can show and a reader can audit.
+	// The mixed listing/RCN set in `estimateSaleValue` is capped here too, so
+	// this is the final size of the evidence behind a score.
+	cap: 30,
 	maxAgeSeconds: 5 * 365 * 86_400,
 	// 800 m beats 1500 m by 0.1 pp on flats and removes most of the house
 	// error (27.4 -> 21.0 MedAPE as part of the combined change).
@@ -395,7 +419,7 @@ export const PLOT_SELECTION: SelectionOptions = {
 		{ minRatio: 0.5, maxRatio: 2, rooms: "one", market: "match" },
 		{ minRatio: 0.25, maxRatio: 4, rooms: "any", market: "any" },
 	],
-	cap: 140,
+	cap: 30,
 	distanceScaleM: 1500,
 	roomsMode: "filter",
 };

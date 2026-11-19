@@ -285,6 +285,23 @@ check("EGiB RV,PsV -> agricultural", plotClassFamily("RV,PsV") === "agricultural
 check("EGiB ŁIII -> agricultural", plotClassFamily("ŁIII") === "agricultural");
 check("EGiB LsIV -> forest", plotClassFamily("LsIV") === "forest");
 check("EGiB W -> water", plotClassFamily("W") === "water");
+check(
+	"GUGiK parcel class zabudowane -> built",
+	plotClassFamily("gruntyZabudowaneIZurbanizowane") === "built",
+);
+check(
+	"GUGiK parcel class rolne -> agricultural",
+	plotClassFamily("gruntyRolne") === "agricultural",
+);
+check(
+	"GUGiK parcel class lesne -> forest",
+	plotClassFamily("gruntyLesne") === "forest",
+);
+check(
+	"GUGiK parcel class komunikacyjne -> other",
+	plotClassFamily("terenyKomunikacyjne") === "other",
+);
+check("GUGiK parcel class inne -> other", plotClassFamily("inne") === "other");
 check("advert 'działka budowlana' -> built", plotClassFamilyFromType("działka budowlana") === "built");
 check("advert 'rolna' -> agricultural", plotClassFamilyFromType("działka rolna") === "agricultural");
 check("unknown family is null", plotClassFamily(null) === null);

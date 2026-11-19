@@ -35,6 +35,7 @@ export type RefreshPhase =
 	| "crawl"
 	| "prune"
 	| "airbnb-enrich"
+	| "osm-index"
 	| "geocode"
 	| "rcn"
 	| "building-assign"
@@ -58,15 +59,16 @@ const PHASE_ORDER: Record<RefreshPhase, number> = {
 	"public-investments": 3,
 	finwire: 4,
 	"airbnb-enrich": 5,
-	geocode: 6,
-	rcn: 7,
-	"building-assign": 8,
-	"parcel-assign": 9,
-	"parcel-enrich": 10,
-	"listing-derived": 11,
-	"listing-facts": 12,
-	scoring: 13,
-	done: 14,
+	"osm-index": 6,
+	geocode: 7,
+	rcn: 8,
+	"building-assign": 9,
+	"parcel-assign": 10,
+	"parcel-enrich": 11,
+	"listing-derived": 12,
+	"listing-facts": 13,
+	scoring: 14,
+	done: 15,
 };
 
 export const REFRESH_PHASES: readonly RefreshPhase[] = Object.entries(
@@ -85,13 +87,14 @@ export const REFRESH_PHASES: readonly RefreshPhase[] = Object.entries(
  * and give the ETA the right order of magnitude.
  */
 export const PHASE_WEIGHTS: Record<RefreshPhase, number> = {
-	crawl: 0.45,
+	crawl: 0.44,
 	prune: 0.01,
 	"public-investments": 0.02,
 	finwire: 0.02,
 	"airbnb-enrich": 0.05,
+	"osm-index": 0.02,
 	geocode: 0.05,
-	rcn: 0.12,
+	rcn: 0.11,
 	"building-assign": 0.1,
 	"parcel-assign": 0.04,
 	"parcel-enrich": 0.04,

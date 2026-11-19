@@ -57,6 +57,19 @@ function isInvestmentUrl(url: string): boolean {
 	}
 }
 
+/**
+ * A single offer page (`/oferta/...`). The list page carries the direct
+ * offers without coordinates or an address; only this page has them, so it
+ * needs its own detail pass (gated by the same TTL cache).
+ */
+function isOfferUrl(url: string): boolean {
+	try {
+		return new URL(url).pathname.startsWith("/oferta/");
+	} catch {
+		return false;
+	}
+}
+
 function numFromQuantity(value: unknown): number | null {
 	if (typeof value === "number") return Number.isFinite(value) ? value : null;
 	if (typeof value === "string") return num(value);
@@ -281,6 +294,21 @@ export const tabelaofertAdapter: CheerioAdapter = {
 			return listings;
 		}
 
+		if (isOfferUrl(url)) {
+			// Direct offer detail: the list row has no geo or address, this page
+			// has both. Marking it fetched keeps the list page from queueing it
+			// again until the TTL expires.
+			const context = contextOf(product, url, category);
+			const listings: Listing[] = [];
+			for (const offer of productOffers(product)) {
+				const listing = offerToListing(offer, context);
+				if (listing) listings.push(listing);
+			}
+			const offerId = listingId(url);
+			if (offerId) detailCache.store(offerId, {});
+			return listings;
+		}
+
 		// List page: direct offers are emitted now, investments are queued
 		// for their unit-level detail page.
 		const context = contextOf(product, url, category);
@@ -301,7 +329,17 @@ export const tabelaofertAdapter: CheerioAdapter = {
 				continue;
 			}
 			const listing = offerToListing(offer, context);
-			if (listing) listings.push(listing);
+			if (listing) {
+				listings.push(listing);
+				// The list row has no coordinates; spend a detail request on it
+				// (bounded by the page budget) so the offer lands on the map.
+				if (
+					!detailCache.fresh(detailCache.get(listing.externalId)) &&
+					detailUrls.length < DETAIL_BUDGET_PER_PAGE
+				) {
+					detailUrls.push(offerUrl);
+				}
+			}
 		}
 		if (detailUrls.length > 0) await enqueue(detailUrls);
 
