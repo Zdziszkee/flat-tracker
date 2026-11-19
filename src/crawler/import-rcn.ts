@@ -434,6 +434,17 @@ async function downloadIfMissing(
 			console.log(`Using cached ${GML_PATH}`);
 			return;
 		}
+		// No marker and no reachable remote: a pre-placed GML (an operator
+		// copied it onto a host that cannot reach the registry, e.g. the
+		// university server firewalls some networks) is all we have. Trust it
+		// instead of failing on a download that can never succeed; the next
+		// run with a reachable remote establishes the version marker.
+		if (!marker && !remote) {
+			console.log(
+				`Using cached ${GML_PATH} (remote unreachable, no version marker)`,
+			);
+			return;
+		}
 		if (!marker) {
 			// First incremental run: no baseline yet. The file's mtime tells
 			// us whether it was fetched after the remote's last change.
