@@ -13,7 +13,7 @@ source (`listings`, November 2026, ~17.6k sale offers).
    always preferred. Consumed by `src/crawler/attributes.ts` and mege to
    columns.
 2. **Prose** (`title` + `description`). Read only by the model
-   (`src/lib/llm/`, prompt v2). This is the channel that fills heating,
+   (`src/lib/llm/`, prompt v5). This is the channel that fills heating,
    building style, condition, plot media and the rest, because the bulk feeds
    publish almost none of it.
 
@@ -67,7 +67,8 @@ source of heating, age, condition, costs and amenities.
 ## Fields worth extracting that we do not extract yet
 
 Grouped by how the value is used. `v3` marks what prompt v3 added (v4 adds
-`market` and the once-per-offer contract below).
+`market` and the once-per-offer contract below; v5 turns the model on passing
+mentions of the building kind and the heating source).
 
 **Building (any segment)**
 - `renovationYear` (v3) - "dach wymieniony w 2019", "po remoncie w 2020".

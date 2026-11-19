@@ -483,6 +483,25 @@ check(
 	kamienica.kind === "tenement" && kamienica.label === "kamienica",
 	kamienica,
 );
+const postwarKamienica = buildingClassOf({
+	buildingType: "blok",
+	buildYear: 1958,
+	facts: { buildingStyle: "tenement" },
+});
+check(
+	"a kamienica from the 1950s is accepted whatever its year",
+	postwarKamienica.kind === "tenement" && !postwarKamienica.oldBlock,
+	postwarKamienica,
+);
+const ninetiesKamienica = buildingClassOf({
+	buildingType: "kamienica",
+	buildYear: 1996,
+});
+check(
+	"a kamienica built after the war but before 2000 stays a kamienica",
+	ninetiesKamienica.kind === "tenement" && !ninetiesKamienica.oldBlock,
+	ninetiesKamienica,
+);
 const oldBlock = buildingClassOf({ buildingType: "blok", buildYear: 1998 });
 check(
 	"a block built before 2000 is an old block",

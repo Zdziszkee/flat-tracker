@@ -9,7 +9,11 @@
  * v2 widens the schema to what a 120-offer probe measured as present and
  * useful: plot utilities and access, defects, legal status, exact monthly
  * costs, kitchen/exposure/windows, building technology and the setting
- * around a plot or house.
+ * around a plot or house. Prompt v5 turns the model on passing mentions of
+ * the two facts the flat gate reads: the building kind ("sprzedam mieszkanie
+ * w bloku", "kamieniczka", "apartamentowiec") and the heating source
+ * ("MPEC", "piec gazowy", "grzejniki elektryczne"), because sellers state
+ * them in an aside rather than in a spec line.
  *
  * Everything here is pure: prompt construction, response parsing, the
  * once-per-offer selection and normalization. Writing to the database lives in
@@ -281,7 +285,7 @@ export interface FactInput {
 
 /** Bumped whenever the prompt or the stored schema changes: the version is
  * part of the text hash, so a new prompt re-reads the whole corpus. */
-export const FACT_PROMPT_VERSION = "4";
+export const FACT_PROMPT_VERSION = "5";
 
 /**
  * Longest description slice sent per listing. This is the storage cap, not a
@@ -356,12 +360,19 @@ export function factBatches<T extends FactInput>(
 
 const ENUM_HINTS: Record<FactEnumField, string[]> = {
 	heating: [
-		"district = ogrzewanie miejskie, z sieci miejskiej, MPEC, ciepło systemowe, elektrociepłownia",
-		"heatPump = pompa ciepła; coalWood = węgiel, drewno, kominek; oil = olejowe",
+		"district = ogrzewanie miejskie, z sieci miejskiej, MPEC, ciepło systemowe, elektrociepłownia, węzeł cieplny, licznik ciepła, zaliczkowa opłata za CO w spółdzielni",
+		"heatPump = pompa ciepła (powietrze-woda, gruntowa), klimatyzator z funkcją grzania",
+		"gas = piec/kocioł gazowy, gaz ziemny, dwufunkcyjny (Junkers, Termet, Vaillant), butla LPG",
+		"electric = grzejniki elektryczne, piece akumulacyjne, maty lub kable grzewcze, farelka, ogrzewanie elektryczne",
+		"coalWood = węgiel, ekogroszek, pellet, drewno, kominek, koza, piec kaflowy; oil = olej opałowy",
+		"samo CO, ogrzewanie własne/niezależne, podłogówka bez wskazania źródła = unknown (nie zgaduj)",
 	],
 	buildingType: [
-		"block = blok, wielka płyta; tenement = kamienica; apartment = apartamentowiec, nowe budownictwo",
-		"semi_detached = bliźniak; townhouse = szeregowiec; detached = wolnostojący; house = dom",
+		'block = blok, także "mieszkanie w bloku", "blok z płyty", "blok 10-piętrowy", wielka płyta',
+		'tenement = kamienica, kamieniczka, stara kamienica, "w kamienicy z 1930"',
+		"apartment = apartamentowiec, wieżowiec, wysokościowiec, nowe budownictwo deweloperskie",
+		"semi_detached = bliźniak; townhouse = szeregowiec, szeregówka; detached = dom wolnostojący, willa; house = dom jednorodzinny",
+		'każda wzmianka wystarcza: "sprzedam mieszkanie w bloku" to block — nie zostawiaj null, gdy tekst nazywa rodzaj budynku',
 	],
 	plotType: [
 		"budowlana = działka budowlana; rolna = rolna; rekreacyjna = rekreacyjna, letniskowa",
@@ -458,6 +469,14 @@ export function factPrompt(listings: FactInput[]): Array<{
 		...Object.keys(FACT_VALUES).map((field) =>
 			enumLine(field as FactEnumField),
 		),
+		"",
+		"Rodzaj budynku i ogrzewanie — to najważniejsze pola. Czytaj tekst dosłownie, także zdania wtrącone:",
+		'- "sprzedam mieszkanie w bloku", "blok z cegły", "blok 10-piętrowy", "wielka płyta" → buildingType = block (rok budowy i largePanel, gdy tekst je podaje).',
+		'- "kamienica", "kamieniczka", "przedwojenna kamienica" → tenement; "apartamentowiec", "wieżowiec", "wysokościowiec" → apartment.',
+		'- "bliźniak", "szeregowiec", "dom wolnostojący", "willa", "w domku jednorodzinnym" → semi_detached / townhouse / detached / house.',
+		'- Ogrzewanie: wskaż źródło, gdy tekst je podaje — "miejskie", "z sieci", "MPEC", "ciepło systemowe", "piec gazowy", "pompa ciepła", "grzejniki elektryczne", "węgiel", "kominek".',
+		'- Samo "CO", "ogrzewanie własne/niezależne", "podłogówka" bez źródła to unknown: nie zgaduj źródła, ale nie zostawiaj null, gdy źródło jest nazwane.',
+		'- Rok przy budynku ("blok z 2005", "kamienica z 1930") trafia do buildYear, liczba pięter ("blok 4-piętrowy") do floorCount.',
 		"",
 		`exposure: tablica podzbioru ["N","S","E","W"] — strony świata, na które wychodzą okna ("okna na południe" = ["S"], "wschód-zachód" = ["E","W"]). Brak informacji = null.`,
 		"",

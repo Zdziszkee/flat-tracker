@@ -75,8 +75,8 @@ const prompt = factPrompt([
 const system = prompt[0]?.content ?? "";
 const user = prompt[1]?.content ?? "";
 check(
-	"the prompt version is 4",
-	FACT_PROMPT_VERSION === "4",
+	"the prompt version is 5",
+	FACT_PROMPT_VERSION === "5",
 	FACT_PROMPT_VERSION,
 );
 for (const [field, values] of Object.entries(FACT_VALUES)) {
@@ -163,6 +163,16 @@ check(
 check(
 	"the system prompt forbids guessing and defaults to null/false",
 	/nie zgaduj/iu.test(system) && /\bfalse\b/u.test(system) && /null/u.test(system),
+);
+check(
+	"the system prompt names the building-type and heating phrasings",
+	/"mieszkanie w bloku"/u.test(system) &&
+		/kamienic/u.test(system) &&
+		/apartamentowiec/u.test(system) &&
+		/MPEC/u.test(system) &&
+		/piec gazowy/u.test(system) &&
+		/pompa ciepła/u.test(system),
+	system.slice(system.indexOf("Rodzaj budynku")),
 );
 check(
 	"the user prompt carries the id and the title",

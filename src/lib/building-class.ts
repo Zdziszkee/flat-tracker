@@ -110,6 +110,8 @@ export function buildingClassOf(input: BuildingClassInput): BuildingClassInfo {
 		/kamienic|tenement/u.test(text) ||
 		(year != null && year <= TENEMENT_MAX_YEAR);
 	if (tenement) {
+		// A tenement is accepted at any age, including one built after the war
+		// and before 2000: only blocks are held to the year threshold.
 		return {
 			kind: "tenement",
 			label: "kamienica",

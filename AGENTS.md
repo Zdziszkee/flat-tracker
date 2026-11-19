@@ -310,7 +310,7 @@ small, fixed vocabulary the scoring layer already understands.
   unchanged title+description is never sent again; `--force` re-reads
   everything, and `FACT_PROMPT_VERSION` participates in the hash so a better
   prompt re-visits the corpus once.
-- **One call per offer, ever** (prompt v4): the hash covers the exact payload
+- **One call per offer, ever** (prompt v5): the hash covers the exact payload
   the model sees (`title` + the stored description), so an unchanged ad is
   never re-read and a changed description is. The description is stored whole
   under one 20 000-char cap (`src/lib/listing-text.ts`); adapters no longer
@@ -556,10 +556,12 @@ the component breakdown and rationale.
   `nie potwierdzone` when the model found no statement. The label is derived
   once per request from the model's style reading, the structured type and
   the build year, and appears on the alert card, the map popup, the
-  expandable table row and the offers table.
+  expandable table row and the offers table. Only blocks carry the year
+  threshold: a kamienica (and any pre-1945 building) is accepted at any age,
+  including a post-war one built before 2000.
 - **Prose is read by the LLM, not by regexes**: the description-derived
   heating, building style, tenement age, plot zoning/media and defect
-  evidence all come from `listing_facts` (`src/lib/llm/`, prompt v4). The
+  evidence all come from `listing_facts` (`src/lib/llm/`, prompt v5). The
   old regular expressions were removed in 2027.14 (they matched negations and
   neighbourhood mentions), and `validate:scoring` now pins that a
   description alone cannot satisfy the heating gate.
