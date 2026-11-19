@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 import { useOccupancy } from "#/hooks/use-occupancy";
-import type { KindFilter } from "#/lib/listing-features";
+import type { KindFilter, OfferTypeFilter } from "#/lib/listing-features";
 import type { OccupancyCell } from "#/types/occupancy";
 import { addBuildingLayersWhenZoomed } from "./map/buildings-layer";
 import { MAP_DARK_CSS } from "./map/chrome";
