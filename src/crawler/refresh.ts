@@ -583,7 +583,25 @@ export async function refreshAll(
 				startedAt: new Date(rcnT0).toISOString(),
 			});
 		}
-		const rcnNew = opts.includeRcn === false ? 0 : await importRcn();
+		let rcnNew = 0;
+		let rcnFailed = false;
+		if (opts.includeRcn !== false) {
+			try {
+				rcnNew = await importRcn();
+			} catch (err) {
+				// The Kraków registry is a single host, and it does not have to be
+				// reachable from the deployment (it times out from the Azure VM).
+				// A failed download must not cost the GUGiK import, the building
+				// assignment and the scoring that follow it.
+				rcnFailed = true;
+				await recordFailure({
+					source: "rcn-import",
+					startedAt: rcnT0,
+					err,
+					context: "Kraków RCN import failed",
+				});
+			}
+		}
 
 		// Region-wide price history (every powiat of every tracked region
 		// except Kraków, which the richer RCN zip above covers): GUGiK
@@ -639,7 +657,7 @@ export async function refreshAll(
 			}
 		}
 
-		if (opts.includeRcn !== false) {
+		if (opts.includeRcn !== false && !rcnFailed) {
 			await recordCrawlRun({
 				source: "rcn-import",
 				startedAt: new Date(rcnT0),
