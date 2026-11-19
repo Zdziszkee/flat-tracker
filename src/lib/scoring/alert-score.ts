@@ -9,6 +9,7 @@
 
 import { buildingClassOf } from "#/lib/building-class";
 import type { ScoredFacts } from "#/lib/llm/fact-access";
+import { buildingStyleFromProse } from "#/lib/scoring/prose-lexicon";
 import { clamp } from "#/lib/stats";
 import type { GeoUniqueness } from "#/lib/valuation/uniqueness-geo";
 import { textUniqueness } from "#/lib/valuation/uniqueness-text";
@@ -607,6 +608,7 @@ function heatingEvidence(input: ScoreListingInput): HeatingEvidence {
 		heatingType: input.heatingType,
 		featuresHeating: input.featuresHeating,
 		factsHeating: input.facts?.heating ?? null,
+		prose: `${input.title}\n${input.description ?? ""}`,
 	});
 }
 
@@ -897,13 +899,16 @@ function flatBuilding(input: ScoreListingInput) {
 		buildingMaterial: input.buildingMaterial,
 		buildYear: input.buildYear,
 		propertyKind: "apartment",
-		facts: input.facts
-			? {
-					buildingStyle: input.facts.buildingStyle,
-					buildYear: input.facts.buildYear,
-					technology: input.facts.technology,
-				}
-			: null,
+		facts: {
+			// The model reads the ad first; when it has not run (or answered
+			// nothing) the narrow lexicon still names a block, a kamienica or a
+			// large-panel building the ad states in passing.
+			buildingStyle:
+				input.facts?.buildingStyle ??
+				buildingStyleFromProse(`${input.title}\n${input.description ?? ""}`),
+			buildYear: input.facts?.buildYear ?? null,
+			technology: input.facts?.technology ?? null,
+		},
 	});
 }
 

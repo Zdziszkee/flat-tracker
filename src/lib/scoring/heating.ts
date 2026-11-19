@@ -18,10 +18,15 @@
  *   3. the LLM's `heating` fact for this listing, read straight from
  *      `listing_facts` so a row the column promotion has not reached yet still
  *      counts
+ *   4. the narrow prose lexicon (`prose-lexicon.ts`), for the rows where the
+ *      model has not run or answered nothing: an explicitly stated source
+ *      ("ogrzewanie miejskie", "piec gazowy") still counts, a negated or
+ *      ambiguous mention does not
  * Nothing found means `unknown`, which fails the municipal-heating gate rather
  * than counting as a pass.
  */
 import { HEATING_DELTAS } from "./config";
+import { heatingFromProse } from "./prose-lexicon";
 
 export type HeatingKind =
 	| "district"
@@ -32,7 +37,7 @@ export type HeatingKind =
 	| "oil"
 	| "unknown";
 
-export type HeatingSource = "column" | "features" | "facts" | "none";
+export type HeatingSource = "column" | "features" | "facts" | "prose" | "none";
 
 export interface HeatingEvidence {
 	kind: HeatingKind;
@@ -79,6 +84,8 @@ export interface HeatingSources {
 	featuresHeating?: string | null;
 	/** LLM-extracted heating fact (`listing_facts.facts_json.heating`). */
 	factsHeating?: string | null;
+	/** Title and description, read only for an explicitly stated source. */
+	prose?: string | null;
 }
 
 /**
@@ -114,6 +121,16 @@ export function resolveHeatingEvidence(
 	if (fact) {
 		const kind = heatingKindFromValue(fact);
 		return { kind, text: fact, source: "facts", delta: KIND_DELTA[kind] };
+	}
+	const prose = heatingFromProse(sources.prose);
+	if (prose) {
+		const kind = heatingKindFromValue(prose);
+		return {
+			kind,
+			text: prose,
+			source: "prose",
+			delta: KIND_DELTA[kind],
+		};
 	}
 	return { kind: "unknown", text: null, source: "none", delta: 0 };
 }

@@ -559,12 +559,18 @@ the component breakdown and rationale.
   expandable table row and the offers table. Only blocks carry the year
   threshold: a kamienica (and any pre-1945 building) is accepted at any age,
   including a post-war one built before 2000.
-- **Prose is read by the LLM, not by regexes**: the description-derived
-  heating, building style, tenement age, plot zoning/media and defect
-  evidence all come from `listing_facts` (`src/lib/llm/`, prompt v5). The
-  old regular expressions were removed in 2027.14 (they matched negations and
-  neighbourhood mentions), and `validate:scoring` now pins that a
-  description alone cannot satisfy the heating gate.
+- **Prose is read by the LLM first**: the description-derived heating,
+  building style, tenement age, plot zoning/media and defect evidence all
+  come from `listing_facts` (`src/lib/llm/`, prompt v5). A narrow,
+  negation-aware lexicon (`src/lib/scoring/prose-lexicon.ts`) backs the model
+  up for the rows it has not seen: it only takes an explicitly named source
+  (`ogrzewanie miejskie`, `MPEC`, `piec gazowy`, `grzejniki elektryczne`,
+  `pompa ciepła`, `węgiel`) or building (`mieszkanie w bloku`, `kamienica`,
+  `apartamentowiec`, `wielka płyta`), rejects a negated mention (“bez
+  ogrzewania miejskiego”) and never reads “CO”, “podłogówka” or “stare
+  budownictwo” as a fact. A hit is reported as `source: "prose"`, below the
+  column, the portal attribute and the model, so a stored value always wins;
+  `validate:scoring` pins both the positive and the negative cases.
 - **The fair value carries two corrections** (`listing_scores.valuation_json`):
   the time factor that brings each RCN comp to today through the chain-linked
   index (nominal, so inflation is inside it) and the condition/quality

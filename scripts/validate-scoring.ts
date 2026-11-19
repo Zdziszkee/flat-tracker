@@ -35,6 +35,10 @@ import {
 import { scoredFactsOf } from "#/lib/llm/fact-access";
 import { buildingClassOf } from "#/lib/building-class";
 import {
+	buildingStyleFromProse,
+	heatingFromProse,
+} from "#/lib/scoring/prose-lexicon";
+import {
 	ALERT_REBUILD_MIN_INTERVAL_MS,
 	duplicateKey,
 	investmentKey,
@@ -248,7 +252,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.17",
+		SCORE_VERSION === "2027.18",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -550,10 +554,10 @@ check(
 	unknownBuilding.kind === "unknown" && !unknownBuilding.oldBlock,
 	unknownBuilding,
 );
-// Prose is read by the extractor, not by the score: a description that names
-// municipal heating must NOT satisfy the gate on its own, because that is the
-// false-positive path the regexes were removed for.
-const proseIgnored = scoreAlert(
+// Prose is read by the model first; when it has not run, the narrow lexicon
+// still takes an explicitly named source, and only that: a negated or
+// ambiguous mention never becomes a fact.
+const proseNamed = scoreAlert(
 	{
 		...flat,
 		heatingType: null,
@@ -564,10 +568,147 @@ const proseIgnored = scoreAlert(
 	geo(),
 );
 check(
-	"prose alone no longer satisfies the heating gate",
-	!proseIgnored.eligible && proseIgnored.gateReason === "no_heating_evidence",
-	proseIgnored.gateReason,
+	"an explicitly named municipal source in prose satisfies the heating gate",
+	proseNamed.eligible,
+	proseNamed.gateReason,
 );
+const proseNegated = scoreAlert(
+	{
+		...flat,
+		heatingType: null,
+		facts: scoredFactsOf({ buildingType: "tenement", buildYear: 1930 }),
+		description: "Bez ogrzewania miejskiego, własny piec węglowy.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"a negated municipal mention reads as the source the ad names",
+	!proseNegated.eligible &&
+		proseNegated.gateReason === "non_municipal_heating",
+	proseNegated.gateReason,
+);
+const proseAmbiguous = scoreAlert(
+	{
+		...flat,
+		heatingType: null,
+		facts: scoredFactsOf({ buildingType: "tenement", buildYear: 1930 }),
+		description: "Ogrzewanie podłogowe, ciche i równe.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"an ambiguous prose mention is not evidence of municipal heating",
+	!proseAmbiguous.eligible &&
+		proseAmbiguous.gateReason === "no_heating_evidence",
+	proseAmbiguous.gateReason,
+);
+const columnWinsOverProse = scoreAlert(
+	{
+		...flat,
+		heatingType: "gazowe",
+		facts: scoredFactsOf({ buildingType: "tenement", buildYear: 1930 }),
+		description: "Ogrzewanie miejskie, niskie rachunki.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"a stored heating column wins over a prose mention",
+	!columnWinsOverProse.eligible &&
+		columnWinsOverProse.gateReason === "non_municipal_heating",
+	columnWinsOverProse.gateReason,
+);
+// The lexicon that backs the model up: explicit phrases only, negations and
+// ambiguity rejected, and a passing mention of the building still counts.
+check(
+	"the lexicon reads an explicitly named heating source",
+	heatingFromProse("Ogrzewanie niezależne elektryczne, niskie rachunki.") ===
+		"electric",
+	heatingFromProse("Ogrzewanie niezależne elektryczne, niskie rachunki."),
+);
+check(
+	"the lexicon reads municipal heating",
+	heatingFromProse("Ogrzewanie miejskie, MPEC.") === "district",
+	heatingFromProse("Ogrzewanie miejskie, MPEC."),
+);
+check(
+	"the lexicon rejects a negated source",
+	heatingFromProse("Bez ogrzewania miejskiego, grzejniki elektryczne.") ===
+		"electric",
+	heatingFromProse("Bez ogrzewania miejskiego, grzejniki elektryczne."),
+);
+check(
+	"the lexicon rejects an ambiguous source",
+	heatingFromProse("Ogrzewanie podłogowe, ciche.") === null,
+	heatingFromProse("Ogrzewanie podłogowe, ciche."),
+);
+check(
+	"the lexicon reads the building from a passing mention",
+	buildingStyleFromProse("Sprzedam mieszkanie w bloku, 2 pokoje.") === "block" &&
+		buildingStyleFromProse("Urokliwa kamienica z 1928.") === "tenement" &&
+		buildingStyleFromProse("Blok z wielkiej płyty.") === "largePanel" &&
+		buildingStyleFromProse("Nowy apartamentowiec.") === "apartment",
+	[
+		buildingStyleFromProse("Sprzedam mieszkanie w bloku, 2 pokoje."),
+		buildingStyleFromProse("Urokliwa kamienica z 1928."),
+		buildingStyleFromProse("Blok z wielkiej płyty."),
+		buildingStyleFromProse("Nowy apartamentowiec."),
+	],
+);
+check(
+	"the lexicon rejects a negated building mention",
+	buildingStyleFromProse("To nie kamienica, tylko zwykły blok.") === "block",
+	buildingStyleFromProse("To nie kamienica, tylko zwykły blok."),
+);
+
+const proseBlockFlat = scoreAlert(
+	{
+		...flat,
+		facts: null,
+		heatingType: "miejskie",
+		description: "Sprzedam mieszkanie w bloku, 2 pokoje, ogrzewanie miejskie.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"a flat in a block of unknown age still passes (only old blocks fail)",
+	proseBlockFlat.eligible,
+	proseBlockFlat.gateReason,
+);
+const prosePanel = scoreAlert(
+	{
+		...flat,
+		facts: null,
+		heatingType: "miejskie",
+		description: "Blok z wielkiej płyty, po remoncie, ogrzewanie miejskie.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"a large-panel mention in prose fails as an old block",
+	!prosePanel.eligible && prosePanel.gateReason === "old_block",
+	prosePanel.gateReason,
+);
+const proseTenement = scoreAlert(
+	{
+		...flat,
+		facts: null,
+		heatingType: "miejskie",
+		description: "Kamienica z 1928 roku, ogrzewanie miejskie.",
+	},
+	estimate(800000),
+	geo(),
+);
+check(
+	"a kamienica mention in prose passes the building gate",
+	proseTenement.eligible,
+	proseTenement.gateReason,
+);
+
 const factsGas = scoreAlert(
 	{ ...flat, heatingType: null, facts: scoredFactsOf({ heating: "gas" }) },
 	estimate(800000),
