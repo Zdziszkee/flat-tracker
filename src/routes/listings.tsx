@@ -82,6 +82,7 @@ function ListingsPage() {
 						value={filters}
 						sources={sourceOptions}
 						facets={facets}
+						showOfferType
 						publicInvestmentsCount={
 							showingPublicInvestments
 								? publicInvestments?.features.length
