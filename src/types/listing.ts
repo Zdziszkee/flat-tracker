@@ -408,3 +408,26 @@ export interface OfferValuation {
 		  })
 		| null;
 }
+
+/**
+ * One listing exactly as the database stores it: every column of the `listings`
+ * row plus the rows that describe it (facts, score versions, alerts, price
+ * history, building, parcel features). Keys are the real column names, so the
+ * record panel reads like the schema and a new column appears there without a
+ * UI change. Long text and JSON columns are rendered collapsed by the panel.
+ */
+export interface ListingRecordResponse {
+	/** The kind/offer the record's schema was resolved for. */
+	schema: {
+		kind: "apartment" | "house" | "plot" | null;
+		offer: "sale" | "long_term_rental" | "short_term_rental";
+	};
+	listing: Record<string, unknown>;
+	facts: Record<string, unknown> | null;
+	scores: Array<Record<string, unknown>>;
+	alerts: Array<Record<string, unknown>>;
+	history: Array<Record<string, unknown>>;
+	building: Record<string, unknown> | null;
+	parcel: Record<string, unknown> | null;
+	generatedAt: string;
+}

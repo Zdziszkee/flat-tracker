@@ -17,7 +17,15 @@ import { REGIONS } from "#/crawler/regions";
 import { db } from "#/db/index";
 import { ensureListingDerived } from "#/db/listing-derived";
 import { transactionSummaryByBuilding } from "#/db/queries/transaction-history";
-import { buildings, listings, parcelFeatures } from "#/db/schema";
+import {
+	buildings,
+	listingAlerts,
+	listingFacts,
+	listingHistory,
+	listingScores,
+	listings,
+	parcelFeatures,
+} from "#/db/schema";
 import { buildingClassOf } from "#/lib/building-class";
 import {
 	ATTRIBUTE_KEYS,
@@ -32,13 +40,17 @@ import {
 	listingSearchSchema,
 	PUBLIC_INVESTMENTS_KIND,
 } from "#/lib/listing-features";
+import { offerTypeOf } from "#/lib/listing-schema";
 import type { PropertyKind } from "#/lib/property-kind";
+import { propertyKindOf } from "#/lib/property-kind";
+import { SCORE_VERSION } from "#/lib/scoring/config";
 import { HEATING_LABELS, resolveHeatingEvidence } from "#/lib/scoring/heating";
 import { withCache } from "#/lib/server-cache";
 import { gzipJson, jsonResponse } from "#/lib/server-response";
 import type {
 	ListingDto,
 	ListingFacetsResponse,
+	ListingRecordResponse,
 	ListingsTableResponse,
 	MapFeedPoint,
 	MapFeedResponse,
@@ -53,6 +65,9 @@ import type {
  *   old 64 MB); above it returns compact points, and popup details are fetched
  *   separately with `view=detail`.
  * - `view=detail&id=...`: the one full popup row.
+ * - `view=record&id=...`: the listing exactly as stored (every column plus its
+ *   facts, scores, alerts, price history, building and parcel rows), for the
+ *   table's schema panel.
  * - `view=facets`: source/kind counts for the filter bar, in SQL.
  * - `view=table`: paginated table rows, filtered and counted in SQL.
  *
@@ -514,6 +529,90 @@ async function loadDetail(id: number): Promise<ListingDto | null> {
 	} as unknown as ListingDto;
 }
 
+/**
+ * The row exactly as stored: every `listings` column (a bare `select()` follows
+ * the table definition, so a new column needs no change here) plus the rows
+ * that belong to it. Long text and JSON columns travel verbatim; the panel
+ * collapses them. Scores are ordered current version first, then newest.
+ */
+async function loadRecord(id: number): Promise<ListingRecordResponse | null> {
+	const [listing] = await db
+		.select()
+		.from(listings)
+		.where(eq(listings.id, id))
+		.limit(1);
+	if (!listing) return null;
+
+	const [facts] = await db
+		.select()
+		.from(listingFacts)
+		.where(eq(listingFacts.listingId, id))
+		.limit(1);
+	const scores = await db
+		.select()
+		.from(listingScores)
+		.where(eq(listingScores.listingId, id));
+	scores.sort(
+		(a, b) =>
+			Number(b.scoreVersion === SCORE_VERSION) -
+				Number(a.scoreVersion === SCORE_VERSION) ||
+			(b.computedAt?.getTime() ?? 0) - (a.computedAt?.getTime() ?? 0),
+	);
+	const alerts = await db
+		.select()
+		.from(listingAlerts)
+		.where(eq(listingAlerts.listingId, id))
+		.orderBy(desc(listingAlerts.createdAt))
+		.limit(10);
+	const history = await db
+		.select()
+		.from(listingHistory)
+		.where(eq(listingHistory.listingId, id))
+		.orderBy(desc(listingHistory.capturedAt))
+		.limit(20);
+	const building =
+		listing.buildingId == null
+			? null
+			: ((
+					await db
+						.select()
+						.from(buildings)
+						.where(eq(buildings.id, listing.buildingId))
+						.limit(1)
+				)[0] ?? null);
+	const parcel =
+		listing.parcelId == null
+			? null
+			: ((
+					await db
+						.select()
+						.from(parcelFeatures)
+						.where(eq(parcelFeatures.parcelId, listing.parcelId))
+						.limit(1)
+				)[0] ?? null);
+
+	const kind =
+		(listing.propertyKind as PropertyKind | null) ??
+		propertyKindOf({
+			source: listing.source,
+			title: listing.title,
+			propertyType: listing.propertyType,
+			externalId: listing.externalId,
+		});
+
+	return {
+		schema: { kind, offer: offerTypeOf(listing.offerType) },
+		listing: listing as Record<string, unknown>,
+		facts: (facts ?? null) as Record<string, unknown> | null,
+		scores: scores as Array<Record<string, unknown>>,
+		alerts: alerts as Array<Record<string, unknown>>,
+		history: history as Array<Record<string, unknown>>,
+		building: (building ?? null) as Record<string, unknown> | null,
+		parcel: (parcel ?? null) as Record<string, unknown> | null,
+		generatedAt: new Date().toISOString(),
+	};
+}
+
 const tableColumns = {
 	id: listings.id,
 	source: listings.source,
@@ -573,7 +672,17 @@ async function loadTable(
 		.offset(page * pageSize);
 	return {
 		listings: rows.map((row) => {
-			const propertyKind = row.propertyKind as PropertyKind | null;
+			// The derived column is authoritative, but a row crawled since the
+			// last recompute has none yet: classify it here so the table's kind
+			// badge and the plot/heating cells are right immediately.
+			const propertyKind =
+				(row.propertyKind as PropertyKind | null) ??
+				propertyKindOf({
+					source: row.source,
+					title: row.title,
+					propertyType: row.propertyType,
+					externalId: row.externalId,
+				});
 			const building =
 				propertyKind === "plot"
 					? null
@@ -634,6 +743,19 @@ export const Route = createFileRoute("/api/listings")({
 						return json({ error: "not found" }, { status: 404 });
 					}
 					return json({ listing, generatedAt: new Date().toISOString() });
+				}
+
+				if (view === "record") {
+					const rawId = url.searchParams.get("id");
+					const id = rawId == null ? Number.NaN : Number(rawId);
+					if (!Number.isFinite(id) || id <= 0) {
+						return json({ error: "id required" }, { status: 400 });
+					}
+					const record = await loadRecord(id);
+					if (!record) {
+						return json({ error: "not found" }, { status: 404 });
+					}
+					return json(record);
 				}
 
 				if (view === "facets") {

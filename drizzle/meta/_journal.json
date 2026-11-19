@@ -253,6 +253,13 @@
       "when": 1795025596920,
       "tag": "0035_regular_doctor_doom",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "tag": "0036_listing_kind_views",
+      "when": 1795048461578,
+      "version": "6",
+      "breakpoints": true
     }
   ]
 }

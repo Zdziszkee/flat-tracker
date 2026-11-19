@@ -4,6 +4,7 @@ import { Fragment, useState } from "react";
 
 import { ListingFilters } from "#/components/listing-filters";
 import { BudujesieThreadPanel } from "#/components/listings/budujesie-thread-panel";
+import { ListingRecordPanel } from "#/components/listings/listing-record-panel";
 import { PublicInvestmentsTable } from "#/components/listings/public-investments-table";
 import { ValuationPanel } from "#/components/listings/valuation-panel";
 import { Badge } from "#/components/ui/badge";
@@ -27,6 +28,12 @@ import {
 	PUBLIC_INVESTMENTS_KIND,
 	searchFromFilters,
 } from "#/lib/listing-features";
+import {
+	KIND_LABEL,
+	OFFER_LABEL,
+	OFFER_TONE,
+	offerTypeOf,
+} from "#/lib/listing-schema";
 import type { PropertyKind } from "#/lib/property-kind";
 import { sourceLabel } from "#/lib/sources";
 import { cn } from "#/lib/utils";
@@ -112,6 +119,7 @@ function ListingsPage() {
 							<TableHeader>
 								<TableRow className="hover:bg-transparent">
 									<TableHead className="px-3">Źródło</TableHead>
+									<TableHead className="px-3">Oferta</TableHead>
 									<TableHead className="px-3">Tytuł</TableHead>
 									<TableHead className="px-3 text-right">Cena</TableHead>
 									<TableHead className="px-3 text-right">zł/m²</TableHead>
@@ -128,7 +136,7 @@ function ListingsPage() {
 								{isLoading && (
 									<TableRow className="hover:bg-transparent">
 										<TableCell
-											colSpan={9}
+											colSpan={12}
 											className="px-3 py-6 text-center text-muted-foreground"
 										>
 											Ładowanie...
@@ -138,7 +146,7 @@ function ListingsPage() {
 								{!isLoading && rows.length === 0 && (
 									<TableRow className="hover:bg-transparent">
 										<TableCell
-											colSpan={9}
+											colSpan={12}
 											className="px-3 py-6 text-center text-muted-foreground"
 										>
 											Brak ofert dla wybranych filtrów.
@@ -147,27 +155,40 @@ function ListingsPage() {
 								)}
 								{!isLoading &&
 									rows.map((row) => {
-										const expandable =
-											row.offerType === "sale" ||
-											row.offerType === "long_term_rental" ||
-											row.source === "budujesie";
+										// Every row opens: the panel shows the full database record
+										// (and, for offers, the valuation).
 										const isExpanded = expanded === row.id;
+										const kind = row.propertyKind ?? null;
+										const offer = offerTypeOf(row.offerType);
+										const isPlot = kind === "plot";
 										const toggle = () =>
 											setExpanded(isExpanded ? null : row.id);
 										return (
 											<Fragment key={`${row.source}-${row.id}`}>
 												<TableRow
-													className={cn(expandable && "cursor-pointer")}
-													aria-expanded={expandable ? isExpanded : undefined}
-													onClick={() => {
-														if (!expandable) return;
-														toggle();
-													}}
+													className="cursor-pointer"
+													aria-expanded={isExpanded}
+													onClick={toggle}
 												>
 													<TableCell className="px-3 py-1.5">
 														<Badge variant="secondary">
 															{sourceLabel(row.source)}
 														</Badge>
+													</TableCell>
+													<TableCell className="px-3 py-1.5">
+														<div className="flex flex-col gap-0.5">
+															<Badge
+																variant="outline"
+																className={cn("w-fit", OFFER_TONE[offer])}
+															>
+																{OFFER_LABEL[offer]}
+															</Badge>
+															{kind && (
+																<span className="text-[10px] text-muted-foreground">
+																	{KIND_LABEL[kind]}
+																</span>
+															)}
+														</div>
 													</TableCell>
 													<TableCell className="max-w-96 px-3 py-1.5">
 														<div className="truncate">
@@ -197,16 +218,16 @@ function ListingsPage() {
 														{formatNumber(row.pricePerM2)}
 													</TableCell>
 													<TableCell className="px-3 py-1.5 text-right">
-														{formatNumber(row.areaM2)}
+														{formatNumber(row.areaM2 ?? row.plotAreaM2)}
 													</TableCell>
 													<TableCell className="px-3 py-1.5 text-right">
 														{row.rooms ?? ""}
 													</TableCell>
 													<TableCell className="px-3 py-1.5 text-muted-foreground">
-														{row.buildingClass ?? ""}
+														{isPlot ? "—" : (row.buildingClass ?? "")}
 													</TableCell>
 													<TableCell className="px-3 py-1.5 text-muted-foreground">
-														{row.heatingLabel ?? ""}
+														{isPlot ? "—" : (row.heatingLabel ?? "")}
 													</TableCell>
 													<TableCell className="px-3 py-1.5">
 														{row.district ?? ""}
@@ -215,31 +236,27 @@ function ListingsPage() {
 														{formatDate(row.listedAt ?? row.firstSeenAt)}
 													</TableCell>
 													<TableCell className="px-2 py-1.5 text-center text-muted-foreground">
-														{expandable && (
-															<Button
-																variant="ghost"
-																size="icon-xs"
-																aria-label={
-																	isExpanded ? "Zwiń wycenę" : "Pokaż wycenę"
-																}
-																onClick={(event) => {
-																	event.stopPropagation();
-																	toggle();
-																}}
-															>
-																{isExpanded ? (
-																	<ChevronDown />
-																) : (
-																	<ChevronRight />
-																)}
-															</Button>
-														)}
+														<Button
+															variant="ghost"
+															size="icon-xs"
+															aria-label={
+																isExpanded
+																	? "Zwiń szczegóły"
+																	: "Pokaż szczegóły"
+															}
+															onClick={(event) => {
+																event.stopPropagation();
+																toggle();
+															}}
+														>
+															{isExpanded ? <ChevronDown /> : <ChevronRight />}
+														</Button>
 													</TableCell>
 												</TableRow>
 												{isExpanded && (
 													<TableRow className="hover:bg-transparent">
 														<TableCell
-															colSpan={11}
+															colSpan={12}
 															className="bg-muted/30 p-0 whitespace-normal"
 														>
 															{row.source === "budujesie" ? (
@@ -247,6 +264,7 @@ function ListingsPage() {
 															) : (
 																<ValuationPanel id={row.id} />
 															)}
+															<ListingRecordPanel id={row.id} />
 														</TableCell>
 													</TableRow>
 												)}

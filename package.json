@@ -76,7 +76,9 @@
     "validate:quality": "tsx scripts/validate-quality.ts",
     "measure:asking-ratio": "tsx scripts/measure-asking-ratio.ts",
     "rescore:candidates": "tsx scripts/rescore-candidates.ts",
-    "check:alerts": "tsx scripts/check-alerts.ts"
+    "check:alerts": "tsx scripts/check-alerts.ts",
+    "build:listing-views": "tsx scripts/build-listing-views.ts",
+    "validate:listing-schema": "tsx scripts/validate-listing-schema.ts"
   },
   "dependencies": {
     "@t3-oss/env-core": "^0.13.10",
