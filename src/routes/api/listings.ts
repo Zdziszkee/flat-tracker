@@ -18,6 +18,7 @@ import { db } from "#/db/index";
 import { ensureListingDerived } from "#/db/listing-derived";
 import { transactionSummaryByBuilding } from "#/db/queries/transaction-history";
 import { buildings, listings, parcelFeatures } from "#/db/schema";
+import { buildingClassOf } from "#/lib/building-class";
 import {
 	ATTRIBUTE_KEYS,
 	clientFeatures,
@@ -32,6 +33,7 @@ import {
 	PUBLIC_INVESTMENTS_KIND,
 } from "#/lib/listing-features";
 import type { PropertyKind } from "#/lib/property-kind";
+import { HEATING_LABELS, resolveHeatingEvidence } from "#/lib/scoring/heating";
 import { withCache } from "#/lib/server-cache";
 import { gzipJson, jsonResponse } from "#/lib/server-response";
 import type {
@@ -527,6 +529,7 @@ const tableColumns = {
 	city: listings.city,
 	plotAreaM2: listings.plotAreaM2,
 	buildingType: listings.buildingType,
+	buildYear: listings.buildYear,
 	adminFee: listings.adminFee,
 	deposit: listings.deposit,
 	advertiserType: listings.advertiserType,
@@ -569,14 +572,33 @@ async function loadTable(
 		.limit(pageSize)
 		.offset(page * pageSize);
 	return {
-		listings: rows.map((row) => ({
-			...row,
-			listedAt: iso(row.listedAt),
-			firstSeenAt: iso(row.firstSeenAt),
-			auctionDate: iso(row.auctionDate),
-			features: clientFeatures(row),
-			propertyKind: row.propertyKind as PropertyKind | null,
-		})),
+		listings: rows.map((row) => {
+			const propertyKind = row.propertyKind as PropertyKind | null;
+			const building =
+				propertyKind === "plot"
+					? null
+					: buildingClassOf({
+							buildingType: row.buildingType,
+							buildYear: row.buildYear,
+							propertyKind: propertyKind === "house" ? "house" : "apartment",
+						});
+			const heating = resolveHeatingEvidence({ heatingType: row.heatingType });
+			return {
+				...row,
+				listedAt: iso(row.listedAt),
+				firstSeenAt: iso(row.firstSeenAt),
+				auctionDate: iso(row.auctionDate),
+				features: clientFeatures(row),
+				propertyKind,
+				buildingClass: building?.label ?? null,
+				heatingLabel:
+					propertyKind === "plot"
+						? null
+						: heating.kind === "unknown"
+							? "nie potwierdzone"
+							: HEATING_LABELS[heating.kind],
+			};
+		}),
 		total,
 		page,
 		pageSize,

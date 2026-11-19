@@ -198,6 +198,22 @@ function propertyTypeOf(
 	return null;
 }
 
+/**
+ * The portal's "Piętro" parameter is often the building's storey range
+ * ("Piętro 1-4"), not this unit's floor. A range must not become
+ * `listings.floor`: it is not the flat's storey, and because promotion only
+ * fills empty columns it would also block the model's "na II piętrze"
+ * reading forever. A single value is kept, without the label prefix.
+ */
+function floorOf(record: ElicytacjeRecord): string | null {
+	const raw = parameterValue(record, [/^piętro$/i, /kondygnacja/i]);
+	const text = raw?.trim();
+	if (!text) return null;
+	if (/\d\s*[-–—]\s*\d|\bdo\s+\d/iu.test(text)) return null;
+	const value = text.replace(/^(pi[eę]tro|kondygnacja)\s*:?\s*/iu, "").trim();
+	return value || null;
+}
+
 function auctionLabel(record: ElicytacjeRecord): string {
 	if (record.announcementTypeGroupCode === "OSZNELNIER") {
 		return "Obwieszczenie KAS";
@@ -220,7 +236,7 @@ export function recordToListing(record: ElicytacjeRecord): Listing | null {
 	const rooms = parseNumberText(
 		parameterValue(record, [/liczba pokoi/i, /liczba izb/i]),
 	);
-	const floor = parameterValue(record, [/^piętro$/i, /kondygnacja/i]);
+	const floor = floorOf(record);
 	const streetNumber = [record.streetNo, record.apartmentNo]
 		.filter(Boolean)
 		.join("/");

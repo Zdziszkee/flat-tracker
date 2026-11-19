@@ -5,6 +5,7 @@ import { alias } from "drizzle-orm/sqlite-core";
 
 import { db } from "#/db/index";
 import { listingAlerts, listingScores, listings } from "#/db/schema";
+import { buildingClassOf } from "#/lib/building-class";
 import { loadScoredFacts, type ScoredFacts } from "#/lib/llm/fact-access";
 import { nearestCentreAnchor } from "#/lib/scoring/centre-zone";
 import { ALERT_TOP_OFFERS, SCORE_VERSION } from "#/lib/scoring/config";
@@ -202,6 +203,7 @@ export const Route = createFileRoute("/api/alerts")({
 						properties: toProperties(
 							row.listings,
 							factsById.get(row.listingId) ?? null,
+							row.segment,
 						),
 						compCount: preferEvidence(row.latestCompCount, row.compCount),
 						compRcnCount: preferEvidence(
@@ -447,6 +449,7 @@ interface ListingFactColumns {
 function toProperties(
 	listing: ListingFactColumns,
 	facts: ScoredFacts | null,
+	segment: string,
 ): AlertProperties {
 	// The heating column is mostly empty for the bulk portals, so the card
 	// shows the resolved kind and marks prose-sourced evidence as such. The
@@ -463,10 +466,24 @@ function toProperties(
 			: heating.source === "facts"
 				? `${HEATING_LABELS[heating.kind]} (z opisu)`
 				: HEATING_LABELS[heating.kind];
+	// Plots have no building; flats and houses get the class the card prints.
+	const building =
+		segment === "plot"
+			? null
+			: buildingClassOf({
+					buildingType: listing.buildingType,
+					buildingMaterial: listing.buildingMaterial,
+					buildYear: listing.buildYear,
+					propertyKind: segment === "house" ? "house" : "apartment",
+					facts,
+				});
 	return {
 		buildYear: listing.buildYear,
 		heatingType: listing.heatingType,
 		heatingLabel,
+		buildingClass: building?.label ?? null,
+		buildingClassKind: building?.kind ?? null,
+		buildingClassEvidence: building?.evidence ?? null,
 		buildingType: listing.buildingType,
 		buildingMaterial: listing.buildingMaterial,
 		condition: listing.condition,

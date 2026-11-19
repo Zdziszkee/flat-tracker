@@ -33,6 +33,7 @@ import {
 	valueCurveScore,
 } from "#/lib/scoring/config";
 import { scoredFactsOf } from "#/lib/llm/fact-access";
+import { buildingClassOf } from "#/lib/building-class";
 import {
 	ALERT_REBUILD_MIN_INTERVAL_MS,
 	duplicateKey,
@@ -247,7 +248,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.16",
+		SCORE_VERSION === "2027.17",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -425,6 +426,8 @@ check(
 const blockFlatGate = scoreAlert(
 	{
 		...flat,
+		buildYear: null,
+		buildingType: null,
 		facts: scoredFactsOf({
 			heating: "district",
 			buildingType: "block",
@@ -435,8 +438,8 @@ const blockFlatGate = scoreAlert(
 	geo(),
 );
 check(
-	"a modern block fails the tenement gate",
-	!blockFlatGate.eligible && blockFlatGate.gateReason === "not_tenement",
+	"a block proved to predate 2000 fails as old_block",
+	!blockFlatGate.eligible && blockFlatGate.gateReason === "old_block",
 	blockFlatGate.gateReason,
 );
 const panelFlatGate = scoreAlert(
@@ -453,8 +456,8 @@ const panelFlatGate = scoreAlert(
 	geo(),
 );
 check(
-	"a large-panel block is excluded from alerts",
-	!panelFlatGate.eligible && panelFlatGate.gateReason === "large_panel_block",
+	"a large-panel block is excluded as an old block",
+	!panelFlatGate.eligible && panelFlatGate.gateReason === "old_block",
 	panelFlatGate.gateReason,
 );
 const tenementFlatGate = scoreAlert(
@@ -469,6 +472,64 @@ check(
 	"a tenement with district heating stays eligible",
 	tenementFlatGate.eligible,
 	tenementFlatGate.gateReason,
+);
+
+// --- Building class labels ---------------------------------------------
+// The card prints this label on every flat/house, and `oldBlock` is the gate
+// answer, so the derivation is pinned here rather than inferred from a score.
+const kamienica = buildingClassOf({ buildingType: "blok", buildYear: 1930 });
+check(
+	"a pre-war building is a kamienica whatever the portal label says",
+	kamienica.kind === "tenement" && kamienica.label === "kamienica",
+	kamienica,
+);
+const oldBlock = buildingClassOf({ buildingType: "blok", buildYear: 1998 });
+check(
+	"a block built before 2000 is an old block",
+	oldBlock.kind === "oldBlock" &&
+		oldBlock.oldBlock &&
+		oldBlock.label === "stary blok" &&
+		oldBlock.evidence === "rok budowy 1998",
+	oldBlock,
+);
+const newBlock = buildingClassOf({ buildingType: "blok", buildYear: 2005 });
+check(
+	"a block since 2000 is a new block",
+	newBlock.kind === "newBlock" && !newBlock.oldBlock && newBlock.label === "nowy blok",
+	newBlock,
+);
+const unknownAgeBlock = buildingClassOf({ buildingType: "blok" });
+check(
+	"a block with no year stays a block and is not excluded",
+	unknownAgeBlock.kind === "block" &&
+		!unknownAgeBlock.oldBlock &&
+		unknownAgeBlock.label === "blok (rok nieznany)",
+	unknownAgeBlock,
+);
+const panelByFact = buildingClassOf({
+	buildingType: "blok",
+	buildYear: 2010,
+	facts: { buildingStyle: "largePanel" },
+});
+check(
+	"a large-panel reading wins over a renovated year",
+	panelByFact.oldBlock && panelByFact.label === "stary blok (wielka płyta)",
+	panelByFact,
+);
+const apartmentBlock = buildingClassOf({
+	buildingType: "apartamentowiec",
+	buildYear: 2012,
+});
+check(
+	"an apartment building stays an apartamentowiec, not a new block",
+	apartmentBlock.kind === "apartment" && !apartmentBlock.oldBlock,
+	apartmentBlock,
+);
+const unknownBuilding = buildingClassOf({});
+check(
+	"no evidence is 'nieznany', never a guess",
+	unknownBuilding.kind === "unknown" && !unknownBuilding.oldBlock,
+	unknownBuilding,
 );
 // Prose is read by the extractor, not by the score: a description that names
 // municipal heating must NOT satisfy the gate on its own, because that is the
@@ -888,7 +949,7 @@ check(
 	"large-panel facts lower the flat property score and block the alert",
 	panelFlat.propertyScore < baselineProperty &&
 		!panelFlat.eligible &&
-		panelFlat.gateReason === "large_panel_block",
+		panelFlat.gateReason === "old_block",
 	{
 		baseline: baselineProperty,
 		panel: panelFlat.propertyScore,
@@ -1332,19 +1393,17 @@ const unknownStyleFlat = scoreAlert(
 	geo(),
 );
 check(
-	"a flat with no tenement evidence fails with no_tenement_evidence",
-	!unknownStyleFlat.eligible &&
-		unknownStyleFlat.gateReason === "no_tenement_evidence",
-	unknownStyleFlat.gateReason,
-);
-check(
-	"missing tenement evidence is a fallback, never a proof",
-	unknownStyleFlat.fallbackEligible,
-	unknownStyleFlat.fallbackEligible,
+	"a flat with no building evidence is eligible and flagged",
+	unknownStyleFlat.eligible &&
+		unknownStyleFlat.flags.includes("building_class_unknown"),
+	{ reason: unknownStyleFlat.gateReason, flags: unknownStyleFlat.flags },
 );
 const gasModernFlat = scoreAlert(
 	{
 		...flat,
+		// The column would otherwise win over the gas fact: this fixture is about
+		// the prose evidence.
+		heatingType: null,
 		facts: scoredFactsOf({
 			heating: "gas",
 			buildingType: "block",

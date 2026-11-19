@@ -1,5 +1,7 @@
 import type { ListingAttributesDto } from "#/types/listing";
+import { buildingClassOf } from "./building-class";
 import { parseListingFeatures } from "./listing-features";
+import { HEATING_LABELS, resolveHeatingEvidence } from "./scoring/heating";
 
 /**
  * Row-shape helpers shared by the listings API views. They deliberately do
@@ -86,5 +88,47 @@ export function popupAttributes(row: object): ListingAttributesDto {
 			[key]: value instanceof Date ? value.toISOString() : value,
 		});
 	}
+
+	// The two facts every offer card must state, derived once here so the map
+	// popup and the table panel never disagree with the alert cards.
+	const propertyKind =
+		typeof values.propertyKind === "string" ? values.propertyKind : null;
+	if (propertyKind !== "plot") {
+		const building = buildingClassOf({
+			buildingType:
+				typeof values.buildingType === "string" ? values.buildingType : null,
+			buildingMaterial:
+				typeof values.buildingMaterial === "string"
+					? values.buildingMaterial
+					: null,
+			buildYear: typeof values.buildYear === "number" ? values.buildYear : null,
+			propertyKind: propertyKind === "house" ? "house" : "apartment",
+		});
+		out.buildingClass = building.label;
+		out.buildingClassKind = building.kind;
+	}
+	const featuresHeating = featureHeating(values.features);
+	const heating = resolveHeatingEvidence({
+		heatingType:
+			typeof values.heatingType === "string" ? values.heatingType : null,
+		featuresHeating,
+	});
+	if (propertyKind !== "plot") {
+		out.heatingLabel =
+			heating.kind === "unknown"
+				? "nie potwierdzone"
+				: HEATING_LABELS[heating.kind];
+	}
 	return out;
+}
+
+/** `features.heating` from the raw scraper blob, when it is valid JSON. */
+function featureHeating(features: unknown): string | null {
+	if (typeof features !== "string") return null;
+	try {
+		const parsed = JSON.parse(features) as { heating?: unknown };
+		return typeof parsed.heating === "string" ? parsed.heating : null;
+	} catch {
+		return null;
+	}
 }

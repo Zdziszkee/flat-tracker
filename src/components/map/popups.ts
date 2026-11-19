@@ -460,12 +460,13 @@ export function popupHtml(listing: ApiListing): string {
 	}
 	const material = mappedLabel(MATERIAL_LABELS, attributes.buildingMaterial);
 	if (material) facts.push(["Materiał", material]);
-	if (attributes.buildingType) {
-		const buildingType = mappedLabel(
-			BUILDING_TYPE_LABELS,
-			attributes.buildingType,
-		);
+	if (attributes.buildingType || attributes.buildingClass) {
+		const buildingType =
+			attributes.buildingClass ??
+			mappedLabel(BUILDING_TYPE_LABELS, attributes.buildingType);
 		if (buildingType) facts.push(["Budynek", buildingType]);
+	} else if (listing.propertyKind !== "plot") {
+		facts.push(["Budynek", "nie ustalono"]);
 	}
 	if (attributes.floorCount)
 		facts.push(["Kondygnacje", String(attributes.floorCount)]);
@@ -473,8 +474,13 @@ export function popupHtml(listing: ApiListing): string {
 	if (condition) facts.push(["Stan", condition]);
 	const ownership = mappedLabel(OWNERSHIP_LABELS, attributes.ownership);
 	if (ownership) facts.push(["Forma własności", ownership]);
-	const heating = mappedLabel(HEATING_LABELS, listing.heatingType);
-	if (heating) facts.push(["Ogrzewanie", heating]);
+	if (listing.propertyKind !== "plot") {
+		const heating =
+			attributes.heatingLabel ??
+			mappedLabel(HEATING_LABELS, listing.heatingType) ??
+			"nie potwierdzone";
+		facts.push(["Ogrzewanie", heating]);
+	}
 	const advertiserBase =
 		attributes.advertiserType === "private"
 			? "Oferta prywatna"

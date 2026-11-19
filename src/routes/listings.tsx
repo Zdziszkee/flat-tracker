@@ -117,6 +117,8 @@ function ListingsPage() {
 									<TableHead className="px-3 text-right">zł/m²</TableHead>
 									<TableHead className="px-3 text-right">m²</TableHead>
 									<TableHead className="px-3 text-right">Pokoje</TableHead>
+									<TableHead className="px-3">Budynek</TableHead>
+									<TableHead className="px-3">Ogrzewanie</TableHead>
 									<TableHead className="px-3">Dzielnica</TableHead>
 									<TableHead className="px-3">Data dodania</TableHead>
 									<TableHead className="px-2" aria-label="wycena" />
@@ -200,6 +202,12 @@ function ListingsPage() {
 													<TableCell className="px-3 py-1.5 text-right">
 														{row.rooms ?? ""}
 													</TableCell>
+													<TableCell className="px-3 py-1.5 text-muted-foreground">
+														{row.buildingClass ?? ""}
+													</TableCell>
+													<TableCell className="px-3 py-1.5 text-muted-foreground">
+														{row.heatingLabel ?? ""}
+													</TableCell>
 													<TableCell className="px-3 py-1.5">
 														{row.district ?? ""}
 													</TableCell>
@@ -231,7 +239,7 @@ function ListingsPage() {
 												{isExpanded && (
 													<TableRow className="hover:bg-transparent">
 														<TableCell
-															colSpan={9}
+															colSpan={11}
 															className="bg-muted/30 p-0 whitespace-normal"
 														>
 															{row.source === "budujesie" ? (

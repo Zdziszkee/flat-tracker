@@ -28,6 +28,11 @@ export interface ListingAttributesDto {
 	plotAreaM2?: number | null;
 	plotType?: string | null;
 	buildingType?: string | null;
+	/** Building class as a buyer reads it: kamienica, stary blok, ... */
+	buildingClass?: string | null;
+	buildingClassKind?: string | null;
+	/** Human heating label; "nie potwierdzone" when nothing is known. */
+	heatingLabel?: string | null;
 	hasBalcony?: boolean | null;
 	hasTerrace?: boolean | null;
 	hasGarden?: boolean | null;
@@ -205,6 +210,11 @@ export interface ListingFacetsResponse {
 
 /** Columns the listings table actually renders. */
 export interface ListingTableRow {
+	/** Building class label for the table (kamienica, nowy blok, ...). */
+	buildingClass?: string | null;
+	/** Heating label for the table; "nie potwierdzone" when unknown. */
+	heatingLabel?: string | null;
+	buildYear?: number | null;
 	id: number;
 	source: string;
 	externalId: string;

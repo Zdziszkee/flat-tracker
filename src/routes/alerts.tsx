@@ -118,29 +118,33 @@ function humanizeToken(value: string): string {
  */
 function factEntries(
 	properties: AlertProperties,
+	segment: string,
 ): Array<{ label: string; value: string }> {
+	const isPlot = segment === "plot";
+	// Every flat/house card states the building class and the heating, even when
+	// the evidence is missing: "nie ustalono" is information a buyer needs, and
+	// it is the difference between "a block" and "an old block" that decides
+	// eligibility.
 	const facts: Array<{ label: string; value: string | null }> = [
-		{ label: "Rok budowy", value: properties.buildYear?.toString() ?? null },
+		{
+			label: "Budynek",
+			value: isPlot ? null : (properties.buildingClass ?? "nie ustalono"),
+		},
 		{
 			label: "Ogrzewanie",
-			value:
-				properties.heatingLabel ??
-				(properties.heatingType != null
-					? humanizeToken(properties.heatingType)
-					: null),
+			value: isPlot
+				? null
+				: (properties.heatingLabel ??
+					(properties.heatingType != null
+						? humanizeToken(properties.heatingType)
+						: "nie potwierdzone")),
 		},
+		{ label: "Rok budowy", value: properties.buildYear?.toString() ?? null },
 		{
 			label: "Materiał",
 			value:
 				properties.buildingMaterial != null
 					? humanizeToken(properties.buildingMaterial)
-					: null,
-		},
-		{
-			label: "Typ budynku",
-			value:
-				properties.buildingType != null
-					? humanizeToken(properties.buildingType)
 					: null,
 		},
 		{
@@ -662,7 +666,7 @@ function AlertCard({
 		alert.listing.areaM2 > 0
 			? alert.listing.price / alert.listing.areaM2
 			: null);
-	const facts = factEntries(alert.properties);
+	const facts = factEntries(alert.properties, alert.segment);
 	const amenities = amenityLabels(alert.properties);
 	const nearby = nearestFeatures(alert.amenities);
 	const extras = houseExtrasLine(alert);

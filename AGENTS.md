@@ -483,12 +483,14 @@ the component breakdown and rationale.
   datasets are pinned by `bun run validate:planned-stations` and appear on
   /sources as the static `planned-rail` layer. Coordinates are the OSM
   station nodes the map already draws; a wrong entry can only shift a score.
-- **Eligibility is a hard filter before the discount gate**: flats must not
-  be large-panel blocks, must prove district heating or a heat pump (gas,
-  electric, coal and oil fail as `non_municipal_heating`, an ad that never
-  says fails as `no_heating_evidence`), must be a tenement or a pre-1945
-  building (`not_tenement` when proved modern, `no_tenement_evidence` when
-  unknown) and must sit in the centre zone. Plots need evidence that
+- **Eligibility is a hard filter before the discount gate**: flats must
+  prove district heating or a heat pump (gas, electric, coal and oil fail as
+  `non_municipal_heating`, an ad that never says fails as
+  `no_heating_evidence`), must not sit in an old block (2027.17: a
+  large-panel building, or a block proved to predate 2000, fails as
+  `old_block`; tenements, new blocks, apartment buildings and blocks of
+  unknown age are allowed) and must sit in the centre zone. Plots need
+  evidence that
   something can still be built on the parcel (a building plot type or
   built-up land-use class B*, MN, MW, RM, a WZ decision, a zoning plan, or
   the same evidence read from the ad by the extractor) and must sit inside
@@ -541,11 +543,20 @@ the component breakdown and rationale.
   "Park Matecznego" plus six of "Stańczyka II".
 - **Gates are evaluated independently** (`gateFailures`, first one kept as
   `gateReason`), which is what makes `fallback_eligible` possible: a flat
-  that failed *only* on `no_heating_evidence` or `no_tenement_evidence`
-  fills a section that cannot reach `ALERT_TOP_OFFERS` 25 with fully eligible
-  offers. Fallbacks rank below every eligible offer and the card marks them;
-  a gas/electric/coal/oil flat, or a flat proved to be in a modern block, is
-  never a fallback.
+  that failed *only* on `no_heating_evidence` (or a plot on missing building
+  evidence) fills a section that cannot reach `ALERT_TOP_OFFERS` 25 with
+  fully eligible offers. Fallbacks rank below every eligible offer and the
+  card marks them; a gas/electric/coal/oil flat, or a flat proved to sit in
+  an old block, is never a fallback.
+- **Every flat/house card states the building class and the heating**
+  (`src/lib/building-class.ts`): kamienica, stary blok (wielka płyta or
+  pre-2000), nowy blok, apartamentowiec, blok with no stated age; `nieznany`
+  when nothing describes the building, flagged `building_class_unknown`.
+  Heating is `miejskie` / `pompa ciepła` / `gazowe` / `elektryczne` / ...,
+  `nie potwierdzone` when the model found no statement. The label is derived
+  once per request from the model's style reading, the structured type and
+  the build year, and appears on the alert card, the map popup, the
+  expandable table row and the offers table.
 - **Prose is read by the LLM, not by regexes**: the description-derived
   heating, building style, tenement age, plot zoning/media and defect
   evidence all come from `listing_facts` (`src/lib/llm/`, prompt v4). The

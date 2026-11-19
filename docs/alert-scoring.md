@@ -69,15 +69,16 @@ Three hard rules sit before the discount gate. A failing offer is still
 scored and kept in the table, but it can never enter the leaderboard
 (`listing_scores.eligible = false`):
 
-- **Flats**: no large-panel block (`wielka płyta`, `prefabrykat`), district
-  heating or a heat pump, a tenement (kamienica or a pre-1945 building), and a
-  position inside the centre zone (4 km from any anchor in
+- **Flats**: district heating or a heat pump, no old block, and a position
+  inside the centre zone (4 km from any anchor in
   `src/lib/scoring/centre-zone.ts`: Rynek Główny, Kazimierz, Podgórze,
   Krowodrza, Grzegórzki, Dębniki, Zwierzyniec, Wola Justowska, Katowice
-  Rynek). Gas, electric, coal and oil fail as `non_municipal_heating`; a
-  building that is proved modern fails as `not_tenement`; missing evidence
-  fails as `no_heating_evidence` / `no_tenement_evidence`, and those two are
-  the only failures a short section may fill from (see below).
+  Rynek). Gas, electric, coal and oil fail as `non_municipal_heating`; an old
+  block fails as `old_block` (a large-panel building, or a block proved to
+  predate 2000, see `src/lib/building-class.ts`). Tenements, new blocks
+  (2000+), apartment buildings and blocks whose age nobody stated are
+  allowed. Missing heating evidence fails as `no_heating_evidence`, the only
+  flat failure a short section may fill from (see below).
 - **Plots**: buildable land only, inside 3 km of a fast-rail station.
   Building evidence is the portal plot type (budowlana / inwestycyjna), an
   EGiB land-use class in B*, MN, MW or RM, a WZ decision, a zoning plan, or
@@ -413,9 +414,9 @@ condition deck, the clamp, monotonicity and the asking-ratio rules, and
 - fast rail: a plot inside 3 km is eligible, 3.4 km fails as
   `outside_fast_rail`, and a closer station scores higher
 - centre zone: a flat in Nowa Huta fails as `outside_centre_zone`, Wola
-  Justowska passes, a proved modern block fails as `not_tenement`, a flat
-  with no tenement evidence is a fallback, and a gas-heated modern block is
-  never a fallback
+  Justowska passes, a block proved to predate 2000 fails as `old_block`, a
+  new block and a block with no stated age pass, and a gas-heated new block
+  is never a fallback
 - holiday house: a wooden house alone by the water is eligible without any
   station, an ordinary suburban house fails the character gate, a house with
   no water/forest/mountains fails the nature gate, farmland no longer

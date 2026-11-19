@@ -9,7 +9,7 @@
 
 import { clamp } from "#/lib/stats";
 
-export const SCORE_VERSION = "2027.16";
+export const SCORE_VERSION = "2027.17";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -138,11 +138,14 @@ export const PLOT_GREEN = {
 export const SEGMENT_ELIGIBILITY = {
 	/** Flats must be district-heated (or a heat pump) and not a large-panel block. */
 	flatRequiresDistrictHeating: true,
-	flatExcludesLargePanel: true,
+	/**
+	 * Flats may not sit in an old block (`buildingClassOf(...).oldBlock`: a
+	 * large-panel building, or a block proved to predate 2000). Tenements, new
+	 * blocks, apartment buildings and blocks of unknown age stay eligible.
+	 */
+	flatExcludesOldBlock: true,
 	/** Flats must sit inside `CENTRE_ZONE.radiusM` of a tracked city centre. */
 	flatRequiresCentreZone: true,
-	/** ... and be a tenement (kamienica) or a pre-1945 building. */
-	flatRequiresTenement: true,
 	/** Plots must show building-plot evidence: plot type, WZ or a zoning plan. */
 	plotRequiresBuildingEvidence: true,
 	/**

@@ -48,6 +48,14 @@ export interface AlertProperties {
 	heatingType: string | null;
 	/** Human label resolved from the column, the portal blob or the prose. */
 	heatingLabel: string | null;
+	/**
+	 * The building as a buyer reads it: kamienica, stary blok, nowy blok,
+	 * apartamentowiec, blok of unknown age. Null for plots.
+	 */
+	buildingClass: string | null;
+	buildingClassKind: string | null;
+	/** What decided the class: "z opisu", "rok budowy 1998", ... */
+	buildingClassEvidence: string | null;
 	buildingType: string | null;
 	buildingMaterial: string | null;
 	condition: string | null;

@@ -7,6 +7,7 @@
  * never reduce that component.
  */
 
+import { buildingClassOf } from "#/lib/building-class";
 import type { ScoredFacts } from "#/lib/llm/fact-access";
 import { clamp } from "#/lib/stats";
 import type { GeoUniqueness } from "#/lib/valuation/uniqueness-geo";
@@ -885,30 +886,25 @@ function riskComponent(
 	return { score: clamp(score, 0, 100), confidence: 0.75, reasons, flags };
 }
 
-function isLargePanelFlat(input: ScoreListingInput): boolean {
-	return flatBuildingStyle(input)?.style === "largePanel";
-}
-
-/** Tenement evidence: proved, contradicted, or simply unknown. */
-function tenementEvidence(
-	input: ScoreListingInput,
-): "tenement" | "not_tenement" | "unknown" {
-	const facts = input.facts ?? null;
-	if (facts?.buildingStyle === "tenement") return "tenement";
-	const years = [input.buildYear ?? null, facts?.buildYear ?? null].filter(
-		(year): year is number => year != null,
-	);
-	if (years.some((year) => year <= CENTRE_ZONE.tenementMaxBuildYear)) {
-		return "tenement";
-	}
-	const structured = `${input.buildingType ?? ""} ${input.buildingMaterial ?? ""}`;
-	if (/kamienic|tenement/iu.test(structured)) return "tenement";
-	if (facts?.buildingStyle != null) return "not_tenement";
-	if (years.length > 0) return "not_tenement";
-	if (/blok|block|apartament|apartment|wielka/iu.test(structured)) {
-		return "not_tenement";
-	}
-	return "unknown";
+/**
+ * The building class of a flat: the model's reading of the ad first, the
+ * structured columns second. `oldBlock` is the gate answer (a large-panel
+ * building, or a block proved to predate 2000).
+ */
+function flatBuilding(input: ScoreListingInput) {
+	return buildingClassOf({
+		buildingType: input.buildingType,
+		buildingMaterial: input.buildingMaterial,
+		buildYear: input.buildYear,
+		propertyKind: "apartment",
+		facts: input.facts
+			? {
+					buildingStyle: input.facts.buildingStyle,
+					buildYear: input.facts.buildYear,
+					technology: input.facts.technology,
+				}
+			: null,
+	});
 }
 
 /** MPZP purposes that allow a house. */
@@ -1309,8 +1305,14 @@ export function scoreAlert(
 		gateFailures.push("placeholder_coordinates");
 	}
 	if (input.segment === "flat") {
-		if (SEGMENT_ELIGIBILITY.flatExcludesLargePanel && isLargePanelFlat(input)) {
-			gateFailures.push("large_panel_block");
+		// Only old blocks are excluded. A tenement, a new block, an apartment
+		// building and a block whose age nobody stated are all allowed; the card
+		// names the class so the reader can judge it.
+		if (
+			SEGMENT_ELIGIBILITY.flatExcludesOldBlock &&
+			flatBuilding(input).oldBlock
+		) {
+			gateFailures.push("old_block");
 		}
 		if (
 			SEGMENT_ELIGIBILITY.flatRequiresDistrictHeating &&
@@ -1329,13 +1331,6 @@ export function scoreAlert(
 			(zone == null || zone.distanceM > CENTRE_ZONE.radiusM)
 		) {
 			gateFailures.push("outside_centre_zone");
-		}
-		if (SEGMENT_ELIGIBILITY.flatRequiresTenement) {
-			const tenement = tenementEvidence(input);
-			if (tenement === "not_tenement") gateFailures.push("not_tenement");
-			else if (tenement === "unknown") {
-				gateFailures.push("no_tenement_evidence");
-			}
 		}
 	}
 	if (
@@ -1416,11 +1411,16 @@ export function scoreAlert(
 		}
 	}
 	const gateReason = gateFailures[0] ?? null;
+	// A flat whose building nobody described is allowed (only old blocks are
+	// excluded), but the card says the class is missing rather than letting it
+	// read as a building claim.
+	if (input.segment === "flat" && flatBuilding(input).kind === "unknown") {
+		flags.push("building_class_unknown");
+	}
 	// The one failure a section may fill with, clearly marked on the card. Both
 	// entries mean "the extractor found no evidence", never "the offer says no".
 	const FALLBACK_GATES = new Set([
 		"no_heating_evidence",
-		"no_tenement_evidence",
 		"no_buildable_evidence",
 	]);
 	const fallbackEligible =
