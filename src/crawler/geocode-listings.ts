@@ -74,6 +74,15 @@ function inRegionBounds(lat: number, lng: number): boolean {
 }
 
 /**
+ * Stored coordinates plus the denormalized map anchor the map feed reads.
+ * The derived pass would copy these later, but it runs after the crawl; a
+ * court-auction notice geocoded here has to appear on the map immediately.
+ */
+function mapPoint(lat: number, lng: number) {
+	return { lat, lng, mapLat: lat, mapLng: lng };
+}
+
+/**
  * Inflected city names that portals put in titles but not in the structured
  * address ("w Zakopanem"). When the title names one of these and the stored
  * city is a generic fallback, the title city wins — it is usually the real
@@ -358,7 +367,13 @@ export async function geocodeUnlocatedListings(
 	if (opts.resetSources?.length) {
 		await db
 			.update(listings)
-			.set({ lat: null, lng: null, buildingId: null })
+			.set({
+				lat: null,
+				lng: null,
+				mapLat: null,
+				mapLng: null,
+				buildingId: null,
+			})
 			.where(inArray(listings.source, opts.resetSources));
 	}
 
@@ -511,8 +526,7 @@ export async function geocodeUnlocatedListings(
 				await db
 					.update(listings)
 					.set({
-						lat: local.lat,
-						lng: local.lng,
+						...mapPoint(local.lat, local.lng),
 						buildingId,
 						address: minedAddress(part),
 					})
@@ -528,8 +542,7 @@ export async function geocodeUnlocatedListings(
 				await db
 					.update(listings)
 					.set({
-						lat: centroid.lat,
-						lng: centroid.lng,
+						...mapPoint(centroid.lat, centroid.lng),
 						address: minedAddress(part),
 					})
 					.where(eq(listings.id, row.id));
@@ -567,8 +580,7 @@ export async function geocodeUnlocatedListings(
 				await db
 					.update(listings)
 					.set({
-						lat: local.lat,
-						lng: local.lng,
+						...mapPoint(local.lat, local.lng),
 						buildingId,
 						...(extractedAddress ? { address: extractedAddress } : {}),
 					})
@@ -593,8 +605,7 @@ export async function geocodeUnlocatedListings(
 			await db
 				.update(listings)
 				.set({
-					lat: centroid.lat,
-					lng: centroid.lng,
+					...mapPoint(centroid.lat, centroid.lng),
 					...(extractedAddress ? { address: extractedAddress } : {}),
 				})
 				.where(eq(listings.id, row.id));
@@ -630,7 +641,7 @@ export async function geocodeUnlocatedListings(
 			if (cityCentroid) {
 				await db
 					.update(listings)
-					.set({ lat: cityCentroid.lat, lng: cityCentroid.lng })
+					.set(mapPoint(cityCentroid.lat, cityCentroid.lng))
 					.where(eq(listings.id, row.id));
 				report.localHits++;
 				continue;
@@ -674,7 +685,7 @@ export async function geocodeUnlocatedListings(
 				if (locality) {
 					await db
 						.update(listings)
-						.set({ lat: locality.lat, lng: locality.lng })
+						.set(mapPoint(locality.lat, locality.lng))
 						.where(eq(listings.id, row.id));
 					report.nomHits++;
 					continue;
@@ -725,8 +736,7 @@ export async function geocodeUnlocatedListings(
 			await db
 				.update(listings)
 				.set({
-					lat: geo.lat,
-					lng: geo.lng,
+					...mapPoint(geo.lat, geo.lng),
 					...(extractedAddress ? { address: extractedAddress } : {}),
 				})
 				.where(eq(listings.id, row.id));

@@ -223,6 +223,12 @@ export async function saveListings(
 			isActive: true,
 			lat: l.lat,
 			lng: l.lng,
+			// The map reads mapLat/mapLng. The derived pass also sets them
+			// (from the building centroid once a row is anchored), but it runs
+			// after the crawl: until then a fresh offer would be missing from
+			// the map even though its portal coordinates are known.
+			mapLat: l.lat,
+			mapLng: l.lng,
 			listedAt: l.listedAt ? new Date(l.listedAt) : null,
 			scrapedAt: new Date(l.scrapedAt),
 			offerType: l.offerType ?? "sale",
@@ -319,6 +325,8 @@ export async function saveListings(
 					// position instead of wiping it with NULL on re-crawl.
 					lat: sql`coalesce(excluded.lat, ${listings.lat})`,
 					lng: sql`coalesce(excluded.lng, ${listings.lng})`,
+					mapLat: sql`coalesce(excluded.map_lat, ${listings.mapLat})`,
+					mapLng: sql`coalesce(excluded.map_lng, ${listings.mapLng})`,
 					buildingId: sql`coalesce(excluded.building_id, ${listings.buildingId})`,
 					// Detail-page records carry no listedAt (the list page owns the
 					// "added" date), so keep the existing value instead of wiping it.
