@@ -139,30 +139,36 @@ Two curated datasets, both listed on /sources as static layers
 ### Holiday houses
 
 A house alert is a bet on something a short-term renter cannot get in a city:
-wood, age, space, and nobody next door, with water, forest or mountains
-around it. The signals come from data the project already holds, not from
-adjectives in the ad:
+wood, age, space, and nobody next door, with water, forest, mountains or a
+park around it. The signals come from data the project already holds, not
+from adjectives in the ad:
 
 - **Character** (`houseCharacter` in `alert-score.ts`, deltas on the property
   component): wood / log / timber-frame construction +12, `technology =
-  framed` +6, built before `HOUSE_UNIQUENESS.retroBuiltBefore` (1980) +6, a
-  plot of 1500 m² or more +6, a neighbour 250 m+ away +14 (100 m+ +10), at
-  most four buildings within 150 m +4, and a neighbour closer than 25 m -12.
-  The gate needs at least one positive entry.
+  framed` +6, pre-war (`prewarBuiltBefore` 1945) +10 or built before
+  `retroBuiltBefore` (1980) +6, a plot of 1500 m² or more +6, nothing within
+  `wildernessM` (500 m) +20 (250 m+ +14, 100 m+ +10), no other building within
+  150 m +10 (at most four +4), and a neighbour closer than 25 m -12. The gate
+  needs at least one positive entry.
 - **Isolation** (`src/lib/scoring/house-nature.ts`) is measured, not claimed:
   the nearest other building and the count within 150 m come from the local
   `osm_buildings` index (3.2M footprints), with the house's own footprint
   (anything within 20 m) ignored. The query rides the bbox index and is cached
   per 250 m cell, so a street of offers costs one query.
-- **Nature**: water within 1 km, forest within 800 m, or a forest/water share
-  of the 500 m/1 km disc; the extractor's `context` adds what geometry cannot
-  see (a lake across the road, a mountain view).
+- **Nature**: water within 1 km, forest within 800 m, a park within
+  `natureParkM` (500 m), or a forest/water share of the 500 m/1 km disc; the
+  extractor's `context` adds what geometry cannot see (a lake across the road,
+  a mountain view).
 - **Short-term-rental market**: the median nightly price of the airbnb and
   booking rows within 2 km, from the same crawler that already stores 11.6k
   short-term offers. `STR_MARKET` turns it into +2/+4/+6 points above
-  250/400/600 zł per night and refuses a sample under five offers.
+  250/400/600 zł per night and refuses a sample under five offers. Offer
+  **density** in the same disc is the area-level signal: 30/60/120 visible
+  short-term offers add +2/+4/+6, and plots read the density too, because a
+  holiday plot is making the same bet on the area.
 - **Bonuses** on top of the weighted score: water within 300 m +8, forest
-  within 300 m +6, mountains +4, solitude +6. The card shows the isolation
+  within 300 m +6, a park within 500 m +5, mountains +4, solitude +6, and
+  "in the wild" (nothing within 500 m) +8. The card shows the isolation
   distance and the local nightly median so the number can be checked.
 
 ### Plot green/water tiers

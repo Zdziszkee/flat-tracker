@@ -263,24 +263,25 @@ async function scoreListingRow(
 			? await geoUniqueness(row.lat, row.lng)
 			: null;
 	// A house is scored on its solitude and its rental market, both read from
-	// the DB and carried in the stored amenities blob so the card can show them.
-	const houseExtras =
-		segment === "house"
-			? {
-					neighbourhood: await neighbourhoodAt(row.lat, row.lng),
-					str: await strMarketAt(row.lat, row.lng),
-				}
+	// the DB and carried in the stored amenities blob so the card can show
+	// them. Land reads only the rental market: a dense airbnb/booking cluster
+	// is the evidence that a holiday plot in this area can earn.
+	const neighbourhood =
+		segment === "house" ? await neighbourhoodAt(row.lat, row.lng) : null;
+	const str =
+		segment === "house" || segment === "plot"
+			? await strMarketAt(row.lat, row.lng)
 			: null;
 	const geo =
 		baseGeo == null
 			? null
 			: {
 					...baseGeo,
-					neighbourM: houseExtras?.neighbourhood.nearestBuildingM ?? null,
-					neighbours150m:
-						houseExtras?.neighbourhood.buildingsWithin150m ?? null,
-					strNightly: houseExtras?.str.nightlyMedian ?? null,
-					strSample: houseExtras?.str.sampleCount ?? null,
+					neighbourM: neighbourhood?.nearestBuildingM ?? null,
+					neighbours150m: neighbourhood?.buildingsWithin150m ?? null,
+					strNightly: str?.nightlyMedian ?? null,
+					strSample: str?.sampleCount ?? null,
+					strOffers: str?.offersWithin2km ?? null,
 				};
 
 	const rowFacts = facts.get(row.id) ?? null;
@@ -332,8 +333,8 @@ async function scoreListingRow(
 		title: row.title,
 		description: row.description,
 		facts: rowFacts,
-		neighbours: houseExtras?.neighbourhood ?? null,
-		str: houseExtras?.str ?? null,
+		neighbours: neighbourhood,
+		str,
 		placeholderCoordinates: isPlaceholderListing(placeholders, {
 			id: row.id,
 			lat: row.lat,

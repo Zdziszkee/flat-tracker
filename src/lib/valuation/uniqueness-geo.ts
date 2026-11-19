@@ -67,6 +67,8 @@ export interface GeoUniqueness {
 	strNightly?: number | null;
 	/** Priced short-term rentals behind `strNightly`. */
 	strSample?: number | null;
+	/** Every short-term rental within 2 km (the area's STR density). */
+	strOffers?: number | null;
 	source: "osm-ways";
 }
 

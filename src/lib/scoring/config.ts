@@ -9,7 +9,7 @@
 
 import { clamp } from "#/lib/stats";
 
-export const SCORE_VERSION = "2027.20";
+export const SCORE_VERSION = "2027.21";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -105,6 +105,10 @@ export const AMENITY_BONUSES = {
 	holidayForest: 6,
 	holidayMountains: 4,
 	holidayIsolation: 6,
+	/** A park or national park around the house. */
+	holidayPark: 5,
+	/** Nothing else stands within `HOUSE_UNIQUENESS.wildernessM`. */
+	holidayWilderness: 8,
 } as const;
 
 /** Distance ceilings for the additive amenities, in metres. */
@@ -178,18 +182,24 @@ export const HOUSE_UNIQUENESS = {
 	natureWaterM: 1000,
 	/** Forest this close counts as "in the woods" for the gate. */
 	natureForestM: 800,
+	/** A park this close is a nature setting on its own (park, national park). */
+	natureParkM: 500,
 	/** A building closer than this means neighbours next door. */
 	closeNeighbourM: 100,
 	/** Buildings within this many metres that still count as a hamlet. */
 	hamletNeighbours: 4,
 	/** Plot size that alone makes a property stand out, m². */
 	bigPlotM2: 1500,
+	/** A pre-war house is the "klimatyczny stary dom" the target is about. */
+	prewarBuiltBefore: 1945,
 	/** A building older than this is "retro" on its own, year. */
 	retroBuiltBefore: 1980,
 	/** Awarded when the nearest other building is at least this far away. */
 	isolatedM: 100,
 	/** Awarded when nothing else stands within `closeNeighbourM` x 2. */
 	veryIsolatedM: 250,
+	/** "W dziczy": nothing else within half a kilometre. */
+	wildernessM: 500,
 } as const;
 
 /**
@@ -203,6 +213,17 @@ export const STR_MARKET = {
 		[600, 6],
 		[400, 4],
 		[250, 2],
+	] as ReadonlyArray<readonly [number, number]>,
+	/**
+	 * Offer density inside 2 km, from booking + airbnb. A dense cluster is the
+	 * clearest evidence a holiday property in this area earns: the local
+	 * distribution (dev corpus) has a median of 1, p90 19 and a max of 228, so
+	 * 30/60/120 separate a busy resort from an ordinary village.
+	 */
+	densityBands: [
+		[120, 6],
+		[60, 4],
+		[30, 2],
 	] as ReadonlyArray<readonly [number, number]>,
 } as const;
 

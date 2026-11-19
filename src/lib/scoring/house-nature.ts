@@ -17,7 +17,7 @@
  * grid cell) and travel into `scoreAlert` as plain values: the score itself
  * stays a pure function.
  */
-import { and, gte, isNotNull, lte, sql } from "drizzle-orm";
+import { and, gte, lte, sql } from "drizzle-orm";
 
 import { db } from "#/db/index";
 import { listings, osmBuildings } from "#/db/schema";
@@ -51,6 +51,8 @@ export interface StrMarket {
 	nightlyMedian: number | null;
 	/** How many priced rentals the median is built from. */
 	sampleCount: number;
+	/** Every visible short-term rental within 2 km (priced or not). */
+	offersWithin2km: number;
 	/** Cheapest and dearest nightly price in the same sample. */
 	nightlyLow: number | null;
 	nightlyHigh: number | null;
@@ -160,6 +162,7 @@ export function strMarketAt(
 	const empty: StrMarket = {
 		nightlyMedian: null,
 		sampleCount: 0,
+		offersWithin2km: 0,
 		nightlyLow: null,
 		nightlyHigh: null,
 	};
@@ -178,8 +181,6 @@ export function strMarketAt(
 				and(
 					sql`${listings.offerType} = 'short_term_rental'`,
 					sql`${listings.isVisible} = 1`,
-					isNotNull(listings.price),
-					sql`${listings.price} > 0`,
 					gte(listings.lat, lat - dLat),
 					lte(listings.lat, lat + dLat),
 					gte(listings.lng, lng - dLng),
@@ -192,6 +193,7 @@ export function strMarketAt(
 		return {
 			nightlyMedian: median(prices),
 			sampleCount: prices.length,
+			offersWithin2km: rows.length,
 			nightlyLow: prices.length > 0 ? Math.min(...prices) : null,
 			nightlyHigh: prices.length > 0 ? Math.max(...prices) : null,
 		};

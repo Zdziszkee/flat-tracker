@@ -222,7 +222,13 @@ const house: ScoreListingInput = {
 		buildingsWithin150m: 0,
 		sampledBuildings: 0,
 	},
-	str: { nightlyMedian: 620, sampleCount: 24, nightlyLow: 250, nightlyHigh: 1400 },
+	str: {
+		nightlyMedian: 620,
+		sampleCount: 24,
+		offersWithin2km: 80,
+		nightlyLow: 250,
+		nightlyHigh: 1400,
+	},
 };
 
 function total(
@@ -252,7 +258,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.20",
+		SCORE_VERSION === "2027.21",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -1466,13 +1472,117 @@ check(
 		holidayReasons: holidayHouse.reasons.map((reason) => reason.label),
 	},
 );
+// The target is an atmospheric old house in the wild: a park is a nature
+// setting on its own, and pre-war + true solitude rank above the base house.
+const parkOnlyHouse = scoreAlert(
+	{
+		...house,
+		facts: scoredFactsOf({
+			heating: "coalWood",
+			buildingType: "house",
+			buildingMaterial: "wood",
+			buildYear: 1935,
+		}),
+	},
+	estimate(900000),
+	geo({
+		waterM: 9000,
+		lakeM: null,
+		riverM: 9000,
+		forestM: 6000,
+		parkM: 400,
+		parkName: "Park Narodowy",
+	}),
+);
+check(
+	"a park alone is a nature setting for a house",
+	parkOnlyHouse.eligible,
+	parkOnlyHouse.gateReason,
+);
+const wildernessHouse = scoreAlert(
+	{
+		...house,
+		buildYear: 1935,
+		neighbours: {
+			nearestBuildingM: 620,
+			buildingsWithin150m: 0,
+			sampledBuildings: 0,
+		},
+	},
+	estimate(900000),
+	geo({ waterM: 250, lakeM: 200, forestM: 100, parkM: 400 }),
+);
+check(
+	"a pre-war house in the wild reports its solitude and keeps a top score",
+	wildernessHouse.propertyScore >= holidayHouse.propertyScore &&
+		wildernessHouse.reasons.some((reason) => reason.label.includes("w dziczy")),
+	{
+		wild: wildernessHouse.propertyScore,
+		holiday: holidayHouse.propertyScore,
+		reasons: wildernessHouse.reasons.map((reason) => reason.label),
+	},
+);
+// A dense booking/airbnb cluster is the area-level evidence for holiday lets.
+const denseStr = {
+	nightlyMedian: 620,
+	sampleCount: 24,
+	offersWithin2km: 150,
+	nightlyLow: 250,
+	nightlyHigh: 1400,
+};
+const quietStr = { ...denseStr, offersWithin2km: 4 };
+const denseHouse = scoreAlert(
+	{ ...house, str: denseStr },
+	estimate(900000),
+	geo({ waterM: 200, lakeM: 180, forestM: 120 }),
+);
+const quietHouse = scoreAlert(
+	{ ...house, str: quietStr },
+	estimate(900000),
+	geo({ waterM: 200, lakeM: 180, forestM: 120 }),
+);
+const densePlot = scoreAlert(
+	{ ...plot, str: denseStr },
+	estimate(300000),
+	geo(),
+);
+const quietPlot = scoreAlert(
+	{ ...plot, str: quietStr },
+	estimate(300000),
+	geo(),
+);
+check(
+	"a dense short-term-rental area scores a house higher",
+	denseHouse.reasons.some((reason) => reason.label.includes("gęstość")) &&
+		!quietHouse.reasons.some((reason) => reason.label.includes("gęstość")),
+	{
+		dense: denseHouse.totalScore,
+		quiet: quietHouse.totalScore,
+	},
+);
+check(
+	"a dense short-term-rental area scores a plot higher",
+	densePlot.reasons.some((reason) => reason.label.includes("gęstość")) &&
+		!quietPlot.reasons.some((reason) => reason.label.includes("gęstość")),
+	{
+		dense: densePlot.totalScore,
+		quiet: quietPlot.totalScore,
+	},
+);
 const houseNoNature = scoreAlert(
 	{
 		...house,
 		facts: scoredFactsOf({ heating: "coalWood", buildingType: "house" }),
 	},
 	estimate(900000),
-	geo({ waterM: 9000, lakeM: null, riverM: 8000, forestM: 6000 }),
+	geo({
+		waterM: 9000,
+		lakeM: null,
+		riverM: 8000,
+		forestM: 6000,
+		parkM: 9000,
+		parkName: null,
+	}),
 );
 check(
 	"a house with no water, forest or mountains fails the nature gate",

@@ -521,23 +521,28 @@ the component breakdown and rationale.
   so a rejected offer stays in the table and is rarely alerted. Plot
   forest/lake points are tiered: on or next to the parcel (radius + 20 m)
   three times the base value, within 3 km a third, beyond that nothing.
-- **Houses are holiday properties, not spare land** (2027.15): the target is
-  a unique old or wooden house with nobody next door, near water, forest or
-  mountains, that earns from short-term rental. Buildability and the
-  fast-rail radius do not apply. The gates are `no_nature_setting` (water
-  within 1 km, forest within 800 m, or a lake/river/forest/mountains setting
-  the extractor read) and `no_house_character` (wood construction, pre-1980,
-  a 1500 m²+ plot, or real solitude). Character is a delta on the house
-  property component (wood +12, timber frame +6, retro +6, big plot +6,
-  neighbour 250 m+ +14, 100 m+ +10, neighbour under 25 m -12). Isolation is
+- **Houses are holiday properties, not spare land** (2027.21): the target is
+  a unique, atmospheric old or wooden house with nobody next door, in the
+  wild near water, forest, mountains or a park, that earns from short-term
+  rental. Buildability and the fast-rail radius do not apply. The gates are
+  `no_nature_setting` (water within 1 km, forest within 800 m, a park within
+  500 m, or a lake/river/forest/mountains setting the extractor read) and
+  `no_house_character` (wood construction, pre-1945 or pre-1980, a 1500 m²+
+  plot, or real solitude). Character is a delta on the house property
+  component (wood +12, timber frame +6, pre-war +10 / pre-1980 +6, big plot
+  +6, nothing within 500 m +20, 250 m+ +14, 100 m+ +10, no other building
+  within 150 m +10, a neighbour under 25 m -12). Isolation is
   measured from the 3.2M-footprint `osm_buildings` index (nearest building,
   count within 150 m, own footprint under 20 m ignored) and the rental market
   is the median nightly price of the airbnb/booking rows within 2 km; both
   live in `src/lib/scoring/house-nature.ts`, cached per 250 m cell. Holiday
-  bonuses: water within 300 m +8, forest +6, mountains +4, solitude +6, STR
-  market +2/+4/+6 above 250/400/600 zł per night. The isolation distance and
-  the nightly median are stored in `amenities_json` (`neighbourM`,
-  `neighbours150m`, `strNightly`, `strSample`) and shown on the card.
+  bonuses: water within 300 m +8, forest +6, park within 500 m +5, mountains
+  +4, solitude +6, wilderness (nothing within 500 m) +8, STR market +2/+4/+6
+  above 250/400/600 zł per night, and STR offer density +2/+4/+6 at 30/60/120
+  booking+airbnb rows within 2 km (the same density signal scores a plot).
+  The isolation distance, the nightly median and the offer count are stored
+  in `amenities_json` (`neighbourM`, `neighbours150m`, `strNightly`,
+  `strSample`, `strOffers`) and shown on the card.
 - **The fair value must survive a plausibility check** (2027.16). Three
   failures showed up in the live list and each is now a gate:
   `placeholder_coordinates` (the coordinates are a point dozens of

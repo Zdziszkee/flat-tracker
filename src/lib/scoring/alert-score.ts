@@ -991,15 +991,21 @@ function houseCharacter(
 		out.push({ label: "technologia szkieletowa", delta: 6 });
 	}
 	const year = input.buildYear ?? input.facts?.buildYear ?? null;
-	if (year != null && year <= HOUSE_UNIQUENESS.retroBuiltBefore) {
-		out.push({ label: `retro (${year})`, delta: 6 });
+	if (year != null && year <= HOUSE_UNIQUENESS.prewarBuiltBefore) {
+		// The "klimatyczny stary dom" the target is about: pre-war, not merely
+		// older than the retro cut-off.
+		out.push({ label: `przedwojenny (${year})`, delta: 10 });
+	} else if (year != null && year <= HOUSE_UNIQUENESS.retroBuiltBefore) {
+		out.push({ label: `stary dom (${year})`, delta: 6 });
 	}
 	const plot = input.plotAreaM2 ?? input.facts?.plotAreaM2 ?? null;
 	if (plot != null && plot >= HOUSE_UNIQUENESS.bigPlotM2) {
 		out.push({ label: `duża działka (${Math.round(plot)} m²)`, delta: 6 });
 	}
 	const nearest = input.neighbours?.nearestBuildingM ?? null;
-	if (nearest != null && nearest >= HOUSE_UNIQUENESS.veryIsolatedM) {
+	if (nearest != null && nearest >= HOUSE_UNIQUENESS.wildernessM) {
+		out.push({ label: `w dziczy (${Math.round(nearest)} m)`, delta: 20 });
+	} else if (nearest != null && nearest >= HOUSE_UNIQUENESS.veryIsolatedM) {
 		out.push({ label: `bez sąsiadów (${Math.round(nearest)} m)`, delta: 14 });
 	} else if (nearest != null && nearest >= HOUSE_UNIQUENESS.isolatedM) {
 		out.push({ label: `osobno (${Math.round(nearest)} m)`, delta: 10 });
@@ -1007,8 +1013,12 @@ function houseCharacter(
 	if (nearest != null && nearest < 25) {
 		out.push({ label: "sąsiad za płotem", delta: -12 });
 	}
+	if (input.neighbours != null && input.neighbours.buildingsWithin150m === 0) {
+		out.push({ label: "bez innych budynków w 150 m", delta: 10 });
+	}
 	if (
 		input.neighbours != null &&
+		input.neighbours.buildingsWithin150m > 0 &&
 		input.neighbours.buildingsWithin150m <= HOUSE_UNIQUENESS.hamletNeighbours
 	) {
 		out.push({ label: "spokojna okolica", delta: 4 });
@@ -1039,6 +1049,11 @@ function houseHasNature(
 		return true;
 	}
 	if (geo.forestM != null && geo.forestM <= HOUSE_UNIQUENESS.natureForestM) {
+		return true;
+	}
+	// "Obok parku": a park or national park is a nature setting of its own,
+	// not only a green-amenity bonus.
+	if (geo.parkM != null && geo.parkM <= HOUSE_UNIQUENESS.natureParkM) {
 		return true;
 	}
 	return geo.forestShare500m >= 0.3 || geo.waterShare1000m >= 0.2;
@@ -1085,6 +1100,18 @@ function amenityBonusReasons(
 				});
 			}
 		}
+		// A dense airbnb/booking cluster says the area works for holiday lets,
+		// which is the same bet a holiday plot is making.
+		const plotDensity = input.str?.offersWithin2km ?? 0;
+		for (const [threshold, points] of STR_MARKET.densityBands) {
+			if (plotDensity >= threshold) {
+				reasons.push({
+					label: `gęstość noclegów: ${plotDensity} ofert w 2 km`,
+					impact: points,
+				});
+				break;
+			}
+		}
 	} else {
 		// Holiday house: the surroundings are the product, and the local
 		// short-term-rental market is the business case.
@@ -1105,6 +1132,12 @@ function amenityBonusReasons(
 				impact: AMENITY_BONUSES.holidayForest,
 			});
 		}
+		if (geo?.parkM != null && geo.parkM <= HOUSE_UNIQUENESS.natureParkM) {
+			reasons.push({
+				label: `${geo.parkName ?? "park"} ${Math.round(geo.parkM)} m`,
+				impact: AMENITY_BONUSES.holidayPark,
+			});
+		}
 		if (input.facts?.context?.mountains === true) {
 			reasons.push({
 				label: "góry w otoczeniu",
@@ -1118,6 +1151,12 @@ function amenityBonusReasons(
 				impact: AMENITY_BONUSES.holidayIsolation,
 			});
 		}
+		if (nearest != null && nearest >= HOUSE_UNIQUENESS.wildernessM) {
+			reasons.push({
+				label: `dzicz: nic w promieniu ${Math.round(nearest)} m`,
+				impact: AMENITY_BONUSES.holidayWilderness,
+			});
+		}
 		const str = input.str ?? null;
 		if (str?.nightlyMedian != null && str.sampleCount >= STR_MARKET.minSample) {
 			for (const [threshold, points] of STR_MARKET.bands) {
@@ -1128,6 +1167,16 @@ function amenityBonusReasons(
 					});
 					break;
 				}
+			}
+		}
+		const density = str?.offersWithin2km ?? 0;
+		for (const [threshold, points] of STR_MARKET.densityBands) {
+			if (density >= threshold) {
+				reasons.push({
+					label: `gęstość noclegów: ${density} ofert w 2 km`,
+					impact: points,
+				});
+				break;
 			}
 		}
 	}
