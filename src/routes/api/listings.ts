@@ -136,6 +136,13 @@ function listingFilterSql(filters: ListingFilters): SQL {
 		parts.push(eq(listings.offerType, "sale"));
 	} else if (filters.offerType === "rental") {
 		parts.push(ne(listings.offerType, "sale"));
+	} else if (
+		filters.offerType === "long_term_rental" ||
+		filters.offerType === "short_term_rental"
+	) {
+		// The two rentals are different assets: a monthly flat and a nightly
+		// holiday let must not share a filter.
+		parts.push(eq(listings.offerType, filters.offerType));
 	}
 	parts.push(daysFilterSql(filters.days));
 	return and(...parts) ?? sql`1`;

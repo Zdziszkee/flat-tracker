@@ -149,7 +149,10 @@ export function ListingFilters({
 							<SelectGroup>
 								<SelectItem value="all">Wszystkie typy</SelectItem>
 								<SelectItem value="sale">Sprzedaż</SelectItem>
-								<SelectItem value="rental">Najem</SelectItem>
+								<SelectItem value="long_term_rental">Wynajem</SelectItem>
+								<SelectItem value="short_term_rental">
+									Wynajem krótkoterminowy
+								</SelectItem>
 							</SelectGroup>
 						</SelectContent>
 					</Select>

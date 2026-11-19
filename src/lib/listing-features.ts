@@ -120,7 +120,11 @@ export interface FilterableListing {
 }
 
 export type DaysFilter = 0 | 1 | 7 | 30;
-export type OfferTypeFilter = "all" | "sale" | "rental";
+export type OfferTypeFilter =
+	| "all"
+	| "sale"
+	| "long_term_rental"
+	| "short_term_rental";
 /**
  * "Inwestycje publiczne" is a category of its own, not a listing kind: it
  * selects the city-project layer instead of offers. Keeping it in the same
@@ -242,7 +246,14 @@ const kindSchema = z
 	.optional();
 
 const offerTypeSchema = z
-	.union([z.literal("all"), z.literal("sale"), z.literal("rental")])
+	.union([
+		z.literal("all"),
+		z.literal("sale"),
+		z.literal("long_term_rental"),
+		z.literal("short_term_rental"),
+		// The old "rental" value stays readable in a saved URL.
+		z.literal("rental"),
+	])
 	.catch("all")
 	.optional();
 
