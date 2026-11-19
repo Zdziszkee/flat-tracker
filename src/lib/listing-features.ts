@@ -124,7 +124,9 @@ export type OfferTypeFilter =
 	| "all"
 	| "sale"
 	| "long_term_rental"
-	| "short_term_rental";
+	| "short_term_rental"
+	/** Legacy alias for both rentals, still accepted from a saved URL. */
+	| "rental";
 /**
  * "Inwestycje publiczne" is a category of its own, not a listing kind: it
  * selects the city-project layer instead of offers. Keeping it in the same

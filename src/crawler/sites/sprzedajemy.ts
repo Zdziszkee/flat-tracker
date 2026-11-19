@@ -323,50 +323,51 @@ function detailToListing(
 				{
 					...attributes,
 					market,
-			build_year: buildYear,
-			building_material: material,
-			ownership,
-			category: categoryText || null,
-			...(city ? { city } : {}),
-			...(district ? { district } : {}),
-			...(plausible
-				? {
-						street: plausible.street,
-						...(plausible.number ? { street_number: plausible.number } : {}),
-					}
-				: {}),
-			...(propertyType === "plot" && areaM2 != null
-				? { plot_area: areaM2 }
-				: {}),
-			...(advertiser ? { advertiser_type: advertiser } : {}),
-			...(building ? { building_type: building } : {}),
-			...(adminFee != null ? { admin_fee: adminFee } : {}),
+					build_year: buildYear,
+					building_material: material,
+					ownership,
+					category: categoryText || null,
+					...(city ? { city } : {}),
+					...(district ? { district } : {}),
+					...(plausible
+						? {
+								street: plausible.street,
+								...(plausible.number
+									? { street_number: plausible.number }
+									: {}),
+							}
+						: {}),
+					...(propertyType === "plot" && areaM2 != null
+						? { plot_area: areaM2 }
+						: {}),
+					...(advertiser ? { advertiser_type: advertiser } : {}),
+					...(building ? { building_type: building } : {}),
+					...(adminFee != null ? { admin_fee: adminFee } : {}),
 					...(deposit != null ? { deposit } : {}),
 				},
 				html,
 			),
-		}
-	),
+		),
 		lat,
 		lng,
 		listedAt: null,
 		scrapedAt: new Date().toISOString(),
-}
+	};
 
-detailCache.store(listing.externalId, {
-	lat: listing.lat,
-	lng: listing.lng,
-	address: listing.address,
-	description: listing.description,
-	areaM2: listing.areaM2,
-	rooms: listing.rooms,
-	floor: listing.floor,
-	propertyType: listing.propertyType,
-	features: listing.features,
-	heatingType: listing.heatingType,
-});
+	detailCache.store(listing.externalId, {
+		lat: listing.lat,
+		lng: listing.lng,
+		address: listing.address,
+		description: listing.description,
+		areaM2: listing.areaM2,
+		rooms: listing.rooms,
+		floor: listing.floor,
+		propertyType: listing.propertyType,
+		features: listing.features,
+		heatingType: listing.heatingType,
+	});
 
-return listing;
+	return listing;
 }
 
 export const sprzedajemyAdapter: CheerioAdapter = {

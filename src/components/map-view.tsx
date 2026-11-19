@@ -55,7 +55,7 @@ export default function MapView({
 }: {
 	source: string;
 	days: 0 | 1 | 7 | 30;
-	offerType: "all" | "sale" | "rental";
+	offerType: OfferTypeFilter;
 	kind: KindFilter;
 	showParcels: boolean;
 	showRailways: boolean;
@@ -116,7 +116,7 @@ function MapCanvas({
 }: {
 	source: string;
 	days: 0 | 1 | 7 | 30;
-	offerType: "all" | "sale" | "rental";
+	offerType: OfferTypeFilter;
 	kind: KindFilter;
 	showParcels: boolean;
 	showRailways: boolean;
