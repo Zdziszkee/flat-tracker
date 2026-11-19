@@ -1,6 +1,10 @@
 import type { GeoJSONSource, Map as MapboxMap } from "mapbox-gl";
 
-import type { KindFilter } from "#/lib/listing-features";
+import type {
+	DaysFilter,
+	KindFilter,
+	OfferTypeFilter,
+} from "#/lib/listing-features";
 import type { MapFeedResponse } from "#/types/listing";
 import { makeBudujesieIcon, makeKomornikIcon, sourceColorExpr } from "./icons";
 import { showListingPopup } from "./listing-popup";
@@ -10,8 +14,8 @@ import { flatViewportBbox } from "./viewport";
 /** Filter state the viewport feed reads on every request. */
 export interface ListingFilters {
 	source: string;
-	days: 0 | 1 | 7 | 30;
-	offerType: "all" | "sale" | "rental";
+	days: DaysFilter;
+	offerType: OfferTypeFilter;
 	kind: KindFilter;
 }
 
