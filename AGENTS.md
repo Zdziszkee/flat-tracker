@@ -299,6 +299,18 @@ small, fixed vocabulary the scoring layer already understands.
   site amenities). New fields live in `listing_facts.facts_json`; only those
   a score reads are promoted to a column, so the vocabulary can grow without
   a migration.
+- **Where the gaps are, measured**: `bun run audit:sources` prints the share of
+  each source's rows that carry an area, a building type, a heating source, a
+  build year, a plot type, model facts and a score, and
+  `docs/source-field-coverage.md` keeps the current table. A low percentage is
+  a budget, not a missing parser, where the column comes from a detail page
+  (otodom's 8-detail budget, nieruchomosci-online's 8-per-page pass), and the
+  table makes that distinction visible instead of guessing. `sites/html-attributes.ts`
+  is the generic collector that keeps labelled detail values a parser did not
+  name (definition lists, table rows, "Label: value", data-label chips) in
+  `features`, and adresowo's chip parser (`"1960 | rok budowy"`, the material
+  icon, "brak windy", "parter") is what lifted its build-year and material fill.
+
 - **What it fills**: `heating_type`, `building_type`, `plot_type`,
   `building_material`, `condition`, `ownership`, `build_year`,
   `plot_area_m2`, `floor`, `floor_count` and the amenity flags. Only empty
