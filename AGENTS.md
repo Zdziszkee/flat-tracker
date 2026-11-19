@@ -997,6 +997,16 @@ default stay untyped and show only under "Wszystkie" — a guess would
 misfile them; when adding a source, feed the classifier real signals (or
 leave it untyped) rather than defaulting.
 
+`propertyType` is the offer kind, never a building type. A source whose
+single `type` field is the kind (gethome's `apartment`/`house`/`lot`) writes
+it there only, and `normalizeBuildingType` drops kind-only words, so
+`buildingType` keeps meaning blok/kamienica/apartamentowiec/dom. The record
+panel (`buildListingRecord`) folds `propertyType` into the `buildingType`
+row for flats and houses, with the portal value as the fallback and a note
+when the two differ, so the panel shows one type field instead of the same
+word twice. `bun run fix:building-types` clears the kind copies an older
+gethome crawl had already stored.
+
 ### Posting dates and the "Data dodania" filter
 
 `listings.listedAt` is the portal's own posting date whenever the feed

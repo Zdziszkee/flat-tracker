@@ -60,6 +60,18 @@ check(
 check(otodom.plotAreaM2 === 25_000, "converts hectares to m²");
 check(otodom.plotType === "budowlana", "normalizes the plot type");
 check(otodom.buildingType === "block", "normalizes the building type");
+check(
+	normalize({ building_type: "lot" }).buildingType === null,
+	"an offer kind ('lot') is not a building type",
+);
+check(
+	normalize({ building_type: "mieszkanie" }).buildingType === null,
+	"a bare offer kind ('mieszkanie') is not a building type",
+);
+check(
+	normalize({ building_type: "apartment" }).buildingType === "apartment",
+	"otodom's 'apartment' (apartamentowiec) stays a building type",
+);
 check(otodom.hasBalcony === true, "amenity array marks a balcony");
 check(otodom.hasElevator === true, "amenity array marks a lift");
 check(otodom.hasBasement === true, "amenity array marks a basement");

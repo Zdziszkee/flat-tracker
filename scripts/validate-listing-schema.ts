@@ -131,6 +131,60 @@ check(
 	mixedPlot.extra,
 );
 
+// The portal's own type and the building type are one field for a flat or a
+// house: the record shows a single row, and the portal type is the fallback
+// when nobody stated a building type.
+const foldedFlat = buildListingRecord(
+	{ ...row, propertyType: "apartment", buildingType: null },
+	"apartment",
+	"sale",
+);
+const foldedKeys = foldedFlat.groups.flatMap((group) =>
+	group.fields.map((field) => field.key),
+);
+const foldedField = foldedFlat.groups
+	.flatMap((group) => group.fields)
+	.find((field) => field.key === "buildingType");
+check(
+	foldedKeys.includes("buildingType") && !foldedKeys.includes("propertyType"),
+	"the portal type folds into the building field instead of a second row",
+	foldedKeys,
+);
+check(
+	foldedField?.value === "apartment" && foldedField.note === undefined,
+	"with no building type the folded field carries the portal type once",
+	foldedField,
+);
+
+const bothTypes = buildListingRecord(
+	{ ...row, propertyType: "apartment", buildingType: "block" },
+	"apartment",
+	"sale",
+);
+const bothField = bothTypes.groups
+	.flatMap((group) => group.fields)
+	.find((field) => field.key === "buildingType");
+check(
+	bothField?.value === "block" && bothField.note === "typ z portalu: apartment",
+	"a stated building type wins and the portal type becomes its note",
+	bothField,
+);
+
+const portalPlot = buildListingRecord(
+	{ ...plotRow, propertyType: "plot" },
+	"plot",
+	"sale",
+);
+const portalPlotKeys = portalPlot.groups.flatMap((group) =>
+	group.fields.map((field) => field.key),
+);
+check(
+	portalPlotKeys.includes("propertyType") &&
+		!portalPlotKeys.includes("buildingType"),
+	"a plot keeps the portal type row (it has no building)",
+	portalPlotKeys,
+);
+
 const strRow = buildListingRecord(
 	{ ...row, offerType: "short_term_rental", minimumStayNights: 2, rating: 4.8 },
 	"apartment",

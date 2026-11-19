@@ -323,9 +323,20 @@ function normalizePlotType(value: string | null): string | null {
 	return text.slice(0, 40);
 }
 
+/**
+ * A portal value that only restates the offer kind (gethome's "lot", a
+ * generic "nieruchomość", a bare "mieszkanie") is not a building type: the
+ * kind already lives in `propertyType`, so storing it here would show the same
+ * fact twice. `apartment` is deliberately not on this list: otodom's
+ * `building_type` uses it for an apartamentowiec.
+ */
+const KIND_ONLY_BUILDING_TYPE =
+	/^(?:lot|land|plot|terrain|grunt|grunty|dzia[łl]ka|dzialka|nieruchomo[śćs][ćc]?|nieruchomosc|mieszkanie|mieszkalny|flat|lokal|house|dom)$/iu;
+
 function normalizeBuildingType(value: string | null): string | null {
 	if (!value) return null;
-	const text = value.toLowerCase();
+	const text = value.toLowerCase().trim();
+	if (KIND_ONLY_BUILDING_TYPE.test(text)) return null;
 	if (/blok|block|wielorodzin/iu.test(text)) return "block";
 	if (/apartamentowiec|apartment/iu.test(text)) return "apartment";
 	if (/kamienic|tenement/iu.test(text)) return "tenement";

@@ -14,7 +14,9 @@ import type { PropertyKind } from "#/lib/property-kind";
  *
  * With values: a field that does not apply to the row but carries a value is
  * still shown (under "poza schematem"), because a portal that mixes a flat's
- * attributes into a plot row is evidence, not noise to hide.
+ * attributes into a plot row is evidence, not noise to hide. A field that
+ * restates another field's fact (`mergeInto`) folds into that field instead of
+ * taking a row of its own.
  */
 
 export type ListingOfferType =
@@ -76,6 +78,14 @@ export interface ListingFieldSpec {
 	kinds?: PropertyKind[];
 	/** Offer types the field describes; omitted = every offer. */
 	offers?: ListingOfferType[];
+	/**
+	 * A column that states the same portal fact as another field. It is not
+	 * rendered as a row of its own: its value folds into the target field, so
+	 * the record shows one type field with one value instead of the same word
+	 * twice. When the target does not apply to the kind (a plot has no
+	 * building), the column keeps its own row.
+	 */
+	mergeInto?: string;
 }
 
 const APARTMENT_OR_HOUSE: PropertyKind[] = ["apartment", "house"];
@@ -125,7 +135,12 @@ export const LISTING_FIELDS: ListingFieldSpec[] = [
 		group: "Budynek",
 		kinds: APARTMENT_OR_HOUSE,
 	},
-	{ key: "propertyType", label: "typ z portalu", group: "Ogłoszenie" },
+	{
+		key: "propertyType",
+		label: "typ z portalu",
+		group: "Ogłoszenie",
+		mergeInto: "buildingType",
+	},
 	{ key: "features", label: "atrybuty portalu (JSON)", group: "Ogłoszenie" },
 	{ key: "market", label: "rynek", group: "Ogłoszenie" },
 	{
@@ -434,6 +449,9 @@ export interface SchemaField {
 	key: string;
 	label: string;
 	value: unknown;
+	/** Secondary context rendered muted after the value (e.g. the portal type
+	 * folded into the building row). */
+	note?: string;
 }
 
 export interface SchemaGroup {
@@ -470,6 +488,20 @@ export function buildListingRecord(
 	const excluded: string[] = [];
 	const seen = new Set<string>();
 
+	// A field that restates another field's fact folds into it: the portal's
+	// own type (`propertyType`) and the building type (`buildingType`) are the
+	// same fact for a flat or a house, so the record shows one row. For a plot
+	// the building field does not apply and the portal type keeps its own row.
+	const foldedInto = new Map<string, ListingFieldSpec>();
+	const foldedKeys = new Set<string>();
+	for (const spec of LISTING_FIELDS) {
+		if (!spec.mergeInto) continue;
+		const target = BY_KEY.get(spec.mergeInto);
+		if (!target || !fieldApplies(target, kind, offer)) continue;
+		foldedInto.set(target.key, spec);
+		foldedKeys.add(spec.key);
+	}
+
 	const add = (group: FieldGroup, field: SchemaField) => {
 		const list = groups.get(group) ?? [];
 		list.push(field);
@@ -478,11 +510,24 @@ export function buildListingRecord(
 
 	for (const spec of LISTING_FIELDS) {
 		seen.add(spec.key);
-		const value = row[spec.key];
+		if (foldedKeys.has(spec.key)) continue;
+		const folded = foldedInto.get(spec.key);
+		const own = row[spec.key];
+		const foldedValue = folded ? row[folded.key] : null;
+		// The portal type is the fallback when nobody stated a building type,
+		// and a note only when it adds information the value does not carry.
+		const value = folded ? own || foldedValue : own;
+		const note =
+			folded &&
+			own != null &&
+			foldedValue != null &&
+			`${own}` !== `${foldedValue}`
+				? `${folded.label}: ${String(foldedValue)}`
+				: undefined;
 		if (fieldApplies(spec, kind, offer)) {
-			add(spec.group, { key: spec.key, label: spec.label, value });
+			add(spec.group, { key: spec.key, label: spec.label, value, note });
 		} else if (value != null && value !== "") {
-			extra.push({ key: spec.key, label: spec.label, value });
+			extra.push({ key: spec.key, label: spec.label, value, note });
 		} else {
 			excluded.push(spec.key);
 		}

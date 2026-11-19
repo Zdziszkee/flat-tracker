@@ -132,7 +132,9 @@ function offerToListing(offer: GhOffer): Listing | null {
 		agency: offer.agency?.name ?? null,
 		building_year: num(property.building_year),
 		building_floors_num: num(property.floors),
-		building_type: str(property.type),
+		// `property.type` is the offer kind (apartment/house/lot), not the kind
+		// of building: it already travels as `propertyType`, and promoting it
+		// into `building_type` made every gethome flat an apartamentowiec.
 		lot_type: str(property.lot_type),
 		lot_size: num(property.lot_size),
 		...(property.type === "lot" ? { plot_area: num(property.size) } : {}),

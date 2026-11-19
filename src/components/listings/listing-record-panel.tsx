@@ -118,6 +118,11 @@ function FieldGrid({ fields }: { fields: SchemaField[] }) {
 					</dt>
 					<dd className="min-w-0">
 						<FieldValue value={field.value} />
+						{field.note && (
+							<span className="ml-2 text-[10px] text-muted-foreground/60">
+								{field.note}
+							</span>
+						)}
 					</dd>
 				</div>
 			))}
