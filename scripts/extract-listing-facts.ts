@@ -19,6 +19,7 @@ import {
 	countListingsMissingFacts,
 	extractListingFacts,
 } from "#/lib/llm/extract.ts";
+import { runAlertScoring } from "#/lib/scoring/run.ts";
 
 interface Args {
 	limit: number;
@@ -89,6 +90,21 @@ async function main(): Promise<void> {
 	);
 	for (const error of summary.firstErrors) console.error(`  ! ${error}`);
 	if (!args.dryRun) {
+		// The offers whose facts just landed were scored before the facts
+		// existed (or never scored at all). Re-score them now, exactly like
+		// the refresh's listing-facts phase does, so a drain flips the gates
+		// it can flip instead of waiting for the next full re-score.
+		if (summary.gateIds.length > 0) {
+			console.log(`re-scoring ${summary.gateIds.length} offers with new facts...`);
+			const rescored = await runAlertScoring({
+				all: true,
+				listingIds: summary.gateIds,
+			});
+			console.log(
+				`re-scored ${rescored.scored} offers, ${rescored.eligible} eligible, ` +
+					`${rescored.alerts} alerts, ${rescored.errors} errors`,
+			);
+		}
 		const remaining = await countListingsMissingFacts();
 		console.log(`remaining=${remaining}`);
 	}
