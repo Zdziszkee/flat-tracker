@@ -157,33 +157,40 @@ interface PagePlace {
 
 /** First numeric geo and first postal address anywhere in the LD+JSON nodes. */
 function pagePlace(nodes: unknown[]): PagePlace | null {
-	let geo: { lat: number | null; lng: number | null } | null = null;
-	let postal: {
-		street: string | null;
-		city: string | null;
-		district: string | null;
-		voivodeship: string | null;
-	} | null = null;
+	// A holder object, not two `let`s: TypeScript 6 narrows a `let` that only
+	// the recursive closure assigns to its initializer (`null`), which made the
+	// reads below resolve to `never`.
+	const found: {
+		geo: { lat: number | null; lng: number | null } | null;
+		postal: {
+			street: string | null;
+			city: string | null;
+			district: string | null;
+			voivodeship: string | null;
+		} | null;
+	} = { geo: null, postal: null };
 	const walk = (value: unknown): void => {
-		if (!value || typeof value !== "object" || (geo && postal)) return;
+		if (!value || typeof value !== "object" || (found.geo && found.postal)) {
+			return;
+		}
 		if (Array.isArray(value)) {
 			for (const entry of value) walk(entry);
 			return;
 		}
 		const obj = value as Record<string, unknown>;
-		if (!geo) {
+		if (!found.geo) {
 			const g = obj.geo as Record<string, unknown> | undefined;
 			const lat = g && typeof g === "object" ? num(g.latitude) : null;
 			const lng = g && typeof g === "object" ? num(g.longitude) : null;
-			if (lat != null && lng != null) geo = { lat, lng };
+			if (lat != null && lng != null) found.geo = { lat, lng };
 		}
-		if (!postal) {
+		if (!found.postal) {
 			const a = obj.address as Record<string, unknown> | undefined;
 			const street = a && typeof a === "object" ? str(a.streetAddress) : null;
 			const locality =
 				a && typeof a === "object" ? cleanText(str(a.addressLocality)) : null;
 			if (street || locality) {
-				postal = {
+				found.postal = {
 					street,
 					city: locality?.split(",")[0]?.trim() ?? null,
 					district: locality?.includes(",")
@@ -197,15 +204,17 @@ function pagePlace(nodes: unknown[]): PagePlace | null {
 		for (const entry of Object.values(obj)) walk(entry);
 	};
 	for (const node of nodes) walk(node);
-	if (!geo && !postal) return null;
+	if (!found.geo && !found.postal) return null;
 	return {
-		lat: geo?.lat ?? null,
-		lng: geo?.lng ?? null,
-		street: postal?.street ?? null,
-		city: postal?.city ?? null,
-		district: postal?.district ?? null,
-		voivodeship: postal?.voivodeship ?? null,
-		address: [postal?.street, postal?.city].filter(Boolean).join(", ") || null,
+		lat: found.geo?.lat ?? null,
+		lng: found.geo?.lng ?? null,
+		street: found.postal?.street ?? null,
+		city: found.postal?.city ?? null,
+		district: found.postal?.district ?? null,
+		voivodeship: found.postal?.voivodeship ?? null,
+		address:
+			[found.postal?.street, found.postal?.city].filter(Boolean).join(", ") ||
+			null,
 	};
 }
 
