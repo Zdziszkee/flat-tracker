@@ -117,6 +117,30 @@ export function recomputeListingDerived(): DerivedReport {
  */
 let derivedChildRunning = false;
 
+interface DerivedState {
+	total: number;
+	stale: number;
+	classified: number;
+}
+
+/**
+ * One aggregate read decides how much repair the table needs. `classified`
+ * counts rows that carry a kind at all, which is what separates "a few new
+ * offers are stale" from "the derived pass has never run on this database"
+ * (an interrupted crawl, a restored backup, a first boot).
+ */
+function readDerivedState(): DerivedState {
+	const row = sqlite
+		.prepare(
+			`select count(*) as total,
+			        coalesce(sum(derived_at is null), 0) as stale,
+			        coalesce(sum(property_kind is not null), 0) as classified
+			 from listings`,
+		)
+		.get() as DerivedState;
+	return row;
+}
+
 /**
  * Rebuild the stale columns in a child process. The pass takes ~1.3 s on the
  * 47k-row table, and better-sqlite3 is synchronous: running it in the HTTP
@@ -156,15 +180,29 @@ function spawnDerivedChild(): boolean {
 }
 
 export function ensureListingDerived(): Promise<DerivedReport | null> {
-	const pending = sqlite
-		.prepare("select 1 from listings where derived_at is null limit 1")
-		.get();
-	if (!pending) return Promise.resolve(null);
+	const state = readDerivedState();
+	if (state.stale === 0) return Promise.resolve(null);
 	// A crawl marks every upserted row stale and runs its own final pass.
 	// Recomputing here mid-crawl would race the crawl and stall requests for
 	// no benefit; after a crash the lock clears and the next read repairs it.
 	if (isRunning() || refreshLockedByOther()) return Promise.resolve(null);
-	// Never pay the synchronous pass in the request path.
-	spawnDerivedChild();
+	// Nothing in the table has ever been classified, so every kind facet reads
+	// "(0)" while "Wszystkie" counts the whole pool: a crawl that died before
+	// its final phase leaves exactly this state. A background child would work
+	// too, but when it cannot spawn (or silently exits) the broken filter bar
+	// stays broken indefinitely, so pay the one synchronous pass here —
+	// ~90 ms at 5.6k rows, ~1.3 s at 47k, and only until the first pass lands.
+	if (state.classified === 0) {
+		console.warn(
+			`[listing-derived] ${state.stale}/${state.total} rows have no kind; rebuilding synchronously`,
+		);
+		return Promise.resolve(recomputeListingDerived());
+	}
+	// Otherwise keep the synchronous pass out of the request path and rebuild
+	// in the background. A deployment without the tsx runner cannot spawn the
+	// child, so it falls back to the one pass rather than staying stale.
+	if (!spawnDerivedChild()) {
+		return Promise.resolve(recomputeListingDerived());
+	}
 	return Promise.resolve(null);
 }

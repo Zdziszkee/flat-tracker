@@ -1068,11 +1068,16 @@ Every view relies on the denormalized columns `listings.isVisible`,
 `recomputeListingDerived` (`src/db/listing-derived.ts`, phase
 `listing-derived`). The pure rules stay in `src/lib/listing-visibility.ts`
 (cross-source dedupe) and `src/lib/property-kind.ts`; a crawl upsert sets
-`derivedAt = null`. A read that sees stale rows schedules
+`derivedAt = null`. A read that sees a few stale rows schedules
 `scripts/rebuild-listing-derived.ts` in a child process instead of paying the
 ~1.3 s synchronous pass in the HTTP process; a live crawl skips that and runs
-its own final pass. `bun run validate:listing-derived` compares every stored
-value with the pure rules.
+its own final pass. When **no** row carries a `propertyKind` (a crawl that
+died before its final phase, a restored backup) the read runs the pass
+synchronously instead, and a deployment without the tsx runner falls back to
+the same pass: otherwise the filter bar counts the whole pool under
+"Wszystkie" and every kind under it reads 0. `bun run validate:listing-derived`
+compares every stored value with the pure rules and pins that never-derived
+repair.
 
 The promoted listing attributes travel as one `attributes` object per detail
 row (only non-null, non-false, non-zero values) rather than ~40 mostly-null

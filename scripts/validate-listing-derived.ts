@@ -10,12 +10,16 @@
  */
 import { desc, eq, sql } from "drizzle-orm";
 
-import { db } from "../src/db/index.ts";
-import { recomputeListingDerived } from "../src/db/listing-derived.ts";
+import { db, sqlite } from "../src/db/index.ts";
+import {
+	ensureListingDerived,
+	recomputeListingDerived,
+} from "../src/db/listing-derived.ts";
 import { buildings, listings } from "../src/db/schema.ts";
 import { listingFacets } from "../src/lib/listing-features.ts";
 import { visibleListingIds } from "../src/lib/listing-visibility.ts";
 import { propertyKindOf, type PropertyKind } from "../src/lib/property-kind.ts";
+import { refreshLockedByOther } from "../src/crawler/refresh-lock.ts";
 
 let failures = 0;
 function check(ok: boolean, label: string): void {
@@ -161,6 +165,26 @@ for (const days of [0, 1, 7, 30] as const) {
 	check(
 		pure.total === expected,
 		`pure facet total for days=${days} (${pure.total})`,
+	);
+}
+
+// An interrupted crawl leaves the derived columns empty: every kind facet then
+// reads "(0)" while "Wszystkie" counts the whole pool. `ensureListingDerived`
+// is what /api/listings awaits on every read, so it has to repair that state
+// instead of only scheduling a child that may never run.
+if (refreshLockedByOther()) {
+	console.log(
+		"SKIP  ensureListingDerived repair check (a live crawl holds the lock)",
+	);
+} else {
+	sqlite.prepare("update listings set derived_at = null, property_kind = null").run();
+	const repair = await ensureListingDerived();
+	const stale = sqlite
+		.prepare("select count(*) as count from listings where derived_at is null")
+		.get() as { count: number };
+	check(
+		repair != null && repair.rows === rows.length && stale.count === 0,
+		`ensureListingDerived repairs a never-derived table synchronously (${repair?.rows ?? 0} rows)`,
 	);
 }
 
