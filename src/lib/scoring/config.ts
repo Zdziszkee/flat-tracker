@@ -9,7 +9,7 @@
 
 import { clamp } from "#/lib/stats";
 
-export const SCORE_VERSION = "2027.19";
+export const SCORE_VERSION = "2027.20";
 
 /** Minimum score components for an offer to enter the alert list. */
 export const ALERT_GATES = {
@@ -209,15 +209,17 @@ export const STR_MARKET = {
 /**
  * Fast-rail access (200 km/h+ today, KDP from 2035).
  *
- * The gate radius is the user's investment rule, not a fitted parameter: a
- * plot 3 km from the station is a different asset from one 300 m away, and
- * everything beyond is out of scope for the alert list even when it is cheap.
- * Inside the radius the band curve rewards the walkable ring (800-2000 m) and
- * penalises the 24/7 station doorstep, the same way the tram and railway
- * bands do.
+ * The gate is the plot segment's catchment: land has to sit in a station's
+ * orbit, but the walkable ring is the *bonus* curve, not the gate. A 3 km
+ * gate around the six 200 km/h+ stations (about 170 km² of a 35 000 km²
+ * region) left the Działki section permanently empty: 5 of 644 live plots
+ * passed it and none of those had a single comparable, so no plot could ever
+ * alert. 20 km is the commute catchment a buyer would accept for land and
+ * keeps 189 plots (31 with buildable evidence) in scope; the band curve
+ * still rewards the 800-2000 m ring and penalises the station doorstep.
  */
 export const FAST_RAIL = {
-	gateRadiusM: 3000,
+	gateRadiusM: 20_000,
 	bands: [
 		[400, 50],
 		[800, 80],

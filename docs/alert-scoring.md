@@ -79,13 +79,16 @@ scored and kept in the table, but it can never enter the leaderboard
   (2000+), apartment buildings and blocks whose age nobody stated are
   allowed. Missing heating evidence fails as `no_heating_evidence`, the only
   flat failure a short section may fill from (see below).
-- **Plots**: buildable land only, inside 3 km of a fast-rail station.
+- **Plots**: buildable land only, inside 20 km of a fast-rail station.
   Building evidence is the portal plot type (budowlana / inwestycyjna), an
   EGiB land-use class in B*, MN, MW or RM, a WZ decision, a zoning plan, or
   the same evidence read out of the ad by the extractor (WZ, MPZP symbol or
   purpose, declared plot type). A plot fails as `not_building_plot`, and as
   `outside_fast_rail` when no `FAST_RAIL_STATIONS` entry is within
-  `FAST_RAIL.gateRadiusM` (3 km).
+  `FAST_RAIL.gateRadiusM` (20 km). The gate is a catchment, not the walkable
+  ring: a 3 km radius around six stations left the Działki section empty
+  (5 of 644 live plots, none with a comparable), while the distance bands
+  still reward proximity down to 800-2000 m.
 - **Houses** are a different product with different gates: a unique holiday
   property for short-term rental, not spare land. A house needs a nature
   setting (`no_nature_setting`: water within 1 km, forest within 800 m, or a
@@ -126,7 +129,7 @@ Two curated datasets, both listed on /sources as static layers
   Zawiercie, Tychy, Bielsko-Biała Główna, Gliwice), each tagged with the
   services it carries. The planned KDP service reaches Kraków and Katowice
   through the modernised CMK from 2035, so those stops carry `kdp_2035`.
-  160 km/h corridors are deliberately excluded: they would make the 3 km gate
+  160 km/h corridors are deliberately excluded: they would make the gate
   meaningless. Coordinates are the OSM station nodes the map already renders.
 - **Centre zone** (`src/lib/scoring/centre-zone.ts`): explicit anchors for the
   target neighbourhoods, because only about a third of the Kraków rows carry a
@@ -411,7 +414,7 @@ condition deck, the clamp, monotonicity and the asking-ratio rules, and
 - heating cost order: district > gas > electric
 - heating and building style come from the extracted facts: a description
   that names municipal heating no longer satisfies the gate on its own
-- fast rail: a plot inside 3 km is eligible, 3.4 km fails as
+- fast rail: a plot inside 20 km is eligible, 24 km fails as
   `outside_fast_rail`, and a closer station scores higher
 - centre zone: a flat in Nowa Huta fails as `outside_centre_zone`, Wola
   Justowska passes, a block proved to predate 2000 fails as `old_block`, a

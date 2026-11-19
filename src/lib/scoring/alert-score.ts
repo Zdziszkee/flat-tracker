@@ -1426,7 +1426,10 @@ export function scoreAlert(
 	// entries mean "the extractor found no evidence", never "the offer says no".
 	const FALLBACK_GATES = new Set([
 		"no_heating_evidence",
-		"no_buildable_evidence",
+		// The plot gate above pushes `not_building_plot`; the old name here
+		// never matched, so a plot missing building evidence could never fill
+		// a short Działki section.
+		"not_building_plot",
 	]);
 	const fallbackEligible =
 		gateFailures.length > 0 &&

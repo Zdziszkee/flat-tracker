@@ -493,9 +493,11 @@ the component breakdown and rationale.
   regions (Kraków Główny, Katowice, Zawiercie, Tychy, Bielsko-Biała Główna,
   Gliwice) with the services each carries; the documented planned KDP call
   (2035+, via the modernised CMK) is `kdp_2035` on Kraków Główny, Katowice
-  and Zawiercie. 160 km/h corridors are deliberately excluded. Plots and
-  houses must sit inside 3 km of one of those stations (measured from the
-  listing point) or fail as `outside_fast_rail`.
+  and Zawiercie. 160 km/h corridors are deliberately excluded. Plots must sit
+  inside the 20 km catchment of one of those stations (measured from the
+  listing point) or fail as `outside_fast_rail`; houses are not gated. The
+  gate is a catchment, not the walkable ring: at 3 km only 5 of 644 live plots
+  passed and none had a comparable, so the Działki section was always empty.
   `src/lib/scoring/centre-zone.ts` holds explicit anchors for the target
   Kraków neighbourhoods (Rynek Główny, Kazimierz, Podgórze, Krowodrza,
   Grzegórzki, Dębniki, Zwierzyniec, Wola Justowska) plus the Katowice Rynek;
@@ -514,7 +516,7 @@ the component breakdown and rationale.
   something can still be built on the parcel (a building plot type or
   built-up land-use class B*, MN, MW, RM, a WZ decision, a zoning plan, or
   the same evidence read from the ad by the extractor) and must sit inside
-  the 3 km fast-rail radius. An estimate built from fewer than three comps
+  the 20 km fast-rail catchment. An estimate built from fewer than three comps
   fails. The score row stores `eligible` and the leaderboard filters on it,
   so a rejected offer stays in the table and is rarely alerted. Plot
   forest/lake points are tiered: on or next to the parcel (radius + 20 m)

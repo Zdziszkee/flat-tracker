@@ -178,7 +178,7 @@ const plot: ScoreListingInput = {
 	areaM2: 1000,
 	plotAreaM2: 1000,
 	plotType: "budowlana",
-	// 1.1 km from Kraków Główny: inside the 3 km fast-rail gate.
+	// 1.1 km from Kraków Główny: inside the 20 km fast-rail catchment.
 	lat: 50.0616,
 	lng: 19.9373,
 	facts: scoredFactsOf({
@@ -252,7 +252,7 @@ check(
 		TRAM_CITIES.length === 2 &&
 		TRAM_CITIES.includes("krakow") &&
 		TRAM_CITIES.includes("katowice") &&
-		SCORE_VERSION === "2027.19",
+		SCORE_VERSION === "2027.20",
 	{ TRAM_TARGET_M, TRAM_CITIES, SCORE_VERSION },
 );
 check(
@@ -1399,19 +1399,19 @@ check("flat weights sum to 1", Math.abs(weightSum - 1) < 1e-9, weightSum);
 
 // --- Fast-rail gate (plots and houses) ----------------------------------
 // Kraków Główny is at 50.06842/19.94789. 1.9 km south-west of it is inside the
-// 3 km gate, 3.4 km is outside it.
+// 20 km catchment, 24 km south is outside it.
 const insideRailPlot = scoreAlert(
 	{ ...plot, lat: 50.0525, lng: 19.935 },
 	estimate(300000),
 	geo(),
 );
 const outsideRailPlot = scoreAlert(
-	{ ...plot, lat: 50.0385, lng: 19.9351 },
+	{ ...plot, lat: 49.85, lng: 19.9351 },
 	estimate(300000),
 	geo(),
 );
 check(
-	"a plot inside the 3 km fast-rail gate is eligible",
+	"a plot inside the 20 km fast-rail catchment is eligible",
 	insideRailPlot.eligible,
 	insideRailPlot.gateReason,
 );

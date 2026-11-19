@@ -168,7 +168,14 @@ export async function saveListings(
 				externalId: l.externalId,
 			}),
 			price: l.price,
-			pricePerM2: l.pricePerM2,
+			// Some list-only cards (plots especially) publish a price and an
+			// area but no unit price. It is deterministic, and the comparable
+			// selectors reject a row without it, so fill it when both are known.
+			pricePerM2:
+				l.pricePerM2 ??
+				(l.price != null && l.price > 0 && l.areaM2 != null && l.areaM2 > 0
+					? l.price / l.areaM2
+					: null),
 			areaM2: l.areaM2,
 			rooms: l.rooms,
 			floor: l.floor,
@@ -259,7 +266,9 @@ export async function saveListings(
 					url: sql.raw(`excluded.url`),
 					title: sql.raw(`excluded.title`),
 					price: sql.raw(`excluded.price`),
-					pricePerM2: sql.raw(`excluded.pricePerM2`),
+					// A detail-less re-crawl can arrive without a unit price;
+					// keep the stored one instead of wiping it with NULL.
+					pricePerM2: sql`coalesce(excluded.pricePerM2, ${listings.pricePerM2})`,
 					// A list-only re-crawl may not carry the portal's type, so
 					// keep a kind a detail row already established; the derived
 					// pass is the authority for clearing it.

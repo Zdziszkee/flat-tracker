@@ -2,7 +2,7 @@
  * Pins the two location datasets the alert score depends on:
  *
  * - `FAST_RAIL_STATIONS` (`src/data/fast-rail-stations.ts`) decides which
- *   plots and houses can alert at all (3 km gate), so a bad coordinate or a
+ *   plots can alert at all (fast-rail catchment gate), so a bad coordinate or a
  *   duplicated station would silently move real offers in and out of the list.
  * - `CENTRE_ANCHORS` (`src/lib/scoring/centre-zone.ts`) decides which flats can
  *   alert, so an anchor outside the tracked area or a missing target
@@ -120,7 +120,7 @@ check(
 	fromRynek?.station.id === "krakow-glowny",
 );
 check(
-	"Kraków Główny is inside the 3 km gate from the Rynek",
+	"Kraków Główny is inside the fast-rail catchment from the Rynek",
 	(fromRynek?.distanceM ?? Number.POSITIVE_INFINITY) < 3000,
 );
 check("Kraków Główny is flagged as a KDP call", fromRynek?.kdpPlanned === true);
