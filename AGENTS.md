@@ -380,7 +380,10 @@ the same runner (`server/boot-refresh.ts`). Live progress and the
 cross-process single-flight guard travel through `data/crawler/refresh.json`
 (`src/crawler/refresh-lock.ts`): `/api/crawl-status` merges it, `/api/refresh`
 reports it as already running, and `refreshAll()` refuses to start while a
-live child holds it. A deployment without `server/` or `tsx` (built
+live child holds it. The record's heartbeat stalls while a bulk import blocks
+the event loop, so the lock treats a live pid as authoritative for 30 minutes;
+a 90 s window expired mid-GUGiK-import and let the hourly task start a second
+child on the same database. A deployment without `server/` or `tsx` (built
 `.output/` only) falls back to running `refreshAll()` in-process.
 
 Manual equivalents:

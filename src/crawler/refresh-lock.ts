@@ -29,8 +29,16 @@ import type { RefreshPhase, SourceProgress } from "./progress.ts";
 
 export const REFRESH_LOCK_PATH = "data/crawler/refresh.json";
 
-/** The child rewrites the record every second; this is ~90 s of slack. */
-const STALE_MS = 90_000;
+/**
+ * The child rewrites the record every second, but a bulk import (the GUGiK
+ * RCN drain, a multi-GB WAL checkpoint) blocks the event loop for minutes at
+ * a time, so the heartbeat stalls while the child is alive and working. The
+ * window is therefore generous: a live pid is the authority, and this only
+ * recovers from a process that is alive but genuinely wedged (a hung network
+ * call) or from pid reuse. 90 s expired mid-import and let the hourly task
+ * start a second child on the same database.
+ */
+const STALE_MS = 30 * 60_000;
 
 export interface RemoteRefresh {
 	pid: number;
