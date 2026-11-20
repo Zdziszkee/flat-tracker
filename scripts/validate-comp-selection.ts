@@ -165,9 +165,10 @@ check(
 	RADII_BY_KIND,
 );
 check(
-	"houses use a 20 km comp radius for RCN and listing comps",
-	RADII_BY_KIND.house[0] === 20_000 &&
-		selectionDefaults("house").radiiM[0] === 20_000,
+	"houses use a 20 km comp ladder for RCN and listing comps",
+	RADII_BY_KIND.house[0] === 2000 &&
+		RADII_BY_KIND.house[RADII_BY_KIND.house.length - 1] === 20_000 &&
+		selectionDefaults("house").radiiM[0] === RADII_BY_KIND.house[0],
 	RADII_BY_KIND,
 );
 

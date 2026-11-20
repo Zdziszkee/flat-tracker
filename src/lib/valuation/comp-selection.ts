@@ -372,7 +372,7 @@ export interface SelectionOptions {
  */
 export const RADII_BY_KIND: Record<CompKind, readonly number[]> = {
 	flat: [1000],
-	house: [20_000],
+	house: [2000, 5000, 20_000],
 	plot: [1000],
 };
 
