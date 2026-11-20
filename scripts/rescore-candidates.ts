@@ -22,6 +22,7 @@
  *   bun run rescore:candidates --all --limit 500
  *   bun run rescore:candidates --force
  *   bun run rescore:candidates --stale
+ *   bun run rescore:candidates --listing-ids=868,869 --force
  *   bun run rescore:candidates --dry-run
  */
 import { and, eq, isNotNull, sql } from "drizzle-orm";
@@ -44,6 +45,14 @@ const force = args.includes("--force");
 const dryRun = args.includes("--dry-run");
 const limitArg = args.indexOf("--limit");
 const limit = limitArg >= 0 ? Number(args[limitArg + 1]) : null;
+const listingIdsArg = args.find((arg) => arg.startsWith("--listing-ids="));
+const listingIds = listingIdsArg
+	? listingIdsArg
+			.slice("--listing-ids=".length)
+			.split(",")
+			.map(Number)
+			.filter((id) => Number.isInteger(id) && id > 0)
+	: null;
 
 const rows = await db
 	.select({
@@ -158,7 +167,9 @@ async function staleIds(): Promise<number[]> {
 	return out;
 }
 
-const target = stale
+const target = listingIds
+	? listingIds
+	: stale
 	? await staleIds()
 	: limit != null && limit > 0
 		? ids.slice(0, limit)
