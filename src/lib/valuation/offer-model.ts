@@ -232,12 +232,13 @@ function validM2(kind: ValuationSegment): [number, number] {
 }
 
 /**
- * Query radius for comparable candidates. The selection ladder (`RADII_BY_KIND`)
- * is 1 km for every segment, so the candidate query must not reach further;
- * a wider box only costs rows the selection throws away.
+ * Query radius for comparable candidates, from the segment policy
+ * (`RADII_BY_KIND`). Flats and plots query 1 km; houses query 20 km because
+ * rural houses are too sparse for a one-kilometre comp set. A wider candidate
+ * box only costs rows the selection already knows how to rank and cap.
  */
-function initialRadius(_kind: ValuationSegment): number {
-	return 1000;
+function initialRadius(kind: ValuationSegment): number {
+	return selectionDefaults(kind).radiiM[0] ?? 1000;
 }
 
 function offerMarket(offer: OfferForValuation): 1 | 2 | null {

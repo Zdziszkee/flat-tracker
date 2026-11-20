@@ -363,16 +363,16 @@ export interface SelectionOptions {
 }
 
 /**
- * Radius ladder per segment (metres). One kilometre for every segment: the
- * comparables behind an alert are the offers and recorded sales in the same
- * neighbourhood, so a wider net buys a statistically tighter median at the
- * cost of pricing a street with a district. The ladder keeps its shape (a
- * single tier) so a future segment-specific widening does not change the
- * call sites.
+ * Radius ladder per segment (metres). Flats and plots keep one neighbourhood
+ * kilometre. Houses use a 20 km ladder: a rural holiday house often has no
+ * recorded sale and no other listing inside 1 km, which made `no_comparable_estimate`
+ * reject nearly the whole house pool. Both evidence sources (RCN transactions
+ * and active listings) are queried at this radius, so a sparse rural house is
+ * priced from the same mixed set as a city flat, just over a wider area.
  */
 export const RADII_BY_KIND: Record<CompKind, readonly number[]> = {
 	flat: [1000],
-	house: [1000],
+	house: [20_000],
 	plot: [1000],
 };
 

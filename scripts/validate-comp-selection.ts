@@ -27,7 +27,9 @@ import {
 	plotClassFamilyFromType,
 	plotFamiliesMatch,
 	PRICE_METRIC,
+	RADII_BY_KIND,
 	selectComparables,
+	selectionDefaults,
 } from "#/lib/valuation/comp-selection";
 import {
 	fitAreaElasticity,
@@ -155,6 +157,19 @@ check(
 	{ trimmedClean, trimmedOutlier },
 );
 check("chosen metric is the weighted median", PRICE_METRIC === "weighted_median");
+
+/* ------------------------------ radii -------------------------------- */
+check(
+	"flats and plots keep a 1 km comp radius",
+	RADII_BY_KIND.flat[0] === 1000 && RADII_BY_KIND.plot[0] === 1000,
+	RADII_BY_KIND,
+);
+check(
+	"houses use a 20 km comp radius for RCN and listing comps",
+	RADII_BY_KIND.house[0] === 20_000 &&
+		selectionDefaults("house").radiiM[0] === 20_000,
+	RADII_BY_KIND,
+);
 
 /* ------------------------------ weights ---------------------------- */
 

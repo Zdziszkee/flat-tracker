@@ -603,16 +603,16 @@ the component breakdown and rationale.
   index (nominal, so inflation is inside it) and the condition/quality
   correction from `src/lib/valuation/quality-factor.ts` (balanced two-sided
   deck, +-15% clamp, named reasons, neutral when no facts).
-- **The comp set is 30 mixed comparables inside 1 km** (2027.19):
+- **The comp set is at most 30 mixed comparables** (2027.19, house radius widened in 2027.22):
   `estimateSaleValue` always gathers RCN transactions *and* the active offers
   in the same radius, carries the RCN side to today through the index, converts
   the asking side to the transaction level with the measured asking ratio, and
-  keeps the 30 highest-weight comps. Listings used to be a fallback only when
-  fewer than three RCN comps survived, and the radius was [800, 1600] m for
-  built property and [3000, 6000] m for plots; a house or plot with no RCN sale
-  in its own neighbourhood was left unscored (`no_comparable_estimate`). The
-  radius and cap are a product decision (evidence a buyer can walk to), so they
-  sit outside the backtest optimum that tuned the bands and the weighted
+  keeps the 30 highest-weight comps. Flats and plots use 1 km; houses use 20 km
+  because a rural holiday house often has no RCN sale and no other listing in
+  its own neighbourhood. Before the house widening such offers were left
+  unscored (`no_comparable_estimate`) and absent from the alert list. The radii
+  and cap are a product decision (evidence a buyer can reasonably compare), so
+  they sit outside the backtest optimum that tuned the bands and the weighted
   median. `RADII_BY_KIND` and the caps in `comp-selection.ts` carry the values;
   changing them needs a `SCORE_VERSION` bump.
 - **Plot comps read land use from the RCN parcel metadata**:
