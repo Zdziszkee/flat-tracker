@@ -647,8 +647,9 @@ the component breakdown and rationale.
 - **Re-score after a gate change**: `bun run rescore:candidates` re-scores
   the offers that can actually alert (every house and plot, the flats inside
   the centre zone) at the current `SCORE_VERSION`; `--all` widens it to the
-  pool, `--limit N` bounds it, `--dry-run` reports without writing. A full
-  pool re-score is hours of comparable queries.
+  pool, `--limit N` bounds it, `--listing-ids=1,2` targets exact offers,
+  `--force` re-scores current-version rows, and `--dry-run` reports without
+  writing. A full pool re-score is hours of comparable queries.
 - **Policy constants are versioned** (`src/lib/scoring/config.ts`):
   weights, curves, distance bands and gates sit behind `SCORE_VERSION`,
   and any change to a policy value requires a `SCORE_VERSION` bump so
